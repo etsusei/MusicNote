@@ -25,6 +25,7 @@ struct ConfirmStage: View {
     @ViewState private var selection: Range<Int64> = 0..<1
     @ViewState private var ready = false
     @ViewState private var fromSongGrid = false
+    @ViewState private var songGridUnsteady = false
 
     private var rate: Double { item.source.sampleRate }
     private var trimStartFrame: Int64 { Int64((Double(item.trimStartUs) * rate / 1_000_000).rounded()) }
@@ -98,6 +99,10 @@ struct ConfirmStage: View {
                         if let s = d.keyStrength { Text("强度 \(String(format: "%.2f", s))").font(.caption12).foregroundStyle(Theme.textSecondary) }
                     }
                     ForEach(d.errors, id: \.self) { Text($0).font(.caption12).foregroundStyle(Theme.warning) }
+                    if songGridUnsteady {
+                        Label("整曲拍点在这段不稳（多半锁到了切分节奏），第 1 小节没有沿用整曲小节线。请边听节拍器边设第 1 拍；分析和声后还会用换和弦点再核对一次。", systemImage: "exclamationmark.triangle")
+                            .font(.caption12).foregroundStyle(Theme.warning)
+                    }
                     if fromSongGrid {
                         Label("速度、拍号和第 1 小节的位置沿用了选区阶段的整曲小节线；如果改了 BPM 或拍点偏移，记得核对小节线。", systemImage: "metronome")
                             .font(.caption12).foregroundStyle(Theme.accent)
@@ -215,6 +220,7 @@ struct ConfirmStage: View {
         if let r = clipBpm, abs(r - g.bpm) / g.bpm < 0.04 { bpmText = String(format: "%.1f", r) }
         else if let r = Tempo.roundToHalf(g.bpm) { bpmText = String(format: "%.1f", r) }
         numerator = g.beatsPerBar; denominator = 4
+        guard g.steady(from: s, to: e) else { songGridUnsteady = true; return }
         if let a = g.barAnchor(clipStart: s, clipEnd: e) {
             barAnchorUs = Int64(a * 1e6)
             detectedOriginUs = Int64(a * 1e6)

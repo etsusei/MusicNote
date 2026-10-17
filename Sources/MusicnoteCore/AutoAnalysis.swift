@@ -42,6 +42,9 @@ public struct LogicChordEvent: Codable, Hashable, Sendable {
     public var symbol: String? // converted, e.g. "Fm7"
     public var startUs: Int64
     public var endUs: Int64 // derived from the next event
+    public init(label: String, symbol: String?, startUs: Int64, endUs: Int64) {
+        self.label = label; self.symbol = symbol; self.startUs = startUs; self.endUs = endUs
+    }
 }
 
 /// Logic Chord ID candidates for one source and beat grid.
@@ -196,6 +199,9 @@ public struct AutoHarmony: Codable, Hashable, Sendable {
     public var toConfirm: [ConfirmPoint]
     public var key: KeySuggestion?
     public var sources: [String]
+    /// The model's view that the bar lines are off: move them by this many beats (halves allowed).
+    public var barShiftBeats: Double?
+    public var barReason: String?
     public init(runId: UUID, summary: String, chordInfo: [String: AutoChordInfo], toConfirm: [ConfirmPoint], key: KeySuggestion?, sources: [String]) {
         self.runId = runId; self.summary = summary; self.chordInfo = chordInfo; self.toConfirm = toConfirm; self.key = key; self.sources = sources
     }
@@ -342,7 +348,7 @@ public enum BarEvidence {
         grid.us(atQ: grid.barAnchorQ + Double(bar - 1) * grid.meter.quarterBeatsPerBar + (beat - 1))
     }
 
-    static func beatText(_ b: Double) -> String { b == b.rounded() ? String(Int(b)) : String(format: "%.1f", b) }
+    public static func beatText(_ b: Double) -> String { b == b.rounded() ? String(Int(b)) : String(format: "%.1f", b) }
 
     /// Compact text: per bar, the Logic candidates, then struck notes per eighth position for the
     /// user's corrected MIDI and for the two transcriptions (with which engine heard each note).

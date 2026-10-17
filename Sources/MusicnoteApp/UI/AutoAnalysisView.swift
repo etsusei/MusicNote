@@ -174,6 +174,11 @@ struct AutoResult: View {
                     Text(k.reason).font(.caption12).foregroundStyle(Theme.textSecondary).lineLimit(2)
                 }
             }
+            // Only while the grid is still the one the model analysed in (moving it hides the card).
+            if let sh = auto.barShiftBeats, sh != 0, harmony.params["barAnchorUs"] == String(grid.barAnchorUs ?? 0) {
+                BarShiftCard(text: "模型核对小节线后认为要整体挪动：" + (auto.barReason ?? "") + "（和弦时间不变，只是换个格子读。）",
+                             shift: sh, apply: { model.shiftBarLine(item.id, beats: sh) }, dismiss: nil)
+            }
             Legend()
             BarProgressionView(item: item, harmony: harmony, auto: auto, grid: grid)
             if !auto.toConfirm.isEmpty {

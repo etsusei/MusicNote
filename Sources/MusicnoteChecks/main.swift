@@ -405,5 +405,24 @@ do {
     eq(cal.barAnchor(clipStart: 2.25, clipEnd: 10), 0, "clip starting on a bar line has its anchor at 0")
 }
 
+// Bar-line check: chords that change every bar on the current beat 3 (with some pushed half a
+// beat early) mean the bar line is two beats off; a correct grid gets no suggestion.
+do {
+    let g = BeatGrid(bpm: 120, beatOriginUs: 0, barAnchorUs: 0) // beat 0.5 s, bar 2 s
+    func lg(_ starts: [Double]) -> [LogicChordEvent] {
+        starts.enumerated().map { n, s in LogicChordEvent(label: ["A", "B", "C#m", "G#m"][n % 4], symbol: ["A", "B", "C♯m", "G♯m"][n % 4],
+                                                          startUs: Int64(s * 1e6), endUs: Int64(((n + 1 < starts.count ? starts[n + 1] : s + 2)) * 1e6)) }
+    }
+    let off = lg([0, 1.0, 3.0, 5.0, 7.0, 8.75, 11.0, 12.75, 15.0])          // beat 3, some 3.5 pushes
+    let r = BarLineCheck.check(grid: g, durationUs: 16_000_000, logic: off, notes: [])
+    eq(r.suggestion, 2, "bar lines two beats off")
+    let ok = lg([0, 2, 4, 6, 7.75, 10, 12, 14])
+    check(BarLineCheck.check(grid: g, durationUs: 16_000_000, logic: ok, notes: []).suggestion == nil, "correct grid left alone")
+    var steady = SongGrid(ticks: (0..<40).map { Double($0) * 0.5 }, detectedBpm: 120, halfTime: false, beatsPerBar: 4, phase: 0, halfTimePhase: nil, margin: 1, fingerprint: "")
+    check(steady.steady(from: 2, to: 12), "steady beats")
+    steady.ticks = (0..<40).map { Double($0) * 0.375 }
+    check(!steady.steady(from: 2, to: 12), "beats locked to dotted eighths are not steady")
+}
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

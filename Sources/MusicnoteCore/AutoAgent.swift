@@ -24,6 +24,10 @@ public enum AutoAgent {
     1. inspect_analysis：看选区、速度网格、小节线、已有的证据和人工数据。
     2. run_logic_chords（原曲，四分拍点）拿到基础候选。
     3. 没有转录结果时对钢琴分轨各跑一次 MT3 和 MuScriptor，再 align_transcriptions。
+    3.5 小节线核对：拿到 Logic 和转录后调用一次 check_bar_lines。用户的小节线可能放错了（整曲拍点检测在切分节奏、前奏里常锁错），
+       如果换和弦点和低音换音大多落在第 3 拍或反拍上，说明网格偏了：不要把每个和弦都写成从第 3 拍开始、跨小节延续，
+       而是照常按现在网格写位置，并在 submit 的 barLine 里给出 shiftBeats 和理由。它还会给出和弦走向的重复周期：
+       前后两遍应当一致，一遍里看清楚的经过和弦、换和弦位置可以用来核对另一遍；两遍不一致的地方要么是真的变化，要么值得复核。
     4. 按乐句（每次最多 8 小节）调用 bar_evidence，把各路证据放在一起读。需要时可用 harmony_draft 看程序的分组草稿。
     5. 形成和弦走向：和弦卡在拍子上，通常一个和弦占一小节或半小节；经过和弦只在音确实变了的时候才占四分或八分；
        反拍按下并延续过下一拍的和弦算提前进入；伴奏节奏型反复按同一个和弦只算一个；旋律音不要当成和弦音，也不要简单删掉最高音或短音。
@@ -75,6 +79,8 @@ public enum AutoAgent {
                                  "source": ["type": "string", "enum": ["piano", "original"]]], ["bar", "beat", "endBar", "endBeat"])],
             ["name": "harmony_draft", "description": "程序按拍子分组 + 模板命名的草稿（参考用，可以整体推翻）。",
              "inputSchema": obj(["useUserMidi": bool])],
+            ["name": "check_bar_lines", "description": "小节线核对：Logic 换和弦点和低音换音落在小节第几拍、是否该整体挪小节线，以及和弦走向的重复周期。",
+             "inputSchema": obj([:])],
             ["name": "key_check", "description": "调性检查：用户设定的调、整段音频音级与大小调模板的吻合度、低音分布、和弦序列的调性评分并排列出。提交前必须调用一次。",
              "inputSchema": obj(["chords": ["type": "array", "items": str, "description": "你得出的和弦序列（按时间顺序），不给则用已保存的和声"]])],
             ["name": "note_review", "description": "记录一次定向复核：要分辨的问题、预期证据、操作、观察到的证据、决定、停止原因。复核前后各记一次即可。",
@@ -90,6 +96,7 @@ public enum AutoAgent {
                      "reason": str, "confidence": ["type": "string", "enum": ["high", "medium", "low"]],
                  ], ["bar", "beat", "symbol", "role"])],
                  "toConfirm": ["type": "array", "items": obj(["bar": int, "beat": num, "question": str], ["bar", "beat", "question"])],
+                 "barLine": obj(["shiftBeats": ["type": "number", "description": "小节线整体后移的拍数（负数为前移，可为 .5）"], "reason": str], ["shiftBeats", "reason"]),
              ], ["summary", "chords", "key"])],
         ]
     }

@@ -803,6 +803,42 @@ extension AppModel {
 
     func cancelAutoAnalysis(_ itemId: UUID) { autoTasks[itemId]?.cancel() }
 
+    /// Moves the bar lines by whole or half beats; note times stay. A half beat also moves the
+    /// beat phase. An adopted model result only needs re-reading in the new grid; a program
+    /// grouping depends on the bar lines, so it is redone.
+    func shiftBarLine(_ itemId: UUID, beats: Double) {
+        guard var item = item(itemId), var t = item.timing else { return }
+        let g = t.grid
+        let barUs = g.beatUs * g.meter.quarterBeatsPerBar
+        let current = Double(t.barAnchorUs ?? latestHarmony(itemId)?.barAnchorUs ?? t.beatOriginUs)
+        var a = current + beats * g.beatUs
+        while a < 0 { a += barUs }
+        while a >= barUs { a -= barUs }
+        t.barAnchorUs = Int64(a.rounded())
+        if beats != beats.rounded() { t.beatOriginUs = Int64(a.rounded()) }
+        item.timing = t
+        item.timingRevision += 1
+        save(item)
+        if var h = latestHarmony(itemId), h.params["algorithm"] == "agent" {
+            h.timingRevision = item.timingRevision
+            h.params["barAnchorUs"] = String(t.barAnchorUs ?? 0)
+            saveHarmony(h)
+        } else if item.isHarmonic, confirmedMidi(item) != nil {
+            runHarmony(itemId)
+        }
+    }
+
+    /// The bar-line check on what the clip has: Logic evidence if a model run made it, and the MIDI.
+    func barLineCheck(_ item: AnalysisItem) -> (BarLineCheck.Result, BeatGrid)? {
+        guard var g = item.timing?.grid, let midi = confirmedMidi(item) else { return nil }
+        if g.barAnchorUs == nil { g.barAnchorUs = latestHarmony(item.id)?.barAnchorUs }
+        let logic = store.all(ChordEvidence.self, owner: item.id).filter { $0.trimRevision == item.trimRevision }
+        let lg = (logic.last { $0.source == "original" } ?? logic.last)?.events ?? []
+        let r = BarLineCheck.check(grid: g, durationUs: item.durationUs, logic: lg,
+                                   notes: midi.notes.map { BarLineCheck.Note(pitch: $0.pitch, startUs: $0.startUs) })
+        return (r, g)
+    }
+
     /// Latest run that produced a result (a later failed or cancelled run doesn't hide it).
     func latestAutoResultRun(_ itemId: UUID) -> AutoRun? {
         store.all(AutoRun.self, owner: itemId).filter(\.submitted).max { $0.startedAt < $1.startedAt }

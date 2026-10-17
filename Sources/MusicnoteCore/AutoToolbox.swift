@@ -55,6 +55,14 @@ public final class AutoToolbox: @unchecked Sendable {
         return from...to
     }
 
+    /// Context read before the selection when the original is available: one bar (or what there
+    /// is), so chords already sounding at the clip start aren't missed. Results are always cut
+    /// back to the selection; the stems only cover the selection, so they get none.
+    func preRoll(_ source: String, _ i: AnalysisItem, _ g: BeatGrid) -> Int64 {
+        guard source == "original" else { return 0 }
+        return min(i.trimStartUs, Int64(g.beatUs * g.meter.quarterBeatsPerBar))
+    }
+
     /// Audio for a source, with the clip offset inside that file. Only the user's selection is reachable.
     func audio(_ source: String, _ i: AnalysisItem) throws -> (path: String, offset: Double) {
         switch source {
@@ -100,6 +108,7 @@ public final class AutoToolbox: @unchecked Sendable {
             case "local_audio_check": text = try await localCheck(args)
             case "harmony_draft": text = try await harmonyDraft(useUserMidi: args["useUserMidi"] as? Bool ?? true)
             case "key_check": text = try await keyCheck(chords: args["chords"] as? [String])
+            case "check_bar_lines": text = try barLineText()
             case "note_review": text = noteReview(args)
             case "submit_analysis": text = try await submit(args)
             default: throw WorkerError(code: "UNKNOWN_TOOL", message: "没有这个工具：\(name)", retryable: false)
@@ -174,15 +183,16 @@ public final class AutoToolbox: @unchecked Sendable {
             return "（复用已有结果）\n" + logicText(hit, g)
         }
         let (path, offset) = try audio(source, i)
+        let pre = preRoll(source, i, g)
         let div = gridMode == "eighth" ? 2.0 : 1.0
         var beats: [Double] = [], downbeats: [Double] = []
-        var q = ceil(g.q(atUs: 0) * div) / div
+        var q = ceil(g.q(atUs: -pre) * div) / div
         while true {
             let t = g.us(atQ: q)
             if t >= durationUs { break }
-            if t >= 0 {
-                beats.append(Double(t) / 1e6)
-                if g.isDownbeat(q: q) { downbeats.append(Double(t) / 1e6) }
+            if t >= -pre {
+                beats.append(Double(t + pre) / 1e6)
+                if g.isDownbeat(q: q) { downbeats.append(Double(t + pre) / 1e6) }
             }
             q += 1 / div
         }
@@ -192,16 +202,19 @@ public final class AutoToolbox: @unchecked Sendable {
         try JSONSerialization.data(withJSONObject: ["beats": beats, "downbeats": downbeats]).write(to: gridFile)
         nonisolated(unsafe) var result: [String: Any]?
         let w = WorkerProcess(tools.systemPython, [tools.workers + "/logic_chords_worker.py", "--audio", path,
-                                                   "--offset", String(offset), "--duration", String(durationUs.seconds),
+                                                   "--offset", String(offset - pre.seconds), "--duration", String((durationUs + pre).seconds),
                                                    "--grid-json", gridFile.path,
                                                    "--cache-dir", paths.root.appendingPathComponent("cache/logic").path,
                                                    "--ffmpeg", tools.ffmpeg])
         _ = try await w.run { line in if let o = decodeJSONLine(line) { result = o } }
         guard let result else { throw WorkerError(code: "ANALYSIS_FAILED", message: "Logic worker 没有输出") }
         if let e = result["error"] as? [String: Any] { throw WorkerError(code: e["code"] as? String ?? "ANALYSIS_FAILED", message: e["message"] as? String ?? "") }
+        // Back to clip time; a chord already sounding at the clip start begins at 0.
         let events = (result["events"] as? [[String: Any]] ?? []).compactMap { e -> LogicChordEvent? in
             guard let l = e["label"] as? String, let s = e["startSec"] as? Double, let en = e["endSec"] as? Double else { return nil }
-            return LogicChordEvent(label: l, symbol: LogicChordLabel.symbol(l), startUs: Int64(s * 1e6), endUs: Int64(en * 1e6))
+            let st = Int64(s * 1e6) - pre, end = Int64(en * 1e6) - pre
+            guard end > 50_000, st < durationUs else { return nil }
+            return LogicChordEvent(label: l, symbol: LogicChordLabel.symbol(l), startUs: max(0, st), endUs: min(durationUs, end))
         }
         let ev = ChordEvidence(analysisId: analysisId, trimRevision: trimRevision, timingRevision: i.timingRevision, source: source,
                                grid: gridMode, events: events, logicVersion: result["logicVersion"] as? String ?? "",
@@ -225,16 +238,19 @@ public final class AutoToolbox: @unchecked Sendable {
             return "（复用已有结果）" + transcriptionSummary(hit, try grid(i))
         }
         var (path, offset) = try audio(source, i)
-        var tmpClip: URL?
+        let pre = preRoll(source, i, try grid(i))
         if source == "original" {
-            // Decode just the selection; tools never see audio outside it.
+            // The selection plus one bar before it, so notes struck before the clip start and held
+            // into it are heard; results are cut back to the selection below.
             let dir = paths.jobs.appendingPathComponent("auto-\(run.id.uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let clip = dir.appendingPathComponent("original-clip.wav")
-            if !FileManager.default.fileExists(atPath: clip.path) { try await pipeline.extractClip(i, to: clip) }
-            path = clip.path; offset = 0; tmpClip = clip
+            let clip = dir.appendingPathComponent("original-preroll.wav")
+            if !FileManager.default.fileExists(atPath: clip.path) {
+                var wider = i; wider.trimStartUs -= pre
+                try await pipeline.extractClip(wider, to: clip)
+            }
+            path = clip.path; offset = 0
         }
-        _ = tmpClip
         nonisolated(unsafe) var notes: [EvidenceNote] = []
         nonisolated(unsafe) var dropped: [String: Int] = [:]
         nonisolated(unsafe) var failure: WorkerError?
@@ -243,7 +259,7 @@ public final class AutoToolbox: @unchecked Sendable {
         var params: [String: String] = ["source": source]
         if engine == "mt3" {
             w = WorkerProcess(tools.mt3Python, [tools.workers + "/mt3_worker.py", path, "--mt3-dir", tools.mt3Dir,
-                                                "--offset", String(offset), "--duration", String(durationUs.seconds),
+                                                "--offset", String(offset), "--duration", String((durationUs + pre).seconds),
                                                 "--programs", "0-5", "--device", "mps"])
             params["model"] = "mt3"; params["device"] = "mps (jax-mps)"; params["programs"] = "0-5 原声钢琴+电钢琴"
         } else {
@@ -269,8 +285,15 @@ public final class AutoToolbox: @unchecked Sendable {
         }
         if let failure { throw failure }
         guard r.status == 0 else { throw WorkerError(code: "TRANSCRIPTION_FAILED", message: String(r.stderr.suffix(300))) }
-        // Keep the notes inside the selection only.
-        notes = notes.filter { $0.startUs >= 0 && $0.startUs < durationUs }
+        // Back to clip time and inside the selection only; a note held in from the pre-roll starts at 0.
+        notes = notes.compactMap { n in
+            var n = n
+            n.startUs -= pre; n.endUs -= pre
+            guard n.endUs > 30_000, n.startUs < durationUs else { return nil }
+            n.startUs = max(0, n.startUs); n.endUs = min(durationUs, n.endUs)
+            return n
+        }
+        if pre > 0 { params["preRoll"] = String(format: "%.2fs", pre.seconds) }
         let ev = TranscriptionEvidence(analysisId: analysisId, trimRevision: trimRevision, engine: engine, source: source,
                                        params: params, notes: notes, dropped: dropped, seconds: secs)
         try store.save(ev)
@@ -325,6 +348,30 @@ public final class AutoToolbox: @unchecked Sendable {
         var text = BarEvidence.describe(bars: range, grid: g, durationUs: durationUs, key: i.timing?.key, sources: srcs)
         if to > range.upperBound { text += "\n（一次最多 8 小节，后面请再调用）" }
         return "位置写法：小节.拍（1.5 = 第 1 拍后半拍）。\n" + text
+    }
+
+    /// The bar-line check on this run's evidence (Logic boundaries keep their times whatever grid
+    /// they were run with; notes from the user's MIDI, else both transcriptions).
+    public func barLineResult() throws -> (BarLineCheck.Result, BeatGrid) {
+        let i = try item()
+        let g = try grid(i)
+        let logic = store.all(ChordEvidence.self, owner: analysisId).filter { $0.trimRevision == trimRevision }
+        let lg = (logic.last { $0.source == "original" } ?? logic.last)?.events ?? []
+        let notes: [BarLineCheck.Note] = confirmedMidi(i).map { $0.notes.map { BarLineCheck.Note(pitch: $0.pitch, startUs: $0.startUs) } }
+            ?? (aligned(source: "piano")?.merged.map { BarLineCheck.Note(pitch: $0.pitch, startUs: $0.startUs) } ?? [])
+        return (BarLineCheck.check(grid: g, durationUs: durationUs, logic: lg, notes: notes), g)
+    }
+
+    func barLineText() throws -> String {
+        let (r, g) = try barLineResult()
+        let i = try item()
+        var head = String(format: "现在的网格：%.1f BPM，%@，第 1 小节从选区 %.3f 秒开始%@。\n", g.bpm, g.meter.display,
+                          Double(g.barAnchorUs ?? 0) / 1e6, i.timing?.barAnchorUs == nil ? "（自动估计）" : "")
+        if store.all(ChordEvidence.self, owner: analysisId).filter({ $0.trimRevision == trimRevision }).isEmpty {
+            head += "（还没有 Logic 候选，只用了音符证据；先调用 run_logic_chords 会更可靠。）\n"
+        }
+        return head + BarLineCheck.describe(r, grid: g)
+            + "\n如果确认小节线不对：chords 的位置仍按现在的网格写（和弦的时间是对的），在 submit_analysis 的 barLine 里给出 shiftBeats 和理由，用户采纳后整体挪小节线。"
     }
 
     /// Tonal-centre evidence side by side: the key the user set, whole-selection audio pitch
@@ -537,6 +584,10 @@ public final class AutoToolbox: @unchecked Sendable {
                                            "barAnchorUs": String(g.barAnchorUs ?? 0), "barAnchorEstimated": i.timing?.barAnchorUs == nil ? "1" : "0"],
                                   namerVersion: "model \(run.provider) \(run.model)")
         rev.auto = AutoHarmony(runId: run.id, summary: a["summary"] as? String ?? "", chordInfo: infos, toConfirm: confirms, key: keyS, sources: sources.sorted())
+        if let bl = a["barLine"] as? [String: Any], let sh = doubleArg(bl["shiftBeats"]), sh != 0 {
+            rev.auto?.barShiftBeats = (sh * 2).rounded() / 2
+            rev.auto?.barReason = bl["reason"] as? String ?? ""
+        }
         // Kept with the run; the current harmony changes only when the user adopts it.
         run.proposal = rev
         save()

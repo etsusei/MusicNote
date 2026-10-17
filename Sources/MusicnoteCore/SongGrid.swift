@@ -120,6 +120,17 @@ public struct SongGrid: Codable, Hashable, Sendable {
         phase = best
     }
 
+    /// Whether the detected beats inside [from, to] keep the song's tempo. Beat trackers lock onto
+    /// syncopations in intros and breaks (dotted eighths at 3/4 of the beat, say); there the bar
+    /// lines are guesses and shouldn't be carried into the clip.
+    public func steady(from: Double, to: Double) -> Bool {
+        let inside = ticks.filter { $0 >= from && $0 <= to }
+        guard inside.count >= 6 else { return false }
+        let d = zip(inside.dropFirst(), inside).map { $0 - $1 }.sorted()
+        let median = d[d.count / 2]
+        return abs(median / (60 / detectedBpm) - 1) < 0.08
+    }
+
     /// Bar line at or just after a clip start (within 60 ms before counts as on it), relative to it.
     public func barAnchor(clipStart: Double, clipEnd: Double) -> Double? {
         downbeats(from: clipStart - 0.06, to: clipEnd).first.map { max(0, $0 - clipStart) }

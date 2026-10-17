@@ -47,6 +47,7 @@ struct NotesStage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 summary
+                if item.isHarmonic { BarLineHint(item: item) }
                 if item.isHarmonic { AutoAnalysisSection(item: item) }
                 let stale = model.harmonyStale(item)
                 if !stale.isEmpty {
@@ -767,5 +768,48 @@ struct VoicingList: View {
                 }
             }
         }
+    }
+}
+
+/// Shown when the chords keep changing away from beat 1: the bar lines (not the chords) are
+/// probably off. One click moves them; note times never change.
+struct BarLineHint: View {
+    @Environment(AppModel.self) private var model
+    var item: AnalysisItem
+    @AppStorage("barHintDismissed") private var dismissed = "" // "itemId:timingRevision" entries
+
+    private var key: String { "\(item.id.uuidString):\(item.timingRevision)" }
+
+    var body: some View {
+        if !dismissed.contains(key), let (r, _) = model.barLineCheck(item), let shift = r.suggestion {
+            BarShiftCard(text: String(format: "换和弦点和低音换音大多落在现在的%@（%.0f%%），第 1 拍上只有 %.0f%%。和弦的时间没错，是小节线放偏了：和弦会显示成从小节中间开始、跨小节延续。",
+                                      r.best.shiftBeats == r.best.shiftBeats.rounded() ? "第 \(Int(r.best.shiftBeats) + 1) 拍" : "第 \(Int(r.best.shiftBeats) + 1) 拍后半",
+                                      r.best.share * 100, r.currentShare * 100),
+                         shift: shift, apply: { model.shiftBarLine(item.id, beats: shift) },
+                         dismiss: { dismissed += " " + key })
+        }
+    }
+}
+
+struct BarShiftCard: View {
+    var text: String
+    var shift: Double
+    var apply: () -> Void
+    var dismiss: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "metronome").foregroundStyle(Theme.warning)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("小节线可能放错了").font(.system(size: 13, weight: .semibold))
+                Text(text).font(.caption12).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("小节线\(shift > 0 ? "后移" : "前移") \(BarEvidence.beatText(abs(shift))) 拍") { apply() }.buttonStyle(PrimaryButtonStyle())
+            if let dismiss { Button("保持现状") { dismiss() }.buttonStyle(SecondaryButtonStyle(compact: true)) }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.warning.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.warning.opacity(0.4)))
     }
 }

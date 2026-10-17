@@ -313,7 +313,10 @@ struct SelectionStage: View {
                     edgeStatus("终点", selection.upperBound)
                     let n = barLabels.count
                     if n > 0 { Text("选区内 \(n) 个小节线").font(.caption12).foregroundStyle(Theme.textSecondary) }
-                    if g.margin < 0.3 {
+                    if !g.steady(from: sec(selection.lowerBound), to: sec(selection.upperBound)) {
+                        Label("这段的拍点不稳（可能锁到了切分节奏），小节线只能参考：吸附后务必用节拍器听一下", systemImage: "exclamationmark.triangle")
+                            .font(.caption12).foregroundStyle(Theme.warning)
+                    } else if g.margin < 0.3 {
                         Label("小节线位置把握不大：打开节拍器听一下重拍，不对就用 ‹ › 挪一拍", systemImage: "ear")
                             .font(.caption12).foregroundStyle(Theme.warning)
                     }
