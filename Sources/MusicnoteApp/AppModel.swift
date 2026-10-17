@@ -540,7 +540,7 @@ final class AppModel {
         let pid = providerId ?? settings.defaultProvider
         guard let provider = providers[pid] else { return }
         let model = settings.providerModels[pid]
-        let effort = settings.providerEfforts[pid]
+        let effort = validEffort(pid, model: model, effort: settings.providerEfforts[pid])
         var sk = Skeleton(analysisId: itemId, harmonyRevision: harmony.revision, provider: pid, model: model ?? "默认")
         try? store.save(sk)
         skeletonRunning.insert(itemId)

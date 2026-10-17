@@ -41,6 +41,19 @@ struct SettingsPage: View {
                                 }.buttonStyle(SecondaryButtonStyle(compact: true))
                             }
                         }
+                        Divider()
+                        Text("默认模型与推理强度（新会话和 LLM 骨架使用；聊天里还可以按会话单独改）").font(.caption12).foregroundStyle(Theme.textSecondary)
+                        ForEach(model.providers.keys.sorted(), id: \.self) { id in
+                            HStack {
+                                Text(model.providers[id]!.displayName).frame(width: 110, alignment: .leading)
+                                ModelEffortPicker(fixedProvider: id,
+                                                  modelId: Binding(get: { model.settings.providerModels[id] },
+                                                                   set: { model.settings.providerModels[id] = $0; model.saveSettings() }),
+                                                  effort: Binding(get: { model.validEffort(id, model: model.settings.providerModels[id], effort: model.settings.providerEfforts[id]) },
+                                                                  set: { model.settings.providerEfforts[id] = $0; model.saveSettings() }))
+                                Spacer()
+                            }
+                        }
                         Picker("骨架默认使用", selection: Binding(get: { model.settings.defaultProvider }, set: { model.settings.defaultProvider = $0; model.saveSettings() })) {
                             ForEach(model.providers.keys.sorted(), id: \.self) { Text(model.providers[$0]!.displayName).tag($0) }
                         }.frame(width: 260)

@@ -33,6 +33,11 @@ public struct ProviderModel: Hashable, Sendable, Identifiable {
     public var defaultEffort: String?
     public var isDefault: Bool
     public var verified: Bool // false = 能力未确认
+
+    public init(id: String, name: String, efforts: [String], defaultEffort: String?, isDefault: Bool, verified: Bool) {
+        self.id = id; self.name = name; self.efforts = efforts; self.defaultEffort = defaultEffort
+        self.isDefault = isDefault; self.verified = verified
+    }
 }
 
 public struct ProviderTurn: Sendable {

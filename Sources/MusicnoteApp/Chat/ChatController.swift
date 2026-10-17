@@ -37,7 +37,9 @@ final class ChatController {
     var store: Store { app.store }
 
     func newConversation() {
-        let c = Conversation(provider: app.settings.defaultProvider)
+        var c = Conversation(provider: app.settings.defaultProvider)
+        c.model = app.settings.providerModels[c.provider]
+        c.effort = app.settings.providerEfforts[c.provider]
         try? store.save(c)
         conversations.insert(c, at: 0)
         select(c.id)
@@ -196,7 +198,7 @@ final class ChatController {
         let pid = conv.provider
         guard let provider = app.providers[pid] else { return }
         let model = conv.model ?? app.settings.providerModels[pid]
-        let effort = conv.effort ?? app.settings.providerEfforts[pid]
+        let effort = app.validEffort(pid, model: model, effort: conv.effort ?? app.settings.providerEfforts[pid])
         sending = true
         streamingText = ""
         lastError = nil

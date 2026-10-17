@@ -37,40 +37,49 @@ struct ChatPanel: View {
                 Button { chat.newConversation(); showList = false } label: { Image(systemName: "square.and.pencil") }
                     .buttonStyle(.borderless).help("新会话")
             }
-            if let conv = chat.current { providerRow(conv) }
+            statusRow
         }
         .padding(10)
     }
 
-    private func providerRow(_ conv: Conversation) -> some View {
-        let status = model.providerStatus[conv.provider]
-        let models = model.providerModels[conv.provider] ?? []
-        let current = models.first { $0.id == (conv.model ?? model.settings.providerModels[conv.provider]) } ?? models.first { $0.isDefault }
+    /// Provider used by the current conversation, or the default for the next one.
+    private var activeProvider: String { chat.current?.provider ?? model.settings.defaultProvider }
+
+    private var statusRow: some View {
+        let pid = activeProvider
+        let status = model.providerStatus[pid]
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Picker("", selection: Binding(get: { conv.provider }, set: { p in var c = conv; c.provider = p; c.model = nil; c.effort = nil; chat.update(c) })) {
-                    ForEach(model.providers.keys.sorted(), id: \.self) { Text(model.providers[$0]!.displayName).tag($0) }
-                }.frame(width: 120)
-                Picker("", selection: Binding(get: { current?.id ?? "" }, set: { m in var c = conv; c.model = m; c.effort = nil; chat.update(c) })) {
-                    ForEach(models) { Text($0.name + ($0.verified ? "" : "（能力未确认）")).tag($0.id) }
-                }.frame(maxWidth: .infinity).disabled(models.isEmpty)
-                if let efforts = current?.efforts, !efforts.isEmpty {
-                    Picker("", selection: Binding(get: { conv.effort ?? current?.defaultEffort ?? efforts.first! }, set: { e in var c = conv; c.effort = e; chat.update(c) })) {
-                        ForEach(efforts, id: \.self) { Text($0).tag($0) }
-                    }.frame(width: 80)
-                }
-            }
-            HStack(spacing: 6) {
-                StatusPill(text: status?.state.display ?? "…", color: status?.state == .connected ? Theme.success : Theme.warning)
+                StatusPill(text: "\(model.providers[pid]?.displayName ?? pid) · \(status?.state.display ?? "…")",
+                           color: status?.state == .connected ? Theme.success : Theme.warning)
                 if let note = status?.quotaNote { Text(note).font(.system(size: 10)).foregroundStyle(Theme.textSecondary).lineLimit(1) }
                 Spacer()
                 if status?.state != .connected {
-                    Button("连接 \(model.providers[conv.provider]?.displayName ?? "")") { login(conv.provider) }
-                        .buttonStyle(SecondaryButtonStyle(compact: true))
+                    Button("连接") { login(pid) }.buttonStyle(SecondaryButtonStyle(compact: true))
                 }
             }
-            usageLine(conv)
+            if let conv = chat.current { usageLine(conv) }
         }
+    }
+
+    /// Model choice bound to the current conversation, or to the defaults when there is none.
+    private var modelChoice: some View {
+        if let conv = chat.current {
+            return AnyView(ModelEffortPicker(
+                provider: Binding(get: { conv.provider }, set: { p in var c = conv; c.provider = p; c.model = nil; c.effort = nil; chat.update(c) }),
+                modelId: Binding(get: { conv.model ?? model.settings.providerModels[conv.provider] },
+                                 set: { m in var c = conv; c.model = m; chat.update(c) }),
+                effort: Binding(get: { model.validEffort(conv.provider, model: conv.model ?? model.settings.providerModels[conv.provider],
+                                                         effort: conv.effort ?? model.settings.providerEfforts[conv.provider]) },
+                                set: { e in var c = conv; c.effort = e; chat.update(c) }),
+                onNote: { chat.statusNote = $0 }))
+        }
+        let pid = model.settings.defaultProvider
+        return AnyView(ModelEffortPicker(
+            provider: Binding(get: { model.settings.defaultProvider }, set: { model.settings.defaultProvider = $0; model.saveSettings() }),
+            modelId: Binding(get: { model.settings.providerModels[pid] }, set: { model.settings.providerModels[pid] = $0; model.saveSettings() }),
+            effort: Binding(get: { model.settings.providerEfforts[pid] }, set: { model.settings.providerEfforts[pid] = $0; model.saveSettings() }),
+            onNote: { chat.statusNote = $0 }))
     }
 
     private func usageLine(_ conv: Conversation) -> some View {
@@ -167,10 +176,11 @@ struct ChatPanel: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Theme.background))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.controlBorder.opacity(0.5)))
             .popover(isPresented: $showMentions, arrowEdge: .top) { mentionPicker }
-            HStack {
+            HStack(spacing: 6) {
                 Button { showMentions = true; if !chat.draft.hasSuffix("@") { chat.draft += "@" } } label: { Image(systemName: "at") }
                     .buttonStyle(.borderless).help("引用")
-                Spacer()
+                modelChoice
+                Spacer(minLength: 4)
                 if chat.sending {
                     Button("停止") { chat.cancel() }.buttonStyle(SecondaryButtonStyle(compact: true))
                 } else {
