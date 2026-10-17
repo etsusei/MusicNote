@@ -16,6 +16,9 @@ if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "autoanalyze" {
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "skeleton" {
     exit(await runSkeleton(Array(CommandLine.arguments.dropFirst())))
 }
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "tool" {
+    exit(await runTool(Array(CommandLine.arguments.dropFirst())))
+}
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "adopt" {
     exit(runAdopt(Array(CommandLine.arguments.dropFirst())))
 }
@@ -378,6 +381,12 @@ do {
     check(st.all(HarmonyRevision.self, owner: a.id).isEmpty && st.all(AutoRun.self, owner: a.id).isEmpty && st.fetch(AnalysisItem.self, id: a.id) == nil, "item and everything it owns deleted")
     check(st.all(HarmonyRevision.self, owner: b.id).count == 1 && st.all(AutoRun.self, owner: b.id).count == 1, "other items untouched")
 } catch { check(false, "store: \(error)") }
+
+// Key profiles: a C-major scale weighting fits C major best; the same notes centred on A fit A minor.
+let cMajScale: [Double] = [1, 0, 0.6, 0, 0.8, 0.6, 0, 0.9, 0, 0.6, 0, 0.5]
+eq(KeyProfile.fits(cMajScale).first.map { "\($0.tonic)\($0.minor)" }, "0false", "C major profile")
+let aMin: [Double] = [0.6, 0, 0.5, 0, 0.8, 0.5, 0, 0.5, 0, 1, 0, 0.6]
+eq(KeyProfile.fits(aMin).first.map { "\($0.tonic)\($0.minor)" }, "9true", "A minor profile")
 
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

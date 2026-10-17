@@ -79,3 +79,29 @@ public extension Degrees {
         return symbols.compactMap { tagStep(symbol: $0, key: ref) }.joined(separator: "-")
     }
 }
+
+/// Krumhansl–Kessler key profiles: correlation of a 12-bin pitch-class profile (index 0 = C)
+/// with each major and minor key.
+public enum KeyProfile {
+    static let major: [Double] = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+    static let minor: [Double] = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+
+    public struct Fit: Sendable { public var tonic: Int; public var minor: Bool; public var r: Double }
+
+    public static func fits(_ v: [Double]) -> [Fit] {
+        guard v.count == 12 else { return [] }
+        func corr(_ a: [Double], _ b: [Double]) -> Double {
+            let ma = a.reduce(0, +) / 12, mb = b.reduce(0, +) / 12
+            var num = 0.0, da = 0.0, db = 0.0
+            for i in 0..<12 { num += (a[i] - ma) * (b[i] - mb); da += (a[i] - ma) * (a[i] - ma); db += (b[i] - mb) * (b[i] - mb) }
+            return da == 0 || db == 0 ? 0 : num / (da * db).squareRoot()
+        }
+        var out: [Fit] = []
+        for t in 0..<12 {
+            let rot = (0..<12).map { v[($0 + t) % 12] }
+            out.append(Fit(tonic: t, minor: false, r: corr(rot, major)))
+            out.append(Fit(tonic: t, minor: true, r: corr(rot, minor)))
+        }
+        return out.sorted { $0.r > $1.r }
+    }
+}

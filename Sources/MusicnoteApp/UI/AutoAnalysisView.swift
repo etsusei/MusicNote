@@ -164,9 +164,15 @@ struct AutoResult: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !auto.summary.isEmpty { Text(auto.summary).font(.system(size: 14, weight: .medium)) }
-            if let k = auto.key, !k.agreesWithCurrent, let key = k.key {
-                KeyCorrectionCard(title: "模型判断的调：\(k.modeName.isEmpty ? key.display : k.modeName)", reason: k.reason,
+            if let k = auto.key, let key = k.key, key != item.timing?.key {
+                KeyCorrectionCard(title: "调性检查：模型判断是 \(k.modeName.isEmpty ? key.display : k.modeName)，和你设定的 \(item.timing?.key.display ?? "") 不同", reason: k.reason,
                                   apply: { model.applyKey(item.id, key) }, applyTitle: "改为 \(key.display)", dismiss: nil)
+            } else if let k = auto.key {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "checkmark.circle").foregroundStyle(Theme.success)
+                    Text("调性检查：\(k.modeName.isEmpty ? (k.key?.display ?? "") : k.modeName)，与设定一致").font(.system(size: 12, weight: .semibold))
+                    Text(k.reason).font(.caption12).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                }
             }
             Legend()
             BarProgressionView(item: item, harmony: harmony, auto: auto, grid: grid)

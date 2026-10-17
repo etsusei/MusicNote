@@ -270,3 +270,20 @@ func runAdopt(_ args: [String]) -> Int32 {
         return 0
     } catch { print(error.localizedDescription); return 1 }
 }
+
+/// Calls one autonomous-analysis tool directly (no model): `tool DATA_ROOT ANALYSIS_ID NAME [JSON_ARGS]`.
+/// Reads go through the same scope checks; nothing is submitted unless NAME is submit_analysis.
+func runTool(_ args: [String]) async -> Int32 {
+    guard args.count >= 4, let id = UUID(uuidString: args[2]) else { print("usage: tool DATA_ROOT ANALYSIS_ID NAME [JSON]"); return 2 }
+    let paths = AppPaths(root: URL(fileURLWithPath: args[1]))
+    guard let store = try? Store(url: paths.database), let item = store.fetch(AnalysisItem.self, id: id) else { print("no item"); return 2 }
+    let root = FileManager.default.currentDirectoryPath
+    let tools = ToolSettings.defaults(projectRoot: root, separatorBinary: root + "/.build/debug/musicnote-separate")
+    let run = AutoRun(analysisId: id, trimRevision: item.trimRevision, provider: "cli", model: "-", maxToolCalls: 99, maxSeconds: 9999)
+    let box = AutoToolbox(store: store, paths: paths, tools: tools, item: item, run: run)
+    let json = args.count > 4 ? ((try? JSONSerialization.jsonObject(with: Data(args[4].utf8))) as? [String: Any] ?? [:]) : [:]
+    let (text, ok) = await box.call(args[3], json)
+    print(ok ? "OK" : "FAILED"); print(text)
+    paths.removeOwned(paths.jobs.appendingPathComponent("auto-\(run.id.uuidString)", isDirectory: true))
+    return ok ? 0 : 1
+}

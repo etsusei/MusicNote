@@ -31,7 +31,9 @@ public enum AutoAgent {
     6. 疑难复核：只在会影响结论的地方做，比如根音/性质分歧、疑似漏掉的短和弦、决定性质的那个音没有证据、重复乐句解释互相矛盾。
        复核前先用 note_review 写下要分辨的问题和什么新证据会改变结论；复核后再用 note_review 记录观察到的证据、决定和停止原因。
        同样的方法查不出新信息就换证据来源或停止，把仍不确定的位置放进 toConfirm，不要为了“确定”而硬猜。
-    7. submit_analysis 提交（结果先等用户采用，再替换当前和声）。之后用一两句中文结束，不要提版本号。
+    7. 调性检查（必做一次）：和弦走向成形后调用 key_check，把你的和弦序列按顺序传进 chords。它并排给出用户设定的调、整段音频音级与大小调模板的吻合度、
+       低音分布和和弦调性评分。用户设定的调可能是错的（比如听成了关系大小调），以证据为准；结论和理由写进 submit 的 key，与用户设定不同就说清楚依据。
+    8. submit_analysis 提交（结果先等用户采用，再替换当前和声）。之后用一两句中文结束，不要提版本号。
 
     规则：
     - 只能分析这个选区；工具会拒绝选区外的请求。不要修改用户的 MIDI、笔记和标签（工具也不提供这种能力）。
@@ -73,20 +75,22 @@ public enum AutoAgent {
                                  "source": ["type": "string", "enum": ["piano", "original"]]], ["bar", "beat", "endBar", "endBeat"])],
             ["name": "harmony_draft", "description": "程序按拍子分组 + 模板命名的草稿（参考用，可以整体推翻）。",
              "inputSchema": obj(["useUserMidi": bool])],
+            ["name": "key_check", "description": "调性检查：用户设定的调、整段音频音级与大小调模板的吻合度、低音分布、和弦序列的调性评分并排列出。提交前必须调用一次。",
+             "inputSchema": obj(["chords": ["type": "array", "items": str, "description": "你得出的和弦序列（按时间顺序），不给则用已保存的和声"]])],
             ["name": "note_review", "description": "记录一次定向复核：要分辨的问题、预期证据、操作、观察到的证据、决定、停止原因。复核前后各记一次即可。",
              "inputSchema": obj(["question": str, "expectedEvidence": str, "operation": str, "observedEvidence": str,
                                  "decision": str, "stopReason": str], ["question"])],
             ["name": "submit_analysis", "description": "提交最终结果（保存为待用户采用的结果；用户采用后才替换当前和声，不改动用户的 MIDI/笔记）。可在同一次分析中重复提交以覆盖。",
              "inputSchema": obj([
                  "summary": str,
-                 "key": obj(["tonic": str, "mode": ["type": "string", "enum": ["major", "minor"]], "name": str, "reason": str]),
+                 "key": obj(["tonic": str, "mode": ["type": "string", "enum": ["major", "minor"]], "name": str, "reason": str], ["tonic", "mode", "reason"]),
                  "chords": ["type": "array", "items": obj([
                      "bar": int, "beat": num, "symbol": str,
                      "role": ["type": "string", "enum": ["backbone", "passing", "connecting", "substitute", "color"]],
                      "reason": str, "confidence": ["type": "string", "enum": ["high", "medium", "low"]],
                  ], ["bar", "beat", "symbol", "role"])],
                  "toConfirm": ["type": "array", "items": obj(["bar": int, "beat": num, "question": str], ["bar", "beat", "question"])],
-             ], ["summary", "chords"])],
+             ], ["summary", "chords", "key"])],
         ]
     }
 

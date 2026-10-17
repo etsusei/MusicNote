@@ -99,6 +99,7 @@ public final class AutoToolbox: @unchecked Sendable {
             case "bar_evidence": text = try barEvidence(from: intArg(args["fromBar"]) ?? 1, to: intArg(args["toBar"]) ?? 4)
             case "local_audio_check": text = try await localCheck(args)
             case "harmony_draft": text = try await harmonyDraft(useUserMidi: args["useUserMidi"] as? Bool ?? true)
+            case "key_check": text = try await keyCheck(chords: args["chords"] as? [String])
             case "note_review": text = noteReview(args)
             case "submit_analysis": text = try await submit(args)
             default: throw WorkerError(code: "UNKNOWN_TOOL", message: "没有这个工具：\(name)", retryable: false)
@@ -326,6 +327,68 @@ public final class AutoToolbox: @unchecked Sendable {
         return "位置写法：小节.拍（1.5 = 第 1 拍后半拍）。\n" + text
     }
 
+    /// Tonal-centre evidence side by side: the key the user set, whole-selection audio pitch
+    /// classes (with major/minor profile fits), where the bass sits, and how the chords score
+    /// as a progression. Relative keys share a scale, so the chords and the bass decide.
+    func keyCheck(chords: [String]?) async throws -> String {
+        let i = try item()
+        let flats = Pitch.prefersFlats(i.timing?.key)
+        func name(_ pc: Int, _ minor: Bool) -> String { Pitch.noteName(60 + pc, flats: flats).filter { !$0.isNumber } + (minor ? " 小调" : " 大调") }
+        var lines = ["用户设定：\(i.timing?.key.display ?? "未设")"]
+        if let d = i.detection, d.trimRevision == trimRevision, let k = d.rawKey {
+            lines.append("Essentia 整段检测：\(k) \(d.rawScale ?? "")" + (d.keyStrength.map { String(format: "（强度 %.2f）", $0) } ?? ""))
+        }
+        // Whole selection, original mix.
+        let (path, offset) = try audio("original", i)
+        nonisolated(unsafe) var res: [String: Any]?
+        let w = WorkerProcess(tools.essentiaPython, [tools.workers + "/essentia_worker.py", "chroma", path,
+                                                     "--start", String(offset), "--end", String(offset + Double(durationUs) / 1e6)])
+        _ = try await w.run { line in if let o = decodeJSONLine(line) { res = o } }
+        let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+        if let c = res?["chroma"] as? [String: Double] {
+            let v = names.map { c[$0] ?? 0 }
+            lines.append("整段音频音级能量（原曲混音）：" + (0..<12).sorted { v[$0] > v[$1] }.prefix(8)
+                .map { String(format: "%@ %.2f", Pitch.noteName(60 + $0, flats: flats).filter { !$0.isNumber }, v[$0]) }.joined(separator: "，"))
+            let fits = KeyProfile.fits(v).prefix(4)
+            lines.append("音级与大/小调模板的吻合度（Krumhansl，越接近 1 越像）：" + fits.map { String(format: "%@ %.2f", name($0.tonic, $0.minor), $0.r) }.joined(separator: "，"))
+        }
+        // Bass: the lowest sounding note per eighth, weighted by time.
+        let notes = confirmedMidi(i)?.notes.map { (p: $0.pitch, s: $0.startUs, e: $0.endUs) }
+            ?? (latestTranscription("muscriptor", "piano")?.notes.map { (p: $0.pitch, s: $0.startUs, e: $0.endUs) } ?? [])
+        if !notes.isEmpty {
+            let g = try grid(i)
+            var bass = [Double](repeating: 0, count: 12)
+            var t = Int64(0)
+            let step = Int64(g.beatUs / 2)
+            while t < durationUs {
+                if let low = notes.filter({ $0.s <= t && $0.e > t }).min(by: { $0.p < $1.p }) { bass[low.p % 12] += 1 }
+                t += step
+            }
+            let total = max(1, bass.reduce(0, +))
+            lines.append("低音停留（按八分点计）：" + (0..<12).filter { bass[$0] > 0 }.sorted { bass[$0] > bass[$1] }.prefix(6)
+                .map { "\(Pitch.noteName(60 + $0, flats: flats).filter { !$0.isNumber }) \(Int(bass[$0] / total * 100))%" }.joined(separator: "，"))
+        }
+        // Chords: the model's own sequence if given, otherwise the saved harmony.
+        let evs: [ChordEvent]
+        if let chords, !chords.isEmpty {
+            evs = chords.enumerated().compactMap { n, sym in
+                ChordSymbol.parse(sym) == nil ? nil : ChordEvent(id: "k\(n)", order: n, startUs: Int64(n) * 1_000_000, endUs: Int64(n + 1) * 1_000_000, noteIds: [], noteRoles: [:],
+                                                               texture: .block, excludedNoteIds: [], namingPitches: [], candidates: [], symbol: sym,
+                                                               namingSource: .agent, manualOverride: false, degree: nil, bassPitch: nil)
+            }
+            lines.append("和弦序列（你给的，按等长计）：" + chords.joined(separator: " "))
+        } else {
+            evs = latestHarmony()?.events ?? []
+            lines.append("和弦序列（已保存的和声）：" + evs.compactMap(\.symbol).joined(separator: " "))
+        }
+        for c in KeyEstimator.candidates(events: evs, limit: 3) {
+            lines.append(String(format: "和弦调性评分 %@ %.2f：", c.key.display, c.score) + c.reasons.joined(separator: "；"))
+        }
+        lines.append("提示：关系大小调（如 E♭ 大调 / C 小调）音阶相同，音级能量分不开；看主和弦停在哪、终止式落在哪、低音围绕谁，以及是否出现导音（小调的还原 7 级）。"
+                     + "结论写进 submit_analysis 的 key，理由要说出你依据的是哪几条。")
+        return lines.joined(separator: "\n")
+    }
+
     func localCheck(_ args: [String: Any]) async throws -> String {
         let i = try item()
         let g = try grid(i)
@@ -429,6 +492,8 @@ public final class AutoToolbox: @unchecked Sendable {
                                                                                confidence: c["confidence"] as? String ?? "medium"), where_: w))
         }
         if chords.isEmpty { errors.append("chords 为空") }
+        if !run.steps.contains(where: { $0.tool == "key_check" && $0.ok }) { errors.append("提交前要先调用一次 key_check 做调性检查") }
+        if (a["key"] as? [String: Any])?["tonic"] == nil { errors.append("缺少 key：写出你判断的调（tonic、mode）和理由") }
         let sorted = chords.sorted { $0.start < $1.start }
         for (x, y) in zip(sorted, sorted.dropFirst()) where y.start - x.start < 50_000 { errors.append("\(x.where_) 和 \(y.where_) 起点重叠") }
         guard errors.isEmpty else { return "NOT_SAVED，请修正后重新提交：\n" + errors.joined(separator: "\n") }
