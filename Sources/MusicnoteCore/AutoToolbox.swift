@@ -55,6 +55,8 @@ public final class AutoToolbox: @unchecked Sendable {
         return from...to
     }
 
+    var scratchDir: URL { paths.jobs.appendingPathComponent("auto-\(run.id.uuidString)", isDirectory: true) }
+
     /// Context read before the selection when the original is available: one bar (or what there
     /// is), so chords already sounding at the clip start aren't missed. Results are always cut
     /// back to the selection; the stems only cover the selection, so they get none.
@@ -182,8 +184,12 @@ public final class AutoToolbox: @unchecked Sendable {
             .last(where: { $0.trimRevision == trimRevision && $0.timingRevision == i.timingRevision && $0.source == source && $0.grid == gridMode }) {
             return "（复用已有结果）\n" + logicText(hit, g)
         }
-        let (path, offset) = try audio(source, i)
-        let pre = preRoll(source, i, g)
+        var (path, offset) = try audio(source, i)
+        var pre = preRoll(source, i, g)
+        if source == "piano", let stem = i.selectedStem, let asset = i.separation?.stem(stem) {
+            let input = try await pipeline.stemForTranscription(asset, leadInUs: i.separation?.leadInUs, workDir: scratchDir)
+            path = input.path; offset = input.leadInUs.seconds; pre = input.leadInUs
+        }
         let div = gridMode == "eighth" ? 2.0 : 1.0
         var beats: [Double] = [], downbeats: [Double] = []
         var q = ceil(g.q(atUs: -pre) * div) / div
@@ -238,7 +244,12 @@ public final class AutoToolbox: @unchecked Sendable {
             return "（复用已有结果）" + transcriptionSummary(hit, try grid(i))
         }
         var (path, offset) = try audio(source, i)
-        let pre = preRoll(source, i, try grid(i))
+        var pre = preRoll(source, i, try grid(i))
+        if source == "piano", let stem = i.selectedStem, let asset = i.separation?.stem(stem) {
+            // The stem plus its lead-in (separated together), for chords held into the selection.
+            let input = try await pipeline.stemForTranscription(asset, leadInUs: i.separation?.leadInUs, workDir: scratchDir)
+            path = input.path; offset = 0; pre = input.leadInUs
+        }
         if source == "original" {
             // The selection plus one bar before it, so notes struck before the clip start and held
             // into it are heard; results are cut back to the selection below.

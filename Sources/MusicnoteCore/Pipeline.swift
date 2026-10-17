@@ -159,10 +159,14 @@ public final class Pipeline: @unchecked Sendable {
             throw WorkerError(code: "TEMPO_KEY_UNCONFIRMED", message: "需要先确认速度与调性", retryable: false)
         }
         try FileManager.default.createDirectory(at: jobDir, withIntermediateDirectories: true)
+        let leadIn = Self.leadIn(item)
+        let leadFrames = Int64((Double(leadIn) * 44_100 / 1_000_000).rounded())
         let clip = jobDir.appendingPathComponent("clip.wav")
         if !FileManager.default.fileExists(atPath: clip.path) {
             progress(StageProgress("裁剪选区"))
-            try await extractClip(item, to: clip)
+            var wider = item
+            wider.trimStartUs -= leadIn
+            try await extractClip(wider, to: clip)
         }
         let wavDir = jobDir.appendingPathComponent("wav"), mp3Dir = jobDir.appendingPathComponent("mp3")
         for d in [wavDir, mp3Dir] { paths.removeOwned(d) }
@@ -182,6 +186,26 @@ public final class Pipeline: @unchecked Sendable {
         try Task.checkCancellation()
         if let failure { throw failure }
         guard r.status == 0 else { throw WorkerError(code: "SEPARATION_FAILED", message: "拆轨失败：\(r.stderr.suffix(300))") }
+
+        // Split each stem: the lead-in goes to a small FLAC, the rest is exactly the selection.
+        let leadDir = jobDir.appendingPathComponent("leadin")
+        paths.removeOwned(leadDir)
+        if leadFrames > 0 {
+            try FileManager.default.createDirectory(at: leadDir, withIntermediateDirectories: true)
+            for name in StemKind.allCases.map(\.rawValue) {
+                let wav = wavDir.appendingPathComponent("\(name).wav")
+                guard FileManager.default.fileExists(atPath: wav.path) else { continue }
+                let head = leadDir.appendingPathComponent("\(name)-leadin.flac"), body = wavDir.appendingPathComponent("\(name).body.wav")
+                for (args, label) in [(["-af", "atrim=end_sample=\(leadFrames)", "-c:a", "flac", head.path], "前导"),
+                                      (["-af", "atrim=start_sample=\(leadFrames),asetpts=PTS-STARTPTS", "-c:a", "pcm_f32le", body.path], "选区")] {
+                    let w = WorkerProcess(tools.ffmpeg, ["-v", "error", "-nostdin", "-y", "-i", wav.path] + args)
+                    let rr = try await w.run()
+                    guard rr.status == 0 else { throw WorkerError(code: "SEPARATION_FAILED", message: "切分\(label)失败：\(rr.stderr.suffix(200))") }
+                }
+                try FileManager.default.removeItem(at: wav)
+                try FileManager.default.moveItem(at: body, to: wav)
+            }
+        }
 
         progress(StageProgress("编码 192 kbps MP3"))
         nonisolated(unsafe) var manifest: [String: Any]?
@@ -204,25 +228,38 @@ public final class Pipeline: @unchecked Sendable {
         var stems: [StemAsset] = []
         for s in manifest["stems"] as? [[String: Any]] ?? [] {
             guard let name = s["stem"] as? String, let kind = StemKind(rawValue: name), let file = s["file"] as? String else { continue }
-            stems.append(StemAsset(kind: kind, relativePath: paths.relative(dest.appendingPathComponent(file)),
-                                   bytes: (s["bytes"] as? NSNumber)?.int64Value ?? 0,
-                                   decodedFrames: (s["decodedFrames"] as? NSNumber)?.int64Value ?? 0,
-                                   peakDbfs: s["peakDbfs"] as? Double,
-                                   level: StemLevel(rawValue: s["level"] as? String ?? "normal") ?? .normal))
+            var asset = StemAsset(kind: kind, relativePath: paths.relative(dest.appendingPathComponent(file)),
+                                  bytes: (s["bytes"] as? NSNumber)?.int64Value ?? 0,
+                                  decodedFrames: (s["decodedFrames"] as? NSNumber)?.int64Value ?? 0,
+                                  peakDbfs: s["peakDbfs"] as? Double,
+                                  level: StemLevel(rawValue: s["level"] as? String ?? "normal") ?? .normal)
+            let head = leadDir.appendingPathComponent("\(name)-leadin.flac")
+            if leadFrames > 0, FileManager.default.fileExists(atPath: head.path) {
+                let target = dest.appendingPathComponent(head.lastPathComponent)
+                try FileManager.default.moveItem(at: head, to: target)
+                asset.leadInPath = paths.relative(target)
+            }
+            stems.append(asset)
         }
+        paths.removeOwned(leadDir)
         guard stems.count == 6 else { throw WorkerError(code: "ENCODE_FAILED", message: "分轨不完整") }
-        return SeparationRecord(trimRevision: item.trimRevision, stems: stems,
-                                sharedGainDb: manifest["sharedGainDb"] as? Double ?? 0,
-                                encoder: manifest["encoder"] as? String ?? "", logicVersion: logicVersion,
-                                frames: (manifest["frames"] as? NSNumber)?.int64Value ?? 0, createdAt: Date(),
-                                candidatesDeleted: false)
+        var rec = SeparationRecord(trimRevision: item.trimRevision, stems: stems,
+                                   sharedGainDb: manifest["sharedGainDb"] as? Double ?? 0,
+                                   encoder: manifest["encoder"] as? String ?? "", logicVersion: logicVersion,
+                                   frames: (manifest["frames"] as? NSNumber)?.int64Value ?? 0, createdAt: Date(),
+                                   candidatesDeleted: false)
+        rec.leadInUs = leadFrames > 0 ? leadIn : nil
+        return rec
     }
 
     /// Removes the five unselected stems once MIDI is confirmed.
     public func deleteUnselectedStems(_ item: AnalysisItem) -> AnalysisItem {
         var item = item
         guard var sep = item.separation, let keep = item.selectedStem else { return item }
-        for s in sep.stems where s.kind != keep { paths.removeOwned(paths.url(relative: s.relativePath)) }
+        for s in sep.stems where s.kind != keep {
+            paths.removeOwned(paths.url(relative: s.relativePath))
+            if let l = s.leadInPath { paths.removeOwned(paths.url(relative: l)) }
+        }
         sep.stems = sep.stems.filter { $0.kind == keep }
         sep.candidatesDeleted = true
         item.separation = sep
@@ -231,12 +268,54 @@ public final class Pipeline: @unchecked Sendable {
 
     // MARK: Transcription
 
+    /// Audio read before the selection when separating: one bar at the confirmed tempo (an
+    /// anticipated first chord is struck up to a beat early), at most 4 s, never before the file.
+    public static func leadIn(_ item: AnalysisItem) -> Int64 {
+        guard let t = item.timing else { return 0 }
+        let bar = Int64(t.grid.beatUs * t.grid.meter.quarterBeatsPerBar)
+        return max(0, min(item.trimStartUs, bar, 4_000_000))
+    }
+
+    /// The stem to transcribe: lead-in + stem joined into one WAV when there is a lead-in, so
+    /// notes held into the selection have their onsets. Returns the lead-in length to subtract.
+    public func stemForTranscription(_ asset: StemAsset, leadInUs: Int64?, workDir: URL) async throws -> (path: String, leadInUs: Int64) {
+        let stemPath = paths.url(relative: asset.relativePath).path
+        guard let lead = asset.leadInPath, let us = leadInUs, us > 0,
+              FileManager.default.fileExists(atPath: paths.url(relative: lead).path) else { return (stemPath, 0) }
+        try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+        let out = workDir.appendingPathComponent("\(asset.kind.rawValue)-with-leadin.wav")
+        let fmt = "aformat=sample_fmts=flt:sample_rates=44100:channel_layouts=stereo"
+        let w = WorkerProcess(tools.ffmpeg, ["-v", "error", "-nostdin", "-y", "-i", paths.url(relative: lead).path, "-i", stemPath,
+                                             "-filter_complex", "[0:a]\(fmt)[a0];[1:a]\(fmt)[a1];[a0][a1]concat=n=2:v=0:a=1[a]",
+                                             "-map", "[a]", "-c:a", "pcm_f32le", out.path])
+        let r = try await w.run()
+        guard r.status == 0 else { return (stemPath, 0) } // fall back to the plain stem
+        return (out.path, us)
+    }
+
+    /// Back to selection time: notes struck in the lead-in and held into the selection start at 0.
+    public static func trimLeadIn<N>(_ notes: [N], leadInUs: Int64, durationUs: Int64,
+                                     start: WritableKeyPath<N, Int64>, end: WritableKeyPath<N, Int64>) -> [N] {
+        guard leadInUs > 0 else { return notes }
+        return notes.compactMap { n in
+            var n = n
+            n[keyPath: start] -= leadInUs; n[keyPath: end] -= leadInUs
+            guard n[keyPath: end] > 30_000, n[keyPath: start] < durationUs else { return nil }
+            n[keyPath: start] = max(0, n[keyPath: start]); n[keyPath: end] = min(durationUs, n[keyPath: end])
+            return n
+        }
+    }
+
     public func transcribe(_ item: AnalysisItem, stem: StemKind, revision: Int, parent: Int?,
                            progress: @escaping ProgressHandler) async throws -> MidiRevision {
         guard let asset = item.separation?.stem(stem) else {
             throw WorkerError(code: "TRANSCRIPTION_FAILED", message: "所选分轨已不存在", retryable: false)
         }
-        let path = paths.url(relative: asset.relativePath).path
+        let input = try await stemForTranscription(asset, leadInUs: item.separation?.leadInUs,
+                                                   workDir: paths.jobs.appendingPathComponent("transcribe-\(item.id.uuidString)", isDirectory: true))
+        defer { paths.removeOwned(paths.jobs.appendingPathComponent("transcribe-\(item.id.uuidString)", isDirectory: true)) }
+        let path = input.path
+        let stemPath = paths.url(relative: asset.relativePath).path
         progress(StageProgress("加载 MuScriptor \(tools.muscriptorModel)"))
         nonisolated(unsafe) var notes: [MidiNote] = []
         nonisolated(unsafe) var failure: WorkerError?
@@ -261,11 +340,13 @@ public final class Pipeline: @unchecked Sendable {
         try Task.checkCancellation()
         if let failure { throw failure }
         guard r.status == 0 else { throw WorkerError(code: "TRANSCRIPTION_FAILED", message: "转录失败：\(r.stderr.suffix(400))") }
+        notes = Self.trimLeadIn(notes, leadInUs: input.leadInUs, durationUs: item.durationUs, start: \.startUs, end: \.endUs)
         notes.sort { ($0.startUs, $0.pitch) < ($1.startUs, $1.pitch) }
         return MidiRevision(analysisId: item.id, revision: revision, status: .draft, parentRevision: parent, stem: stem,
                             transcriber: ["tool": "MuScriptor", "version": "0.2.2a1", "model": tools.muscriptorModel,
                                           "device": tools.muscriptorDevice, "stem": stem.rawValue,
-                                          "inputSha": Self.fingerprint(url: URL(fileURLWithPath: path), bytes: asset.bytes),
+                                          "inputSha": Self.fingerprint(url: URL(fileURLWithPath: stemPath), bytes: asset.bytes),
+                                          "leadIn": String(format: "%.2fs", Double(input.leadInUs) / 1e6),
                                           "seconds": String(format: "%.1f", seconds), "velocity": "default 100"],
                             notes: notes)
     }

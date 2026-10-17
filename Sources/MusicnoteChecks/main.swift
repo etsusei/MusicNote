@@ -436,5 +436,17 @@ do {
     check(!BarEvidence.readingStart(2_000_000, endUs: 4_000_000, grid: g).pushed, "on-beat chord unchanged")
 }
 
+// Lead-in: a chord struck 0.24 s before the selection and held is kept from 0; notes that end in
+// the lead-in or start after the selection are dropped.
+do {
+    let lead: Int64 = 1_890_000
+    let ns = [MidiNote(pitch: 57, startUs: 1_650_000, endUs: 3_500_000), MidiNote(pitch: 60, startUs: 200_000, endUs: 1_000_000),
+              MidiNote(pitch: 64, startUs: 2_000_000, endUs: 2_400_000), MidiNote(pitch: 67, startUs: 20_000_000, endUs: 21_000_000)]
+    let t = Pipeline.trimLeadIn(ns, leadInUs: lead, durationUs: 16_000_000, start: \.startUs, end: \.endUs)
+    eq(t.map(\.pitch), [57, 64], "held-in chord kept, lead-in-only and out-of-range notes dropped")
+    eq(t.first?.startUs, 0, "held-in note starts at the selection start")
+    eq(t.last?.startUs, 110_000, "later notes shifted back by the lead-in")
+}
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

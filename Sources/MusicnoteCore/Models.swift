@@ -134,6 +134,8 @@ public struct StemAsset: Codable, Hashable, Sendable {
     public var decodedFrames: Int64
     public var peakDbfs: Double?
     public var level: StemLevel
+    /// Lossless audio of this stem just before the selection (see SeparationRecord.leadInUs).
+    public var leadInPath: String?
 
     public init(kind: StemKind, relativePath: String, bytes: Int64, decodedFrames: Int64, peakDbfs: Double?, level: StemLevel) {
         self.kind = kind; self.relativePath = relativePath; self.bytes = bytes; self.decodedFrames = decodedFrames; self.peakDbfs = peakDbfs; self.level = level
@@ -149,6 +151,10 @@ public struct SeparationRecord: Codable, Hashable, Sendable {
     public var frames: Int64
     public var createdAt: Date
     public var candidatesDeleted: Bool
+    /// The separator also ran on this much audio before the selection, so a chord struck just
+    /// before the clip start (an anticipated first chord) is separated and transcribed whole.
+    /// The stems themselves cover exactly the selection; the lead-in is kept apart.
+    public var leadInUs: Int64?
 
     public func stem(_ kind: StemKind) -> StemAsset? { stems.first { $0.kind == kind } }
 

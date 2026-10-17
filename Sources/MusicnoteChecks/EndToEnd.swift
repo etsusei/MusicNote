@@ -42,7 +42,8 @@ func runEndToEnd(_ args: [String]) async -> Int32 {
 
         t = Date()
         let midi = try await pipeline.transcribe(item, stem: .piano, revision: 1, parent: nil, progress: progress)
-        print("transcribe notes", midi.notes.count, String(format: "%.1fs", Date().timeIntervalSince(t)))
+        print("transcribe notes", midi.notes.count, String(format: "%.1fs", Date().timeIntervalSince(t)), "lead-in", sep.leadInUs.map { String(format: "%.2fs", Double($0) / 1e6) } ?? "none")
+        print("first onsets", midi.notes.sorted { $0.startUs < $1.startUs }.prefix(12).map { String(format: "%.2f", Double($0.startUs) / 1e6) }.joined(separator: " "))
 
         t = Date()
         let harmony = await pipeline.analyzeHarmony(item, midi: midi, timing: item.timing!, revision: 1, previous: nil)
