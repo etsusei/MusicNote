@@ -100,6 +100,7 @@ public struct SnapshotBuilder {
                     "voicing": e.namingPitches.map { Pitch.noteName($0, flats: Pitch.prefersFlats(t.key)) },
                 ]
                 if let l = BeatGrid.durationLabel(quarterBeats: q1 - q0) { ev["durationLabel"] = l }
+                ev["position"] = harmony.position(of: e.startUs, grid: grid)
                 // Actual notes in time order, compact: name@beat(+len)
                 ev["notes"] = members.prefix(48).map { n -> String in
                     let role = e.noteRoles[n.id].map { $0 == .chordTone ? "" : "[" + $0.display + "]" } ?? ""

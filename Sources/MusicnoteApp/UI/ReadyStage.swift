@@ -135,7 +135,15 @@ struct NotesStage: View {
                 Text(h.events.map { ($0.symbol ?? "未确定") }.joined(separator: "  →  ")).font(.system(size: 15, weight: .medium)).textSelection(.enabled)
                 Text(h.events.map { $0.degree?.display ?? "?" }.joined(separator: "  →  ")).font(.control13).foregroundStyle(Theme.textSecondary)
             }
-            Text("命名：\(h.namerVersion) · 分组：\(h.params["algorithm"] ?? "")").font(.caption12).foregroundStyle(Theme.textSecondary)
+            if h.barAnchorEstimated, let a = h.barAnchorUs {
+                HStack(spacing: 8) {
+                    Label("小节线是自动估计的：第 1 小节从 \(formatTime(us: a)) 开始（和弦大多落在这里或提前半拍）", systemImage: "metronome")
+                        .font(.caption12).foregroundStyle(Theme.warning)
+                    Button("采用") { model.adoptBarAnchor(item.id, a) }.buttonStyle(SecondaryButtonStyle(compact: true))
+                        .help("写入速度网格；之后可在「速度网格」里修改")
+                }
+            }
+            Text("命名：\(h.namerVersion) · 分组：\(h.params["algorithm"] ?? "")（八分音符检测点，换和弦优先落在小节线和强拍）").font(.caption12).foregroundStyle(Theme.textSecondary)
         }
     }
 
@@ -250,7 +258,8 @@ struct ChordEventCard: View {
                 } label: { Image(systemName: "ellipsis.circle") }
                     .menuStyle(.borderlessButton).frame(width: 28)
             }
-            Text("\(formatTime(us: event.startUs)) · \(String(format: "%.2f", beats)) 拍").font(.caption12).foregroundStyle(Theme.textSecondary)
+            Text("\(item.timing.map { harmony.position(of: event.startUs, grid: $0.grid) } ?? "") · \(String(format: "%.2f", beats)) 拍 · \(formatTime(us: event.startUs))")
+                .font(.caption12).foregroundStyle(Theme.textSecondary)
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
@@ -600,6 +609,15 @@ extension AppModel {
                 saveHarmony(cur)
             }
         }
+    }
+
+    /// Writes the estimated bar line into the confirmed timing (grouping already used it).
+    func adoptBarAnchor(_ itemId: UUID, _ anchorUs: Int64) {
+        guard var item = item(itemId), var t = item.timing else { return }
+        t.barAnchorUs = anchorUs
+        item.timing = t
+        save(item)
+        if var h = latestHarmony(itemId) { h.params["barAnchorEstimated"] = "0"; h.timingRevision = item.timingRevision; saveHarmony(h) }
     }
 
     /// Copies chord names from one repeat to the matching positions of the others, as manual names.

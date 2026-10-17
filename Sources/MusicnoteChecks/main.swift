@@ -199,5 +199,24 @@ let first = offs.filter { $0 < 16 }, second = offs.filter { $0 >= 16 }.map { $0 
 eq(first, second, "both repeats split at the same offsets")
 check(second.first == 0, "repeat 2 starts its own event at its first beat")
 
+// Comping: Cmaj7 re-struck on eighths (staccato with gaps) under a single-note melody = one chord per bar.
+var comp: [MidiNote] = []
+let b120 = 0.5
+for e in [0.0, 1.5, 2.0, 3.5] { for p in [48, 52, 55, 59] { comp.append(n(p, e * b120, e * b120 + 0.2)) } }
+for (i, p) in [72, 74, 76, 79, 77, 76, 74, 72].enumerated() { comp.append(n(p, Double(i) * 0.25, Double(i) * 0.25 + 0.2)) }
+for e in [4.0, 5.5, 6.0, 7.5] { for p in [53, 57, 60, 64] { comp.append(n(p, e * b120, e * b120 + 0.2)) } }
+let cg = ChordGrouper().group(notes: comp, grid: BeatGrid(bpm: 120, beatOriginUs: 0, barAnchorUs: 0), durationUs: 4_000_000, key: cMajor)
+eq(cg.map { $0.candidates.first?.symbol ?? "?" }, ["Cmaj7", "Fmaj7"], "comping rhythm + melody = one chord per bar")
+
+// Bar line estimate: chords land every 4 beats starting on grid beat 2 (beat origin is a pickup).
+var shifted: [MidiNote] = []
+for (bar, ps) in [[48, 52, 55], [53, 57, 60], [55, 59, 62], [48, 52, 55]].enumerated() {
+    for p in ps { shifted.append(n(p, (1 + Double(bar) * 4) * b120, (1 + Double(bar) * 4 + 4) * b120 - 0.02)) }
+}
+let sr = ChordGrouper().run(notes: shifted, grid: BeatGrid(bpm: 120, beatOriginUs: 0), durationUs: 9_000_000, key: cMajor)
+eq(sr.barAnchorUs, 500_000, "bar line estimated at the first chord, not the first detected beat")
+check(sr.barAnchorEstimated, "anchor marked as estimated")
+eq(sr.groups.map { $0.candidates.first?.symbol ?? "?" }, ["C", "F", "G", "C"], "one chord per bar")
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

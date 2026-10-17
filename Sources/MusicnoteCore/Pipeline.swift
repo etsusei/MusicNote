@@ -279,7 +279,8 @@ public final class Pipeline: @unchecked Sendable {
     public func analyzeHarmony(_ item: AnalysisItem, midi: MidiRevision, timing: TimingConfirmation, revision: Int,
                                previous: HarmonyRevision?, params: ChordGrouper.Params = .init()) async -> HarmonyRevision {
         let grouper = ChordGrouper(params: params)
-        let (groups, repetition) = grouper.analyze(notes: midi.notes, grid: timing.grid, durationUs: item.durationUs, key: timing.key)
+        let result = grouper.run(notes: midi.notes, grid: timing.grid, durationUs: item.durationUs, key: timing.key)
+        let groups = result.groups, repetition = result.repetition
         let sets = groups.enumerated().map { (id: String(format: "chord-%02d", $0.offset + 1), pitches: $0.element.namingPitches) }
         let (names, namer) = await nameWithMusicpy(sets, key: timing.key)
         var events: [ChordEvent] = []
@@ -311,6 +312,8 @@ public final class Pipeline: @unchecked Sendable {
             events.append(ev)
         }
         var stored = params.dictionary
+        stored["barAnchorUs"] = String(result.barAnchorUs)
+        stored["barAnchorEstimated"] = result.barAnchorEstimated ? "1" : "0"
         if let r = repetition {
             stored["repeatPeriodUs"] = String(r.periodUs)
             stored["repeatStartUs"] = String(r.startUs)

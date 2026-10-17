@@ -738,3 +738,23 @@ public extension HarmonyRevision {
             .min { abs($0.startUs - target) < abs($1.startUs - target) }
     }
 }
+
+public extension HarmonyRevision {
+    /// Bar line used for grouping (the user's, or the estimate when none was set).
+    var barAnchorUs: Int64? { params["barAnchorUs"].flatMap(Int64.init) }
+    var barAnchorEstimated: Bool { params["barAnchorEstimated"] == "1" }
+
+    /// "第 2 小节第 1 拍" style position on the grid used for grouping.
+    func position(of us: Int64, grid: BeatGrid) -> String {
+        var g = grid
+        if g.barAnchorUs == nil { g.barAnchorUs = barAnchorUs }
+        let perBar = g.meter.quarterBeatsPerBar
+        let q = g.q(atUs: us) - g.barAnchorQ
+        let snapped = (q * 2).rounded() / 2
+        var bar = Int(floor(snapped / perBar))
+        var beat = snapped - Double(bar) * perBar + 1
+        if beat > perBar + 0.5 { bar += 1; beat -= perBar }
+        let beatText = beat == beat.rounded() ? String(Int(beat)) : String(format: "%.1f", beat)
+        return "第 \(bar + 1) 小节第 \(beatText) 拍"
+    }
+}
