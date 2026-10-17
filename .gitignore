@@ -29,3 +29,4 @@ workers/**/.venv/
 # Downloaded assets
 Resources/SoundFonts/*.sf2
 Resources/SoundFonts/*.sf3
+Resources/SoundFonts/.cache/
