@@ -12,13 +12,11 @@ import Foundation
 /// - Re-striking the same chord (comping rhythm) stays one chord.
 /// - A chord struck on the "and" before a beat that ties over it (R&B/Funk anticipation)
 ///   counts as starting on that beat; the event keeps its real onset time.
-/// - When the passage repeats, every repeat is segmented jointly so all repeats share
-///   the same boundaries; each repeat is still named from its own notes.
 ///
 /// Parameters are a baseline to tune against labelled clips (待定 P0-05).
 public struct ChordGrouper: Sendable {
     /// Bump when grouping changes so existing analyses can offer a re-run.
-    public static let algorithm = "meter-slots-v4"
+    public static let algorithm = "meter-slots-v5"
 
     public struct Params: Sendable {
         public var maxSegmentBars = 4.0
@@ -58,18 +56,8 @@ public struct ChordGrouper: Sendable {
         public var candidates: [ChordCandidate]
     }
 
-    /// A passage that repeats every `periodBeats`, `count` times from `startUs`.
-    public struct Repetition: Sendable, Hashable {
-        public var periodBeats: Double
-        public var periodUs: Int64
-        public var startUs: Int64
-        public var count: Int
-        public var similarity: Double
-    }
-
     public struct Result: Sendable {
         public var groups: [Group]
-        public var repetition: Repetition?
         public var barAnchorUs: Int64
         public var barAnchorEstimated: Bool
     }
@@ -82,45 +70,19 @@ public struct ChordGrouper: Sendable {
         run(notes: allNotes, grid: grid, durationUs: durationUs, key: key, excludeInstruments: excludeInstruments).groups
     }
 
-    public func analyze(notes allNotes: [MidiNote], grid: BeatGrid, durationUs: Int64, key: KeySignature?,
-                        excludeInstruments: Set<String> = ["drums", "voice"]) -> (groups: [Group], repetition: Repetition?) {
-        let r = run(notes: allNotes, grid: grid, durationUs: durationUs, key: key, excludeInstruments: excludeInstruments)
-        return (r.groups, r.repetition)
-    }
-
     public func run(notes allNotes: [MidiNote], grid gridIn: BeatGrid, durationUs: Int64, key: KeySignature?,
                     excludeInstruments: Set<String> = ["drums", "voice"]) -> Result {
         let notes = allNotes.filter { !excludeInstruments.contains($0.instrument) && $0.endUs > $0.startUs }
             .sorted { ($0.startUs, $0.pitch) < ($1.startUs, $1.pitch) }
-        guard !notes.isEmpty, gridIn.bpm > 0 else { return Result(groups: [], repetition: nil, barAnchorUs: 0, barAnchorEstimated: true) }
+        guard !notes.isEmpty, gridIn.bpm > 0 else { return Result(groups: [], barAnchorUs: 0, barAnchorEstimated: true) }
         var grid = gridIn
         let estimated = grid.barAnchorUs == nil
         if estimated { grid.barAnchorUs = estimateBarAnchor(notes: notes, grid: grid) }
         let slots = buildSlots(notes: notes, grid: grid, durationUs: durationUs)
-        guard !slots.isEmpty else { return Result(groups: [], repetition: nil, barAnchorUs: grid.barAnchorUs!, barAnchorEstimated: estimated) }
+        guard !slots.isEmpty else { return Result(groups: [], barAnchorUs: grid.barAnchorUs!, barAnchorEstimated: estimated) }
         let misfit = misfitTable(slots)
         let spb = slotsPerBar(grid)
-        let rep = detectRepetition(slots: slots, grid: grid, spb: spb)
-
-        var ranges: [(Int, Int)] = []
-        if let rep {
-            let first = rep.startSlot, period = rep.periodSlots
-            ranges += segmentRegions(slots: slots, misfit: misfit, range: 0..<first, spb: spb)
-            let occ = (0..<rep.count).map { k in Array((first + k * period)..<min(slots.count, first + (k + 1) * period)) }
-            for (a, b) in jointSegment(slots: slots, misfit: misfit, occurrences: occ, spb: spb) {
-                for o in occ where a < o.count {
-                    var i = o[a], j = b <= o.count ? (b == o.count ? o[o.count - 1] + 1 : o[b]) : o[o.count - 1] + 1
-                    while i < j, slots[i].isRest { i += 1 }
-                    while j > i, slots[j - 1].isRest { j -= 1 }
-                    if i < j { ranges.append((i, j)) }
-                }
-            }
-            let tail = first + rep.count * period
-            if tail < slots.count { ranges += segmentRegions(slots: slots, misfit: misfit, range: tail..<slots.count, spb: spb) }
-            ranges.sort { $0.0 < $1.0 }
-        } else {
-            ranges = segmentRegions(slots: slots, misfit: misfit, range: 0..<slots.count, spb: spb)
-        }
+        let ranges = segmentRegions(slots: slots, misfit: misfit, range: 0..<slots.count, spb: spb)
 
         var groups: [Group] = []
         for (n, (i, j)) in ranges.enumerated() {
@@ -138,11 +100,7 @@ public struct ChordGrouper: Sendable {
             if let b = struck.map(\.pitch).min() ?? slots[i].bassPitch { profile.bassPitch = b; profile.bassPc = Pitch.pc(b) }
             groups.append(makeGroup(notes: notes, start: start, end: end, profile: profile, grid: grid, key: key))
         }
-        let repetition = rep.map { r in
-            Repetition(periodBeats: Double(r.periodSlots) / 2, periodUs: Int64(Double(r.periodSlots) * grid.beatUs / 2),
-                       startUs: slots[r.startSlot].time, count: r.count, similarity: r.similarity)
-        }
-        return Result(groups: groups, repetition: repetition, barAnchorUs: grid.barAnchorUs!, barAnchorEstimated: estimated)
+        return Result(groups: groups, barAnchorUs: grid.barAnchorUs!, barAnchorEstimated: estimated)
     }
 
     // MARK: Slots
@@ -207,18 +165,28 @@ public struct ChordGrouper: Sendable {
                 w[Pitch.pc(n.pitch)] += x
             }
             for n in sustained { w[Pitch.pc(n.pitch)] += params.sustainWeight * (n.id == lowest?.id ? params.bassWeight : 1) }
-            let evidence: Double = struck.count >= 2 ? 1 : struck.count == 1 ? params.singleNoteEvidence : (sustained.isEmpty ? 0 : params.sustainEvidence)
+            let single = struck.count == 1 ? struck[0] : nil
+            let evidence: Double = struck.count >= 2 ? 1
+                : single.map { Double($0.durationUs) < eighth ? params.singleNoteEvidence * 0.6 : params.singleNoteEvidence }
+                ?? (sustained.isEmpty ? 0 : params.sustainEvidence)
             let bass = lowest?.pitch
-            let newBass = struck.contains { $0.id == lowest?.id } && bass != prevBass
+            // A new bass note can start a chord; a lone melody note (high, far above the last bass) can't.
+            let inBassRegister = bass.map { $0 < 60 || $0 <= (prevBass ?? 0) + 5 } ?? false
+            let newBass = struck.contains { $0.id == lowest?.id } && bass != prevBass && inBassRegister
             let canStart = struck.count >= 2 || newBass
             // Anticipation: struck off the beat, nothing new on the next eighth, and it rings through it.
             let nextStruck = i + 1 < attacks.count ? attacks[i + 1] : []
             let ties = struck.contains { $0.endUs > t + Int64(eighth * 1.5) }
             out.append(Slot(time: t, index: kk, attacks: struck, weights: w, bassPitch: bass, evidence: evidence,
                             canStart: canStart, metric: metric(kk, grid: grid), anticipates: nextStruck.isEmpty && ties && struck.count >= 2))
-            if let b = bass { prevBass = b }
+            if let b = bass, inBassRegister || struck.count >= 2 { prevBass = b }
         }
         return out
+    }
+
+    /// Estimated bar line for a take whose timing has none (used by the editor's bar lines).
+    public func estimatedBarAnchor(notes: [MidiNote], grid: BeatGrid) -> Int64 {
+        estimateBarAnchor(notes: notes.sorted { $0.startUs < $1.startUs }, grid: grid)
     }
 
     /// Where the bar line most likely is: the beat phase on which struck chords land (or are
@@ -251,8 +219,11 @@ public struct ChordGrouper: Sendable {
 
     // MARK: Segmentation
 
+    /// Segmentation decides *whether the chord changed* using basic chords only (triads,
+    /// sus, sevenths). Extensions and 6/9 colours are added when naming, so a rich chord
+    /// can't bridge two different chords that are each a subset of it.
     func misfitTable(_ slots: [Slot]) -> [[Double]] {
-        let templates = TemplateMatcher.templates
+        let templates = TemplateMatcher.coreTemplates
         return slots.map { s in
             let total = s.weights.reduce(0, +)
             guard s.evidence > 0, total > 0 else { return [Double](repeating: 0, count: templates.count) }
@@ -265,7 +236,8 @@ public struct ChordGrouper: Sendable {
     /// Cost of starting a chord at slot i.
     func startPenalty(_ s: Slot, slots: [Slot], at i: Int) -> Double {
         var m = s.metric
-        if s.anticipates, i + 1 < slots.count { m = slots[i + 1].metric }
+        // Only an off-beat strike can anticipate the following beat.
+        if s.metric == .offbeat, s.anticipates, i + 1 < slots.count { m = slots[i + 1].metric }
         var p: Double
         switch m {
         case .downbeat: p = params.penaltyDownbeat
@@ -296,7 +268,7 @@ public struct ChordGrouper: Sendable {
         if let s = start { regions.append(s..<range.upperBound) }
         var out: [(Int, Int)] = []
         for r in regions {
-            for (a, b) in jointSegment(slots: slots, misfit: misfit, occurrences: [Array(r)], spb: spb) {
+            for (a, b) in segmentDP(slots: slots, misfit: misfit, indices: Array(r), spb: spb) {
                 var i = r.lowerBound + a, j = r.lowerBound + b
                 while i < j, slots[i].isRest { i += 1 }
                 while j > i, slots[j - 1].isRest { j -= 1 }
@@ -306,10 +278,11 @@ public struct ChordGrouper: Sendable {
         return out
     }
 
-    /// DP with boundaries shared by all occurrences (one occurrence = plain segmentation).
-    /// Each occurrence picks its own best chord per segment; costs and start penalties add up.
-    func jointSegment(slots: [Slot], misfit: [[Double]], occurrences occ: [[Int]], spb: Int) -> [(Int, Int)] {
-        let T = TemplateMatcher.templates.count
+    /// DP over a run of slots: each segment costs its best single chord's misfit plus the
+    /// metrical penalty for starting there.
+    func segmentDP(slots: [Slot], misfit: [[Double]], indices: [Int], spb: Int) -> [(Int, Int)] {
+        let occ = [indices]
+        let T = TemplateMatcher.coreTemplates.count
         let m = occ.map(\.count).max() ?? 0
         guard m > 0 else { return [] }
         let maxLen = max(spb, Int(params.maxSegmentBars * Double(spb)))
@@ -343,44 +316,6 @@ public struct ChordGrouper: Sendable {
         var j = m
         while j > 0 { out.append((back[j], j)); j = back[j] }
         return out.reversed()
-    }
-
-    // MARK: Repetition
-
-    struct SlotRepetition { var startSlot: Int; var periodSlots: Int; var count: Int; var similarity: Double }
-
-    /// Whole-bar period (2 bars or more) at which the passage repeats, from the slot
-    /// pitch-class content. Starts at the first bar line at or before the first chord.
-    func detectRepetition(slots: [Slot], grid: BeatGrid, spb: Int) -> SlotRepetition? {
-        guard let firstSound = slots.firstIndex(where: { !$0.isRest }) else { return nil }
-        // First bar line at or before the first sound (anticipations land just before it).
-        var start = firstSound
-        while start > 0, slots[start].metric != .downbeat { start -= 1 }
-        if slots[start].metric != .downbeat { start = firstSound }
-        let n = slots.count - start
-        func feat(_ s: Slot) -> [Double] { s.weights.map { $0 * s.evidence } }
-        func norm(_ v: [Double]) -> Double { sqrt(v.reduce(0) { $0 + $1 * $1 }) }
-        var best: SlotRepetition?
-        var lag = spb * 2
-        while lag * 2 <= n + spb / 2 {
-            var sum = 0.0, count = 0
-            for i in start..<(slots.count - lag) {
-                let a = feat(slots[i]), b = feat(slots[i + lag])
-                let na = norm(a), nb = norm(b)
-                if na == 0 && nb == 0 { continue }
-                count += 1
-                if na > 0 && nb > 0 { sum += zip(a, b).reduce(0) { $0 + $1.0 * $1.1 } / (na * nb) }
-            }
-            if count >= lag / 2 {
-                let sim = sum / Double(count)
-                let reps = Int(Double(n) / Double(lag) + 0.15)
-                if sim >= 0.72, reps >= 2, best == nil || sim > best!.similarity + 0.03 {
-                    best = SlotRepetition(startSlot: start, periodSlots: lag, count: reps, similarity: sim)
-                }
-            }
-            lag += spb
-        }
-        return best
     }
 
     // MARK: Events
@@ -468,6 +403,12 @@ public enum TemplateMatcher {
     }
 
     public static let templates: [(root: Int, quality: ChordQuality)] = (0..<12).flatMap { r in pool.map { (root: r, quality: $0) } }
+
+    /// Basic chord identities used to decide where the harmony changes.
+    static let corePool: [ChordQuality] = ChordCatalog.qualities.filter {
+        ["", "m", "dim", "aug", "sus4", "sus2", "7", "maj7", "m7", "m7♭5", "dim7", "7sus4"].contains($0.suffix)
+    }
+    public static let coreTemplates: [(root: Int, quality: ChordQuality)] = (0..<12).flatMap { r in corePool.map { (root: r, quality: $0) } }
 
     /// Fit of one (root, quality) to a normalized profile: coverage minus missing
     /// essential tones minus a small complexity cost, plus a bonus when the bass is the root.

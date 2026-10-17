@@ -280,7 +280,7 @@ public final class Pipeline: @unchecked Sendable {
                                previous: HarmonyRevision?, params: ChordGrouper.Params = .init()) async -> HarmonyRevision {
         let grouper = ChordGrouper(params: params)
         let result = grouper.run(notes: midi.notes, grid: timing.grid, durationUs: item.durationUs, key: timing.key)
-        let groups = result.groups, repetition = result.repetition
+        let groups = result.groups
         let sets = groups.enumerated().map { (id: String(format: "chord-%02d", $0.offset + 1), pitches: $0.element.namingPitches) }
         let (names, namer) = await nameWithMusicpy(sets, key: timing.key)
         var events: [ChordEvent] = []
@@ -314,13 +314,6 @@ public final class Pipeline: @unchecked Sendable {
         var stored = params.dictionary
         stored["barAnchorUs"] = String(result.barAnchorUs)
         stored["barAnchorEstimated"] = result.barAnchorEstimated ? "1" : "0"
-        if let r = repetition {
-            stored["repeatPeriodUs"] = String(r.periodUs)
-            stored["repeatStartUs"] = String(r.startUs)
-            stored["repeatCount"] = String(r.count)
-            stored["repeatBeats"] = String(r.periodBeats)
-            stored["repeatSimilarity"] = String(format: "%.2f", r.similarity)
-        }
         var rev = HarmonyRevision(analysisId: item.id, revision: revision, midiRevision: midi.revision,
                                   timingRevision: item.timingRevision, key: timing.key, events: events,
                                   params: stored, namerVersion: namer)

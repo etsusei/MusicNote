@@ -180,24 +180,18 @@ at(4.5, 4.5, [55, 59, 62, 71])      // G from the "and" of 1
 let pl = ChordGrouper().group(notes: plan, grid: BeatGrid(bpm: 140, beatOriginUs: 0), durationUs: Int64(9 * b140 * 1e6), key: bm)
 eq(pl.map { $0.candidates.first?.symbol ?? "?" }, ["F♯", "A", "G♯", "G"], "chromatic planing keeps each half-beat chord")
 
-// Repeats share boundaries: an 8-bar passage (4 bars × 2) whose bar 4 and bar 5 differ only by one
-// tone must still start repeat 2 on its own chord, and both repeats split at the same offsets.
+// A repeat whose second ending changes chords keeps its own changes (no forced alignment).
 var rp: [MidiNote] = []
 func put(_ q: Double, _ len: Double, _ ps: [Int]) { for p in ps { rp.append(n(p, q * b140, (q + len) * b140 - 0.01)) } }
 for k in 0..<2 {
     let o = Double(k) * 16
-    put(o + 0, 2, [54, 59, 61, 64])            // F♯sus (F♯ B C♯ E)
-    put(o + 3.5, 0.5, [57, 61, 64])            // A
-    put(o + 4, 0.5, [56, 60, 63])              // A♭
-    put(o + 4.5, 7.5, [55, 59, 62])            // G
-    put(o + 12, 4, k == 0 ? [54, 57, 59, 61, 64] : [54, 58, 61])  // F♯m(add11) / F♯
+    put(o + 0, 4, [54, 59, 61, 64])            // F♯sus
+    put(o + 4, 8, [55, 59, 62])                // G
+    if k == 0 { put(o + 12, 4, [54, 57, 61]) } // F♯m
+    else { put(o + 12, 2, [52, 55, 59]); put(o + 14, 2, [54, 58, 61]) } // Em → F♯ the second time
 }
-let ra = ChordGrouper().analyze(notes: rp, grid: BeatGrid(bpm: 140, beatOriginUs: 0), durationUs: Int64(32 * b140 * 1e6), key: bm)
-check(ra.repetition?.periodBeats == 16, "repeat period 16 beats: \(String(describing: ra.repetition))")
-let offs = ra.groups.map { (Double($0.startUs) / 1e6 / b140 * 2).rounded() / 2 }
-let first = offs.filter { $0 < 16 }, second = offs.filter { $0 >= 16 }.map { $0 - 16 }
-eq(first, second, "both repeats split at the same offsets")
-check(second.first == 0, "repeat 2 starts its own event at its first beat")
+let rg2 = ChordGrouper().group(notes: rp, grid: BeatGrid(bpm: 140, beatOriginUs: 0, barAnchorUs: 0), durationUs: Int64(32 * b140 * 1e6), key: bm)
+eq(rg2.map { $0.candidates.first?.symbol ?? "?" }, ["F♯7sus4", "G", "F♯m", "F♯7sus4", "G", "Em", "F♯"], "second ending changes are kept")
 
 // Comping: Cmaj7 re-struck on eighths (staccato with gaps) under a single-note melody = one chord per bar.
 var comp: [MidiNote] = []

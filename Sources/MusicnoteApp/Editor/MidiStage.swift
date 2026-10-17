@@ -21,6 +21,8 @@ struct MidiStage: View {
     @ViewState private var saveTask: Task<Void, Never>?
     @ViewState private var confirmSwitch: StemKind?
     @ViewState private var loaded = false
+    @ViewState private var chords: [ChordSpan] = []
+    @ViewState private var previewTask: Task<Void, Never>?
 
     var body: some View {
         @Bindable var editor = editor
@@ -28,10 +30,14 @@ struct MidiStage: View {
             toolbar
             Divider()
             HStack(spacing: 0) {
-                MidiEditorRepresentable(controller: editor, peaks: peaks, playheadUs: transport.positionUs,
+                MidiEditorRepresentable(controller: editor, peaks: peaks, chords: chords, playheadUs: transport.positionUs,
                                         isPlaying: transport.isPlaying, fitToken: fitToken,
                                         onSeek: { AudioEngine.shared.seek(Int64(Double($0) / 1_000_000 * 44100)) },
-                                        onLoop: { r in loopOn = r != nil; applyLoop() })
+                                        onLoop: { r in loopOn = r != nil; applyLoop() },
+                                        onChordBoundary: { l, r, t in model.moveEventBoundary(item.id, left: l, right: r, to: t) },
+                                        onChordRename: { id, name in renameChord(id, name) },
+                                        onChordMerge: { id in model.mergeEvent(item.id, eventId: id) },
+                                        onChordSplit: { id, t in model.splitEvent(item.id, eventId: id, at: t) })
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if let id = editor.selected.first, editor.selected.count == 1, let n = editor.notes.first(where: { $0.id == id }) {
                     NoteInspector(note: n, grid: item.timing?.grid)
@@ -42,7 +48,8 @@ struct MidiStage: View {
             footer
         }
         .onAppear(perform: load)
-        .onChange(of: editor.version) { _, _ in syncMidi() }
+        .onChange(of: editor.version) { _, _ in syncMidi(); refreshChords() }
+        .onChange(of: model.dataVersion) { _, _ in refreshChords() }
         .onChange(of: audioMute) { _, _ in applyMix() }
         .onChange(of: audioSolo) { _, _ in applyMix() }
         .onChange(of: midiMute) { _, _ in applyMix() }
@@ -89,7 +96,7 @@ struct MidiStage: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Text("\(editor.notes.count) 个音符 · 双击空白新增 · Delete 删除 · ↑↓ 半音（⇧ 八度）· ←→ 移动（⌥ 微调）· ⌥滚轮缩放")
+            Text("\(editor.notes.count) 个音符 · 拖空白框选 · 双击空白新增 · Delete 删除 · ↑↓ 半音（⇧ 八度）· ←→ 移动（⌥ 微调）· ⌥滚轮缩放 · 和弦条：点选音符、拖分界、右键改名/合并/拆分")
                 .font(.caption12).foregroundStyle(Theme.textSecondary)
             Text("MuScriptor 不输出力度，转录音符统一为 100。").font(.caption12).foregroundStyle(Theme.textSecondary)
             Spacer()
@@ -123,7 +130,7 @@ struct MidiStage: View {
         guard !loaded else { return }
         loaded = true
         guard let midi = model.workingMidi(item.id) else { return }
-        editor.load(midi.notes, grid: item.timing?.grid, durationUs: item.durationUs)
+        editor.load(midi.notes, grid: editorGrid(midi.notes), durationUs: item.durationUs)
         editor.onChange = { notes in scheduleSave(notes) }
         let e = AudioEngine.shared
         e.pause(); e.configure(sampleRate: 44100); e.setMetronome(MetronomeConfig()); e.setLoop(nil)
@@ -141,6 +148,49 @@ struct MidiStage: View {
         applyMix()
         e.seek(0)
         fitToken += 1
+        refreshChords()
+    }
+
+    /// The confirmed grid, with the bar line the user set, or the one grouping estimated.
+    private func editorGrid(_ notes: [MidiNote]) -> BeatGrid? {
+        guard var g = item.timing?.grid else { return nil }
+        if g.barAnchorUs == nil {
+            g.barAnchorUs = model.latestHarmony(item.id)?.barAnchorUs ?? ChordGrouper().estimatedBarAnchor(notes: notes, grid: g)
+        }
+        return g
+    }
+
+    /// Saved chords when the notes match the analysed MIDI; otherwise a live preview of the
+    /// current notes so proofreading can be checked against the harmony as you go.
+    private func refreshChords() {
+        let hasDraft = model.midiRevisions(item.id).contains { $0.status == .draft }
+        if item.isHarmonic, !hasDraft, let h = model.latestHarmony(item.id), h.midiRevision == item.confirmedMidiRevision {
+            previewTask?.cancel()
+            chords = h.events.map { ChordSpan(id: $0.id, startUs: $0.startUs, endUs: $0.endUs, symbol: $0.symbol ?? "?", editable: true) }
+            return
+        }
+        guard item.selectedStem?.isHarmonic ?? false, let g = editor.grid else { chords = []; return }
+        let notes = editor.notes, dur = item.durationUs, key = item.timing?.key
+        previewTask?.cancel()
+        previewTask = Task {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            if Task.isCancelled { return }
+            let groups = await Task.detached { ChordGrouper().group(notes: notes, grid: g, durationUs: dur, key: key) }.value
+            if Task.isCancelled { return }
+            chords = groups.enumerated().map { i, gr in
+                ChordSpan(id: "preview-\(i)", startUs: gr.startUs, endUs: gr.endUs, symbol: gr.candidates.first?.symbol ?? "?", editable: false)
+            }
+        }
+    }
+
+    private func renameChord(_ id: String, _ name: String) {
+        let t = name.trimmingCharacters(in: .whitespaces)
+        model.updateEvent(item.id, eventId: id) { ev, key in
+            ev.symbol = t.isEmpty ? nil : t
+            ev.manualOverride = true
+            ev.namingSource = .user
+            ev.degree = ev.symbol.flatMap { Degrees.label(symbol: $0, key: key) }
+        }
     }
 
     private func syncMidi() {

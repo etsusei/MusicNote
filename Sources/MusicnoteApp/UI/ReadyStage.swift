@@ -102,39 +102,8 @@ struct NotesStage: View {
                 Spacer()
                 Toggle("全部显示标准按法", isOn: $standardAll).toggleStyle(.checkbox).font(.caption12)
             }
-            if let r = h.repetition {
-                let reps = h.eventsByRepeat
-                HStack(spacing: 8) {
-                    Label("检测到重复：每 \(r.beats.truncatingRemainder(dividingBy: 4) == 0 ? "\(Int(r.beats / 4)) 小节" : String(format: "%g 拍", r.beats))一遍，共 \(r.count) 遍；各遍切分对齐，和弦名按每遍实际音符",
-                          systemImage: "repeat").font(.caption12).foregroundStyle(Theme.accent)
-                    Menu("统一命名") {
-                        ForEach(0..<r.count, id: \.self) { k in
-                            Button("以第 \(k + 1) 遍为准") { model.unifyRepeats(item.id, from: k) }
-                        }
-                    }
-                    .menuStyle(.borderlessButton).fixedSize()
-                    .help("把其他各遍对应位置的和弦名改成所选这一遍的名字（记为人工命名，可逐个恢复）")
-                }
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
-                    ForEach(Array(reps.enumerated()), id: \.offset) { k, evs in
-                        GridRow {
-                            Text("第 \(k + 1) 遍").font(.caption12).foregroundStyle(Theme.textSecondary)
-                            Text(evs.map { $0.symbol ?? "未确定" }.joined(separator: "  →  ")).font(.system(size: 15, weight: .medium)).textSelection(.enabled)
-                        }
-                        GridRow {
-                            Text("")
-                            Text(evs.map { $0.degree?.display ?? "?" }.joined(separator: "  →  ")).font(.control13).foregroundStyle(Theme.textSecondary)
-                        }
-                    }
-                }
-                let outside = h.events.filter { h.repeatIndex(of: $0) == nil }
-                if !outside.isEmpty {
-                    Text("重复段之外：" + outside.map { $0.symbol ?? "未确定" }.joined(separator: " → ")).font(.control13).foregroundStyle(Theme.textSecondary)
-                }
-            } else {
-                Text(h.events.map { ($0.symbol ?? "未确定") }.joined(separator: "  →  ")).font(.system(size: 15, weight: .medium)).textSelection(.enabled)
-                Text(h.events.map { $0.degree?.display ?? "?" }.joined(separator: "  →  ")).font(.control13).foregroundStyle(Theme.textSecondary)
-            }
+            Text(h.events.map { ($0.symbol ?? "未确定") }.joined(separator: "  →  ")).font(.system(size: 15, weight: .medium)).textSelection(.enabled)
+            Text(h.events.map { $0.degree?.display ?? "?" }.joined(separator: "  →  ")).font(.control13).foregroundStyle(Theme.textSecondary)
             if h.barAnchorEstimated, let a = h.barAnchorUs {
                 HStack(spacing: 8) {
                     Label("小节线是自动估计的：第 1 小节从 \(formatTime(us: a)) 开始（和弦大多落在这里或提前半拍）", systemImage: "metronome")
@@ -582,12 +551,38 @@ extension AppModel {
         }
     }
 
-    func splitEvent(_ itemId: UUID, eventId: String) {
+    /// Moves the boundary between two adjacent chords; both are re-named from the notes they now hold.
+    func moveEventBoundary(_ itemId: UUID, left: String, right: String, to t: Int64) {
+        guard var h = latestHarmony(itemId), let item = item(itemId), let midi = confirmedMidi(item),
+              let i = h.events.firstIndex(where: { $0.id == left }), let j = h.events.firstIndex(where: { $0.id == right }), j == i + 1,
+              t > h.events[i].startUs, t < h.events[j].endUs else { return }
+        h.events[i].endUs = t
+        h.events[j].startUs = t
+        for k in [i, j] {
+            let e = h.events[k]
+            h.events[k].noteIds = midi.notes.filter { $0.startUs < e.endUs && $0.endUs > e.startUs && $0.instrument != "drums" && $0.instrument != "voice" }.map(\.id)
+            h.events[k].excludedNoteIds = e.excludedNoteIds.filter { h.events[k].noteIds.contains($0) }
+        }
+        saveHarmony(h)
+        let key = item.timing?.key ?? h.key
+        let touched = [h.events[i], h.events[j]]
+        Task {
+            for e in touched {
+                let renamed = await pipeline.renameEvent(e, notes: midi.notes, key: key)
+                guard var cur = latestHarmony(itemId), let k = cur.events.firstIndex(where: { $0.id == e.id }) else { continue }
+                cur.events[k] = renamed
+                saveHarmony(cur)
+            }
+        }
+    }
+
+    func splitEvent(_ itemId: UUID, eventId: String, at position: Int64? = nil) {
         guard var h = latestHarmony(itemId), let i = h.events.firstIndex(where: { $0.id == eventId }),
               let item = item(itemId), let midi = confirmedMidi(item) else { return }
         let ev = h.events[i]
         var mid = (ev.startUs + ev.endUs) / 2
-        if let g = item.timing?.grid { let s = g.snap(us: mid, division: 1); if s > ev.startUs && s < ev.endUs { mid = s } }
+        if let p = position, p > ev.startUs, p < ev.endUs { mid = p }
+        else if let g = item.timing?.grid { let s = g.snap(us: mid, division: 1); if s > ev.startUs && s < ev.endUs { mid = s } }
         let byId = Dictionary(uniqueKeysWithValues: midi.notes.map { ($0.id, $0) })
         var a = ev, b = ev
         a.endUs = mid; b.startUs = mid
@@ -618,24 +613,6 @@ extension AppModel {
         item.timing = t
         save(item)
         if var h = latestHarmony(itemId) { h.params["barAnchorEstimated"] = "0"; h.timingRevision = item.timingRevision; saveHarmony(h) }
-    }
-
-    /// Copies chord names from one repeat to the matching positions of the others, as manual names.
-    func unifyRepeats(_ itemId: UUID, from k: Int) {
-        guard var h = latestHarmony(itemId), let item = item(itemId), h.repetition != nil else { return }
-        let key = item.timing?.key ?? h.key
-        let tol = Int64((item.timing?.grid.beatUs ?? 500_000) * 0.3)
-        let source = h.events
-        for i in h.events.indices {
-            let e = source[i]
-            guard let idx = h.repeatIndex(of: e), idx != k, let src = h.counterpart(of: e, inRepeat: k, toleranceUs: tol),
-                  let sym = src.symbol, sym != e.symbol else { continue }
-            h.events[i].symbol = sym
-            h.events[i].manualOverride = true
-            h.events[i].namingSource = .user
-            h.events[i].degree = Degrees.label(symbol: sym, key: key)
-        }
-        saveHarmony(h)
     }
 
     /// Key change only re-derives degrees and spellings; groups, notes and overrides stay.
