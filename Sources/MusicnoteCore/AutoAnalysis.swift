@@ -338,10 +338,24 @@ public enum BarEvidence {
     public static func position(_ us: Int64, grid: BeatGrid) -> (bar: Int, beat: Double) {
         let perBar = grid.meter.quarterBeatsPerBar
         let q = ((grid.q(atUs: us) - grid.barAnchorQ) * 2).rounded() / 2
-        var bar = Int(floor(q / perBar))
-        var beat = q - Double(bar) * perBar + 1
-        if beat > perBar + 0.25 { bar += 1; beat -= perBar }
+        // floor keeps beat in [1, perBar + 1): the last half beat is "4.5", not the next bar's "0.5".
+        let bar = Int(floor(q / perBar))
+        let beat = q - Double(bar) * perBar + 1
         return (bar + 1, beat)
+    }
+
+    /// Where a chord reads in the bar: one struck up to an eighth before a beat and held through
+    /// it is an anticipation of that beat (pushed comping, common in dance and pop), so it is
+    /// shown on the beat. The stored time is unchanged; this is only how it is read.
+    public static func readingStart(_ startUs: Int64, endUs: Int64, grid g: BeatGrid) -> (us: Int64, pushed: Bool) {
+        let q = g.q(atUs: startUs)
+        let next = q.rounded(.up)
+        let early = next - q
+        guard early > 0.1, early <= 0.55 else { return (startUs, false) }
+        let beatUs = g.us(atQ: next)
+        // Held at least a beat past the beat it anticipates.
+        guard Double(endUs - beatUs) >= g.beatUs * 0.9 else { return (startUs, false) }
+        return (beatUs, true)
     }
 
     public static func usAt(bar: Int, beat: Double, grid: BeatGrid) -> Int64 {

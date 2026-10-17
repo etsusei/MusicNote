@@ -146,6 +146,8 @@ public struct SnapshotBuilder {
                 ]
                 if let l = BeatGrid.durationLabel(quarterBeats: q1 - q0) { ev["durationLabel"] = l }
                 ev["position"] = harmony.position(of: e.startUs, grid: grid)
+                let rs = BarEvidence.readingStart(e.startUs, endUs: e.endUs, grid: grid)
+                if rs.pushed { ev["anticipates"] = harmony.position(of: rs.us, grid: grid) + "（提前一个八分音符按下）" }
                 if let info = harmony.auto?.chordInfo[e.id] { ev["role"] = info.roleDisplay; ev["roleReason"] = info.reason }
                 // Actual notes in time order, compact: name@beat(+len)
                 ev["notes"] = members.prefix(48).map { n -> String in

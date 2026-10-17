@@ -179,7 +179,7 @@ struct AutoResult: View {
                 BarShiftCard(text: "模型核对小节线后认为要整体挪动：" + (auto.barReason ?? "") + "（和弦时间不变，只是换个格子读。）",
                              shift: sh, apply: { model.shiftBarLine(item.id, beats: sh) }, dismiss: nil)
             }
-            Legend()
+            Legend(itemId: item.id)
             BarProgressionView(item: item, harmony: harmony, auto: auto, grid: grid)
             if !auto.toConfirm.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -229,12 +229,18 @@ struct AutoResult: View {
 }
 
 struct Legend: View {
+    var itemId: UUID? = nil
+    @AppStorage("foldPushes") private var foldPushes = true
     var body: some View {
         HStack(spacing: 12) {
             chip("主干", fill: true)
             chip("经过 / 连接", fill: false)
             HStack(spacing: 4) { Image(systemName: "questionmark.circle.fill").foregroundStyle(Theme.warning); Text("待确认") }
+            Toggle(isOn: $foldPushes) { HStack(spacing: 3) { Image(systemName: "arrow.uturn.backward"); Text("提前进入的按进入的拍显示") } }
+                .toggleStyle(.checkbox).help("提前一个八分音符按下、延续过拍子的和弦，画在它进入的拍子上；实际时间不变")
             Text("点和弦听实际按法；点小节号听原曲").foregroundStyle(Theme.textSecondary)
+            Spacer()
+            if let itemId { BarNudge(itemId: itemId) }
         }
         .font(.system(size: 11))
     }
@@ -253,6 +259,17 @@ struct BarProgressionView: View {
     var harmony: HarmonyRevision
     var auto: AutoHarmony
     var grid: BeatGrid
+    @AppStorage("foldPushes") private var foldPushes = true
+
+    /// Chords as read in the bar: anticipations (struck up to an eighth early, held through the
+    /// beat) start on the beat they anticipate; each chord runs to the next one's reading start.
+    private var reading: [(ev: ChordEvent, s: Int64, e: Int64, pushed: Bool)] {
+        let evs = harmony.events.sorted { $0.startUs < $1.startUs }
+        let starts: [(us: Int64, pushed: Bool)] = evs.map { foldPushes ? BarEvidence.readingStart($0.startUs, endUs: $0.endUs, grid: grid) : (us: $0.startUs, pushed: false) }
+        return evs.indices.map { i in
+            (evs[i], starts[i].us, i + 1 < evs.count ? starts[i + 1].us : evs[i].endUs, starts[i].pushed)
+        }
+    }
 
     var body: some View {
         let bars = BarEvidence.barCount(grid: grid, durationUs: item.durationUs)
@@ -270,7 +287,7 @@ struct BarProgressionView: View {
     private func barCell(_ bar: Int) -> some View {
         let s = BarEvidence.barStartUs(bar, grid: grid), e = BarEvidence.barStartUs(bar + 1, grid: grid)
         let span = Double(e - s)
-        let events = harmony.events.filter { $0.startUs < e && $0.endUs > s }
+        let events = reading.filter { $0.s < e && $0.e > s }
         return VStack(alignment: .leading, spacing: 3) {
             Button { model.audition(item.id, startUs: max(0, s), endUs: min(item.durationUs, e), original: true) } label: {
                 HStack(spacing: 3) { Text("\(bar)").font(.system(size: 11, weight: .semibold)); Image(systemName: "speaker.wave.2").font(.system(size: 9)) }
@@ -282,10 +299,10 @@ struct BarProgressionView: View {
                         Rectangle().fill(Theme.borderSubtle).frame(width: 1, height: 6)
                             .offset(x: geo.size.width * CGFloat(Double(b) / grid.meter.quarterBeatsPerBar), y: geo.size.height - 6)
                     }
-                    ForEach(events) { ev in
-                        let x0 = max(0, Double(ev.startUs - s) / span), x1 = min(1, Double(ev.endUs - s) / span)
+                    ForEach(events, id: \.ev.id) { r in
+                        let x0 = max(0, Double(r.s - s) / span), x1 = min(1, Double(r.e - s) / span)
                         let w = max(14, geo.size.width * CGFloat(x1 - x0) - 2)
-                        chordChip(ev, continued: ev.startUs < s - 20_000, roomy: w > 70)
+                        chordChip(r.ev, continued: r.s < s - 20_000, roomy: w > 70, pushed: r.pushed && r.s >= s - 20_000)
                             .frame(width: w, height: geo.size.height - 8)
                             .offset(x: geo.size.width * CGFloat(x0))
                     }
@@ -299,7 +316,7 @@ struct BarProgressionView: View {
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.borderSubtle))
     }
 
-    private func chordChip(_ ev: ChordEvent, continued: Bool, roomy: Bool) -> some View {
+    private func chordChip(_ ev: ChordEvent, continued: Bool, roomy: Bool, pushed: Bool) -> some View {
         let info = auto.chordInfo[ev.id]
         let strong = info?.role == "backbone" || info?.role == nil
         let confirm = auto.toConfirm.contains { $0.eventId == ev.id }
@@ -307,6 +324,7 @@ struct BarProgressionView: View {
             HStack(spacing: 2) {
                 Text(continued ? "↳" : Self.breakable(ev.symbol ?? "?")).font(.system(size: strong ? 13 : 11, weight: strong ? .semibold : .medium))
                     .lineLimit(2).minimumScaleFactor(0.7).fixedSize(horizontal: false, vertical: true)
+                if pushed && !continued { Image(systemName: "arrow.uturn.backward").font(.system(size: 8, weight: .semibold)).opacity(0.7) }
                 if confirm && !continued && roomy { Image(systemName: "questionmark.circle.fill").font(.system(size: 9)).foregroundStyle(Theme.warning) }
             }
             .padding(.horizontal, roomy ? 4 : 2)
@@ -317,7 +335,7 @@ struct BarProgressionView: View {
             .foregroundStyle(strong ? Theme.onNote : Theme.textPrimary)
         }
         .buttonStyle(.plain)
-        .help("\(ev.symbol ?? "?")（\(info?.roleDisplay ?? "")）：\(info?.reason ?? "")")
+        .help("\(ev.symbol ?? "?")（\(info?.roleDisplay ?? "")）：\(info?.reason ?? "")" + (pushed ? "\n提前一个八分音符按下（按它进入的拍子显示）" : ""))
     }
 
     /// Lets a narrow chip wrap a long name before its extension or bass ("Fm" / "(add9)", "A♭maj7" / "/B♭").
@@ -334,5 +352,22 @@ struct BarProgressionView: View {
         let window = min(0.6, grid.beatUs / 1e6)
         guard let p = PlayedVoicing.pitches(symbol: ev.symbol, notes: rel, onsetWindow: window) ?? ev.symbol.flatMap(StandardVoicing.pitches(symbol:)) else { return }
         AudioEngine.shared.playChord(p, duration: min(2.5, max(0.8, Double(ev.endUs - ev.startUs) / 1e6)))
+    }
+}
+
+/// Manual room to move the bar lines afterwards, by an eighth or a beat; note times stay.
+struct BarNudge: View {
+    @Environment(AppModel.self) private var model
+    var itemId: UUID
+    var body: some View {
+        HStack(spacing: 2) {
+            Text("小节线").foregroundStyle(Theme.textSecondary)
+            Button { model.shiftBarLine(itemId, beats: -1) } label: { Image(systemName: "chevron.left.2") }.help("整体提前一拍")
+            Button { model.shiftBarLine(itemId, beats: -0.5) } label: { Image(systemName: "chevron.left") }.help("整体提前一个八分音符")
+            Button { model.shiftBarLine(itemId, beats: 0.5) } label: { Image(systemName: "chevron.right") }.help("整体推后一个八分音符")
+            Button { model.shiftBarLine(itemId, beats: 1) } label: { Image(systemName: "chevron.right.2") }.help("整体推后一拍")
+        }
+        .buttonStyle(.borderless)
+        .font(.system(size: 11))
     }
 }

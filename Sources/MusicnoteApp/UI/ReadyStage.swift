@@ -138,6 +138,7 @@ struct NotesStage: View {
             HStack {
                 SectionHeader(title: "完整进行", subtitle: "按时间顺序，重复和弦保留为独立实例。级数以主音大调为参照；仅基于\(item.selectedStem?.displayName ?? "所选")分轨。")
                 Spacer()
+                BarNudge(itemId: item.id).help("小节线整体挪动，音符时间不变；程序分组会按新小节线重新分析")
                 Toggle("全部显示标准按法", isOn: $standardAll).toggleStyle(.checkbox).font(.caption12)
             }
             Text(h.events.map { ($0.symbol ?? "未确定") }.joined(separator: "  →  ")).font(.system(size: 15, weight: .medium)).textSelection(.enabled)
@@ -281,7 +282,7 @@ struct ChordEventCard: View {
                 } label: { Image(systemName: "ellipsis.circle") }
                     .menuStyle(.borderlessButton).frame(width: 28)
             }
-            Text("\(item.timing.map { harmony.position(of: event.startUs, grid: $0.grid) } ?? "") · \(String(format: "%.2f", beats)) 拍 · \(formatTime(us: event.startUs))")
+            Text("\(item.timing.map { harmony.position(of: event.startUs, grid: $0.grid) } ?? "")\(pushedText) · \(String(format: "%.2f", beats)) 拍 · \(formatTime(us: event.startUs))")
                 .font(.caption12).foregroundStyle(Theme.textSecondary)
         }
         .padding(12)
@@ -290,6 +291,14 @@ struct ChordEventCard: View {
         .popover(isPresented: $showNotes) { notesPopover }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(event.symbol ?? "未确定") \(event.degree?.display ?? "")，音符 \(shownPitches.map { Pitch.noteName($0) }.joined(separator: " "))")
+    }
+
+    /// "提前八分进入" when the chord anticipates the next beat (see BarEvidence.readingStart).
+    private var pushedText: String {
+        guard var g = item.timing?.grid else { return "" }
+        if g.barAnchorUs == nil { g.barAnchorUs = harmony.barAnchorUs }
+        let r = BarEvidence.readingStart(event.startUs, endUs: event.endUs, grid: g)
+        return r.pushed ? "（提前八分进入 \(harmony.position(of: r.us, grid: g))）" : ""
     }
 
     private var beats: Double {

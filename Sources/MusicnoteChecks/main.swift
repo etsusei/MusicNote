@@ -277,6 +277,8 @@ eq(al.merged.filter { $0.support == "mt3" }.map(\.startUs), [1_000_000], "single
 let pkg = BeatGrid(bpm: 120, beatOriginUs: 0, barAnchorUs: 500_000)
 eq([BarEvidence.position(500_000, grid: pkg).bar, BarEvidence.position(2_500_000, grid: pkg).bar], [1, 2], "bars counted from the anchor")
 eq(BarEvidence.position(1_750_000, grid: pkg).beat, 3.5, "off-beat half")
+eq(BarEvidence.position(2_250_000, grid: pkg).bar, 1, "last half beat stays in its bar")
+eq(BarEvidence.position(2_250_000, grid: pkg).beat, 4.5, "last half beat is 4.5")
 eq(BarEvidence.usAt(bar: 2, beat: 3.5, grid: pkg), 3_750_000, "bar.beat back to time")
 eq(BarEvidence.barCount(grid: pkg, durationUs: 8_400_000), 4, "partial last bar counted")
 
@@ -422,6 +424,16 @@ do {
     check(steady.steady(from: 2, to: 12), "steady beats")
     steady.ticks = (0..<40).map { Double($0) * 0.375 }
     check(!steady.steady(from: 2, to: 12), "beats locked to dotted eighths are not steady")
+}
+
+// Anticipations: struck an eighth before the bar and held into it → read on the bar line; a short
+// passing chord on the off-beat stays where it is.
+do {
+    let g = BeatGrid(bpm: 120, beatOriginUs: 0, barAnchorUs: 0)
+    let pushed = BarEvidence.readingStart(1_750_000, endUs: 4_000_000, grid: g)
+    check(pushed.pushed && pushed.us == 2_000_000, "pushed chord read on the bar line")
+    check(!BarEvidence.readingStart(1_750_000, endUs: 2_250_000, grid: g).pushed, "short off-beat passing chord stays")
+    check(!BarEvidence.readingStart(2_000_000, endUs: 4_000_000, grid: g).pushed, "on-beat chord unchanged")
 }
 
 print("\(passes) passed, \(failures) failed")
