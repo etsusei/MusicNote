@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Copyrighted audio and generated stems — never commit
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.aiff
+*.caf
+output/
+
+# Third-party checkout (referenced by path in settings)
+muscriptor/
+
+# Build outputs
+.build/
+build/
+dist/
+*.app
+work/separate
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+workers/**/.venv/
+
+# Downloaded assets
+Resources/SoundFonts/*.sf2
+Resources/SoundFonts/*.sf3
