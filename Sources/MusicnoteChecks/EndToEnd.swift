@@ -117,6 +117,26 @@ func runSeed(_ args: [String]) -> Int32 {
 /// harmonic item, without saving anything.
 func runRegroup(_ args: [String]) -> Int32 {
     guard args.count >= 2, let store = try? Store(url: AppPaths(root: URL(fileURLWithPath: args[1])).database) else { return 2 }
+    if args.count >= 3, args[2] == "--save" {
+        // Only for scratch copies: writes a new harmony revision per item.
+        let root = FileManager.default.currentDirectoryPath
+        let pipeline = Pipeline(store: store, paths: AppPaths(root: URL(fileURLWithPath: args[1])),
+                                tools: ToolSettings.defaults(projectRoot: root, separatorBinary: ""))
+        let sem = DispatchSemaphore(value: 0)
+        Task {
+            for var item in store.all(AnalysisItem.self) where item.isHarmonic {
+                guard let t = item.timing, let r = item.confirmedMidiRevision,
+                      let midi = store.all(MidiRevision.self, owner: item.id).first(where: { $0.revision == r }) else { continue }
+                let prev = store.all(HarmonyRevision.self, owner: item.id).max { $0.revision < $1.revision }
+                let h = await pipeline.analyzeHarmony(item, midi: midi, timing: t, revision: (prev?.revision ?? 0) + 1, previous: prev)
+                try? store.save(h); item.harmonyRevision = h.revision; try? store.save(item)
+                print("saved r\(h.revision):", h.events.map { $0.symbol ?? "?" }.joined(separator: " "))
+            }
+            sem.signal()
+        }
+        sem.wait()
+        return 0
+    }
     for item in store.all(AnalysisItem.self) where item.isHarmonic {
         guard let t = item.timing, let r = item.confirmedMidiRevision,
               let midi = store.all(MidiRevision.self, owner: item.id).first(where: { $0.revision == r }) else { continue }

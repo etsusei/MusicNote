@@ -279,21 +279,26 @@ public final class Pipeline: @unchecked Sendable {
     public func analyzeHarmony(_ item: AnalysisItem, midi: MidiRevision, timing: TimingConfirmation, revision: Int,
                                previous: HarmonyRevision?, params: ChordGrouper.Params = .init()) async -> HarmonyRevision {
         let grouper = ChordGrouper(params: params)
-        let groups = grouper.group(notes: midi.notes, grid: timing.grid, durationUs: item.durationUs, key: timing.key)
+        let (groups, repetition) = grouper.analyze(notes: midi.notes, grid: timing.grid, durationUs: item.durationUs, key: timing.key)
         let sets = groups.enumerated().map { (id: String(format: "chord-%02d", $0.offset + 1), pitches: $0.element.namingPitches) }
         let (names, namer) = await nameWithMusicpy(sets, key: timing.key)
         var events: [ChordEvent] = []
         for (i, g) in groups.enumerated() {
             let id = sets[i].id
             var candidates: [ChordCandidate] = []
-            if let n = names[id], let s = n.symbol { candidates.append(ChordCandidate(symbol: s, source: .musicpy, score: nil, raw: n.raw)) }
+            if let n = names[id], var s = n.symbol {
+                if s.contains("13(omit11)") { s = s.replacingOccurrences(of: "(omit11)", with: "") }
+                candidates.append(ChordCandidate(symbol: s, source: .musicpy, score: nil, raw: n.raw))
+            }
             for c in g.candidates where !candidates.contains(where: { $0.symbol == c.symbol }) { candidates.append(c) }
             let topTemplate = g.candidates.first
             let symbol: String?
             let source: NamingSource?
             // Musicpy names with omitted tones are often contrived for transcribed clusters;
             // a well-fitting plain template name reads better. Both stay as candidates.
-            let musicpy = names[id]?.symbol
+            // 13th chords conventionally leave out the 11th, so "(omit11)" there is just noise.
+            var musicpy = names[id]?.symbol
+            if let m = musicpy, m.contains("13(omit11)") { musicpy = m.replacingOccurrences(of: "(omit11)", with: "") }
             let contrived = musicpy?.contains("(omit") ?? false
             if let s = musicpy, !(contrived && (topTemplate?.score ?? 0) >= 0.6) { symbol = s; source = .musicpy }
             else if let t = topTemplate, (t.score ?? 0) >= 0.6 { symbol = t.symbol; source = .template }
@@ -305,9 +310,17 @@ public final class Pipeline: @unchecked Sendable {
             ev.degree = symbol.flatMap { Degrees.label(symbol: $0, key: timing.key) }
             events.append(ev)
         }
+        var stored = params.dictionary
+        if let r = repetition {
+            stored["repeatPeriodUs"] = String(r.periodUs)
+            stored["repeatStartUs"] = String(r.startUs)
+            stored["repeatCount"] = String(r.count)
+            stored["repeatBeats"] = String(r.periodBeats)
+            stored["repeatSimilarity"] = String(format: "%.2f", r.similarity)
+        }
         var rev = HarmonyRevision(analysisId: item.id, revision: revision, midiRevision: midi.revision,
                                   timingRevision: item.timingRevision, key: timing.key, events: events,
-                                  params: params.dictionary, namerVersion: namer)
+                                  params: stored, namerVersion: namer)
         // Carry manual overrides across regrouping when the event clearly survives; otherwise list for review.
         if let previous {
             for old in previous.events where old.manualOverride {

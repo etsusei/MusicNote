@@ -78,6 +78,7 @@ struct NotesStage: View {
             }
             .padding(24)
         }
+        .defaultScrollAnchor(.top)
         .sheet(item: $playgroundSend) { req in PlaygroundSendSheet(request: req).environment(model) }
     }
 
@@ -101,8 +102,39 @@ struct NotesStage: View {
                 Spacer()
                 Toggle("全部显示标准按法", isOn: $standardAll).toggleStyle(.checkbox).font(.caption12)
             }
-            Text(h.events.map { ($0.symbol ?? "未确定") }.joined(separator: "  →  ")).font(.system(size: 15, weight: .medium)).textSelection(.enabled)
-            Text(h.events.map { $0.degree?.display ?? "?" }.joined(separator: "  →  ")).font(.control13).foregroundStyle(Theme.textSecondary)
+            if let r = h.repetition {
+                let reps = h.eventsByRepeat
+                HStack(spacing: 8) {
+                    Label("检测到重复：每 \(r.beats.truncatingRemainder(dividingBy: 4) == 0 ? "\(Int(r.beats / 4)) 小节" : String(format: "%g 拍", r.beats))一遍，共 \(r.count) 遍；各遍切分对齐，和弦名按每遍实际音符",
+                          systemImage: "repeat").font(.caption12).foregroundStyle(Theme.accent)
+                    Menu("统一命名") {
+                        ForEach(0..<r.count, id: \.self) { k in
+                            Button("以第 \(k + 1) 遍为准") { model.unifyRepeats(item.id, from: k) }
+                        }
+                    }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .help("把其他各遍对应位置的和弦名改成所选这一遍的名字（记为人工命名，可逐个恢复）")
+                }
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
+                    ForEach(Array(reps.enumerated()), id: \.offset) { k, evs in
+                        GridRow {
+                            Text("第 \(k + 1) 遍").font(.caption12).foregroundStyle(Theme.textSecondary)
+                            Text(evs.map { $0.symbol ?? "未确定" }.joined(separator: "  →  ")).font(.system(size: 15, weight: .medium)).textSelection(.enabled)
+                        }
+                        GridRow {
+                            Text("")
+                            Text(evs.map { $0.degree?.display ?? "?" }.joined(separator: "  →  ")).font(.control13).foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                }
+                let outside = h.events.filter { h.repeatIndex(of: $0) == nil }
+                if !outside.isEmpty {
+                    Text("重复段之外：" + outside.map { $0.symbol ?? "未确定" }.joined(separator: " → ")).font(.control13).foregroundStyle(Theme.textSecondary)
+                }
+            } else {
+                Text(h.events.map { ($0.symbol ?? "未确定") }.joined(separator: "  →  ")).font(.system(size: 15, weight: .medium)).textSelection(.enabled)
+                Text(h.events.map { $0.degree?.display ?? "?" }.joined(separator: "  →  ")).font(.control13).foregroundStyle(Theme.textSecondary)
+            }
             Text("命名：\(h.namerVersion) · 分组：\(h.params["algorithm"] ?? "")").font(.caption12).foregroundStyle(Theme.textSecondary)
         }
     }
@@ -568,6 +600,24 @@ extension AppModel {
                 saveHarmony(cur)
             }
         }
+    }
+
+    /// Copies chord names from one repeat to the matching positions of the others, as manual names.
+    func unifyRepeats(_ itemId: UUID, from k: Int) {
+        guard var h = latestHarmony(itemId), let item = item(itemId), h.repetition != nil else { return }
+        let key = item.timing?.key ?? h.key
+        let tol = Int64((item.timing?.grid.beatUs ?? 500_000) * 0.3)
+        let source = h.events
+        for i in h.events.indices {
+            let e = source[i]
+            guard let idx = h.repeatIndex(of: e), idx != k, let src = h.counterpart(of: e, inRepeat: k, toleranceUs: tol),
+                  let sym = src.symbol, sym != e.symbol else { continue }
+            h.events[i].symbol = sym
+            h.events[i].manualOverride = true
+            h.events[i].namingSource = .user
+            h.events[i].degree = Degrees.label(symbol: sym, key: key)
+        }
+        saveHarmony(h)
     }
 
     /// Key change only re-derives degrees and spellings; groups, notes and overrides stay.

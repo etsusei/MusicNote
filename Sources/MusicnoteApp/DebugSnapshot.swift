@@ -46,6 +46,18 @@ enum DebugSnapshot {
 
     static func snapshot(to url: URL) {
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }), let view = window.contentView else { return }
+        if ProcessInfo.processInfo.environment["MUSICNOTE_SCROLLTOP"] != nil {
+            func visit(_ v: NSView) {
+                if let sv = v as? NSScrollView, let doc = sv.documentView {
+                    doc.scroll(NSPoint(x: 0, y: doc.isFlipped ? 0 : max(0, doc.bounds.height - sv.contentSize.height)))
+                }
+                v.subviews.forEach(visit)
+            }
+            visit(view)
+            view.layoutSubtreeIfNeeded()
+        }
+        let fr = window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+        try? fr.write(to: url.deletingPathExtension().appendingPathExtension("responder.txt"), atomically: true, encoding: .utf8)
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
         view.cacheDisplay(in: view.bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: url)

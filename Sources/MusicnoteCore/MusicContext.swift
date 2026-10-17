@@ -110,6 +110,11 @@ public struct SnapshotBuilder {
                 return ev
             }
         }
+        if let h = harmony, let r = h.repetition {
+            o["repetition"] = ["periodBeats": r.beats, "count": r.count,
+                               "note": "分组时检测到这段每 \(r.beats) 拍重复一次，各遍使用相同切分；和弦名按每遍实际音符命名，差异来自实际演奏或转录。",
+                               "eventsByRepeat": h.eventsByRepeat.map { $0.map(\.id) }]
+        }
         if let s = latestSkeleton(item.id) {
             o["skeleton"] = ["backboneEventIds": s.backboneEventIds, "explanation": s.explanation, "fromHarmonyRevision": s.harmonyRevision]
         }

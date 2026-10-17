@@ -706,3 +706,35 @@ public struct Job: Record {
     public var ownerId: UUID? { analysisId }
     public var sortKey: Double { startedAt.timeIntervalSince1970 }
 }
+
+public extension HarmonyRevision {
+    /// The detected repeat structure, if grouping found one.
+    var repetition: (periodUs: Int64, startUs: Int64, count: Int, beats: Double)? {
+        guard let p = params["repeatPeriodUs"].flatMap(Int64.init), let s = params["repeatStartUs"].flatMap(Int64.init),
+              let c = params["repeatCount"].flatMap(Int.init), c >= 2 else { return nil }
+        return (p, s, c, params["repeatBeats"].flatMap(Double.init) ?? 0)
+    }
+
+    /// Which repeat an event belongs to (0-based), or nil outside the repeated span.
+    func repeatIndex(of e: ChordEvent) -> Int? {
+        guard let r = repetition, e.startUs >= r.startUs - 50_000 else { return nil }
+        let k = Int(Double(e.startUs - r.startUs + 50_000) / Double(r.periodUs))
+        return k < r.count ? k : nil
+    }
+
+    /// Events grouped by repeat, in order; events outside the repeats are omitted.
+    var eventsByRepeat: [[ChordEvent]] {
+        guard let r = repetition else { return [] }
+        var out = [[ChordEvent]](repeating: [], count: r.count)
+        for e in events { if let k = repeatIndex(of: e) { out[k].append(e) } }
+        return out
+    }
+
+    /// The event in repeat `k` at the same position as `e`.
+    func counterpart(of e: ChordEvent, inRepeat k: Int, toleranceUs: Int64) -> ChordEvent? {
+        guard let r = repetition, let ek = repeatIndex(of: e) else { return nil }
+        let target = e.startUs + Int64(k - ek) * r.periodUs
+        return events.filter { repeatIndex(of: $0) == k && abs($0.startUs - target) <= toleranceUs }
+            .min { abs($0.startUs - target) < abs($1.startUs - target) }
+    }
+}
