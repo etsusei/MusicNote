@@ -47,6 +47,20 @@ struct NotesStage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 summary
+                if let sep = item.separation, sep.leadInUs == nil, item.trimStartUs > 0, let t = item.timing {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "waveform.badge.plus").foregroundStyle(Theme.accent)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("旧版拆轨：开头可能缺一个和弦").font(.system(size: 13, weight: .semibold))
+                            Text("这个片段拆轨时没有往前多带余量。如果第 1 小节的和弦是提前按下的，它的起音在选区之前，转录就抓不到，开头会是空的。重新拆轨会往前多带一小节一起拆，转录时把延续进来的音从 0 开始保留。笔记、标签和旧版本都保留，会生成新的 MIDI 和和声版本。")
+                                .font(.caption12).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                        Button("重新拆轨") { model.confirmAndSeparate(item.id, timing: t) }.buttonStyle(SecondaryButtonStyle(compact: true))
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+                }
                 if item.isHarmonic { BarLineHint(item: item) }
                 if item.isHarmonic { AutoAnalysisSection(item: item) }
                 let stale = model.harmonyStale(item)
