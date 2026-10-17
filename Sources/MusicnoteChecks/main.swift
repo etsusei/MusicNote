@@ -2,6 +2,11 @@
 import Foundation
 import MusicnoteCore
 
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "e2e" {
+    let code = await runEndToEnd(Array(CommandLine.arguments.dropFirst()))
+    exit(code)
+}
+
 var failures = 0
 var passes = 0
 func check(_ condition: @autoclosure () -> Bool, _ message: String, file: String = #fileID, line: Int = #line) {
