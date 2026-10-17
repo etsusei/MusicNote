@@ -221,5 +221,13 @@ vput(4, 3.5, [55, 59, 62, 64, 66, 69])                               // next bar
 let vg = ChordGrouper().group(notes: vc, grid: BeatGrid(bpm: 140, beatOriginUs: 0, barAnchorUs: 0), durationUs: Int64(8 * b140 * 1e6), key: bm)
 eq(vg.count, 2, "new voicing on the downbeat splits; the re-strike in bar 1 doesn't")
 
+// Membership: the legato tail of the previous chord (14 ms overlap) is not part of the next chord;
+// a bass held through the chord is.
+let tail = MidiNote(pitch: 56, startUs: 0, endUs: 1_014_000)
+let held = MidiNote(pitch: 43, startUs: 0, endUs: 3_000_000)
+let struckIn = MidiNote(pitch: 59, startUs: 1_000_000, endUs: 2_000_000)
+let mem = ChordGrouper.members([tail, held, struckIn], start: 1_000_000, end: 3_000_000, beatUs: 428_571)
+eq(Set(mem.map(\.id)), Set([held.id, struckIn.id]), "legato tails excluded, held bass included")
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

@@ -558,9 +558,11 @@ extension AppModel {
               t > h.events[i].startUs, t < h.events[j].endUs else { return }
         h.events[i].endUs = t
         h.events[j].startUs = t
+        let beatUs = item.timing?.grid.beatUs ?? 500_000
+        let pitched = midi.notes.filter { $0.instrument != "drums" && $0.instrument != "voice" }
         for k in [i, j] {
             let e = h.events[k]
-            h.events[k].noteIds = midi.notes.filter { $0.startUs < e.endUs && $0.endUs > e.startUs && $0.instrument != "drums" && $0.instrument != "voice" }.map(\.id)
+            h.events[k].noteIds = ChordGrouper.members(pitched, start: e.startUs, end: e.endUs, beatUs: beatUs).map(\.id)
             h.events[k].excludedNoteIds = e.excludedNoteIds.filter { h.events[k].noteIds.contains($0) }
         }
         saveHarmony(h)
@@ -583,11 +585,12 @@ extension AppModel {
         var mid = (ev.startUs + ev.endUs) / 2
         if let p = position, p > ev.startUs, p < ev.endUs { mid = p }
         else if let g = item.timing?.grid { let s = g.snap(us: mid, division: 1); if s > ev.startUs && s < ev.endUs { mid = s } }
-        let byId = Dictionary(uniqueKeysWithValues: midi.notes.map { ($0.id, $0) })
+        let inEvent = midi.notes.filter { ev.noteIds.contains($0.id) }
+        let beatUs = item.timing?.grid.beatUs ?? 500_000
         var a = ev, b = ev
         a.endUs = mid; b.startUs = mid
-        a.noteIds = ev.noteIds.filter { byId[$0].map { $0.startUs < mid } ?? false }
-        b.noteIds = ev.noteIds.filter { byId[$0].map { $0.endUs > mid } ?? false }
+        a.noteIds = ChordGrouper.members(inEvent, start: a.startUs, end: mid, beatUs: beatUs).map(\.id)
+        b.noteIds = ChordGrouper.members(inEvent, start: mid, end: b.endUs, beatUs: beatUs).map(\.id)
         b.id = ev.id + "b"
         while h.events.contains(where: { $0.id == b.id }) { b.id += "b" }
         a.manualOverride = false; b.manualOverride = false

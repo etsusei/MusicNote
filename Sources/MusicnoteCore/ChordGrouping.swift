@@ -16,7 +16,7 @@ import Foundation
 /// Parameters are a baseline to tune against labelled clips (待定 P0-05).
 public struct ChordGrouper: Sendable {
     /// Bump when grouping changes so existing analyses can offer a re-run.
-    public static let algorithm = "meter-slots-v6"
+    public static let algorithm = "meter-slots-v7"
 
     public struct Params: Sendable {
         public var maxSegmentBars = 4.0
@@ -364,8 +364,22 @@ public struct ChordGrouper: Sendable {
         return out
     }
 
+    /// Notes that belong to a chord spanning [start, end): those struck inside it, plus notes
+    /// held over from before only when they really ring through it (a held bass, a pedal) —
+    /// never the legato tail of the previous chord.
+    public static func members(_ notes: [MidiNote], start: Int64, end: Int64, beatUs: Double) -> [MidiNote] {
+        let tol: Int64 = 30_000
+        let span = Double(end - start)
+        return notes.filter { n in
+            guard n.startUs < end - tol / 2, n.endUs > start else { return false }
+            if n.startUs >= start - tol { return true }
+            let overlap = Double(min(n.endUs, end) - start)
+            return overlap >= min(beatUs * 0.5, span * 0.5)
+        }
+    }
+
     func makeGroup(notes: [MidiNote], start: Int64, end: Int64, profile: CellProfile, grid: BeatGrid, key: KeySignature?) -> Group {
-        let members = notes.filter { $0.startUs < end && $0.endUs > start }
+        let members = Self.members(notes, start: start, end: end, beatUs: grid.beatUs)
         let ranked = TemplateMatcher.best(profile: profile.weights, bassPc: profile.bassPc, limit: 4)
         let total = max(profile.weights.reduce(0, +), 1e-9)
         let norm = profile.weights.map { $0 / total }
