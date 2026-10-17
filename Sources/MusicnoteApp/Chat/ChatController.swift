@@ -55,8 +55,7 @@ final class ChatController {
 
     func delete(_ c: Conversation) {
         try? store.transaction { tx in
-            for m in store.all(Message.self, owner: c.id) { try tx.delete(Message.self, id: m.id) }
-            for h in store.all(Highlight.self, owner: c.id) { try tx.delete(Highlight.self, id: h.id) }
+            try tx.deleteOwned(by: c.id) // messages and highlights
             try tx.delete(Conversation.self, id: c.id)
         }
         conversations.removeAll { $0.id == c.id }

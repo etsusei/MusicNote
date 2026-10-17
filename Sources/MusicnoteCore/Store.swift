@@ -22,6 +22,7 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 public final class Store: @unchecked Sendable {
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "musicnote.store")
+    private let onQueueKey = DispatchSpecificKey<Bool>()
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
@@ -30,6 +31,7 @@ public final class Store: @unchecked Sendable {
         encoder.dateEncodingStrategy = .iso8601
         decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
+        queue.setSpecific(key: onQueueKey, value: true)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
             throw StoreError.sqlite("cannot open \(url.path)")
@@ -59,8 +61,15 @@ public final class Store: @unchecked Sendable {
 
     private func lastError() -> String { String(cString: sqlite3_errmsg(db)) }
 
+    /// Runs on the store queue; re-entrant, so a read inside a transaction doesn't deadlock
+    /// (dispatch_sync onto the queue it is already on traps).
+    private func locked<R>(_ body: () throws -> R) rethrows -> R {
+        if DispatchQueue.getSpecific(key: onQueueKey) == true { return try body() }
+        return try queue.sync(execute: body)
+    }
+
     public func save<T: Record>(_ record: T) throws {
-        try queue.sync { try saveLocked(record) }
+        try locked { try saveLocked(record) }
     }
 
     private func saveLocked<T: Record>(_ record: T) throws {
@@ -80,7 +89,7 @@ public final class Store: @unchecked Sendable {
 
     /// Saves several records atomically.
     public func transaction(_ body: (TransactionWriter) throws -> Void) throws {
-        try queue.sync {
+        try locked {
             try exec("BEGIN IMMEDIATE")
             do {
                 try body(TransactionWriter(store: self))
@@ -96,16 +105,18 @@ public final class Store: @unchecked Sendable {
         fileprivate let store: Store
         public func save<T: Record>(_ record: T) throws { try store.saveLocked(record) }
         public func delete<T: Record>(_ type: T.Type, id: UUID) throws { try store.deleteLocked(type, id: id) }
+        /// Every record whose owner is `owner`, whatever its kind.
+        public func deleteOwned(by owner: UUID) throws { try store.deleteOwnedLocked(owner) }
     }
 
     public func fetch<T: Record>(_ type: T.Type, id: UUID) -> T? {
-        queue.sync {
+        locked {
             query(T.self, sql: "SELECT json FROM docs WHERE kind=? AND id=?", binds: [T.kind, id.uuidString]).first
         }
     }
 
     public func all<T: Record>(_ type: T.Type, owner: UUID? = nil) -> [T] {
-        queue.sync {
+        locked {
             if let owner {
                 return query(T.self, sql: "SELECT json FROM docs WHERE kind=? AND owner=? ORDER BY sort", binds: [T.kind, owner.uuidString])
             }
@@ -114,7 +125,7 @@ public final class Store: @unchecked Sendable {
     }
 
     public func delete<T: Record>(_ type: T.Type, id: UUID) throws {
-        try queue.sync { try deleteLocked(type, id: id) }
+        try locked { try deleteLocked(type, id: id) }
     }
 
     private func deleteLocked<T: Record>(_ type: T.Type, id: UUID) throws {
@@ -123,6 +134,14 @@ public final class Store: @unchecked Sendable {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, T.kind, -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 2, id.uuidString, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_DONE else { throw StoreError.sqlite(lastError()) }
+    }
+
+    private func deleteOwnedLocked(_ owner: UUID) throws {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "DELETE FROM docs WHERE owner=?", -1, &stmt, nil) == SQLITE_OK else { throw StoreError.sqlite(lastError()) }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, owner.uuidString, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(stmt) == SQLITE_DONE else { throw StoreError.sqlite(lastError()) }
     }
 
@@ -142,7 +161,7 @@ public final class Store: @unchecked Sendable {
 
     /// Consistent snapshot for backups, made with SQLite's online backup API.
     public func backup(to url: URL) throws {
-        try queue.sync {
+        try locked {
             var dest: OpaquePointer?
             guard sqlite3_open(url.path, &dest) == SQLITE_OK else { throw StoreError.sqlite("cannot open backup target") }
             defer { sqlite3_close(dest) }

@@ -257,13 +257,16 @@ final class AppModel {
     /// Removes an item and everything it owns; external source files are never touched.
     func deleteAnalysis(_ item: AnalysisItem, reloadAfter: Bool = true) {
         cancelJob(item.id)
-        try? store.transaction { tx in
-            for m in store.all(MidiRevision.self, owner: item.id) { try tx.delete(MidiRevision.self, id: m.id) }
-            for h in store.all(HarmonyRevision.self, owner: item.id) { try tx.delete(HarmonyRevision.self, id: h.id) }
-            for s in store.all(Skeleton.self, owner: item.id) { try tx.delete(Skeleton.self, id: s.id) }
-            for j in store.all(Job.self, owner: item.id) { try tx.delete(Job.self, id: j.id) }
-            try tx.delete(NoteDocument.self, id: item.id)
-            try tx.delete(AnalysisItem.self, id: item.id)
+        cancelAutoAnalysis(item.id)
+        do {
+            // MIDI, harmony, skeletons, jobs, model runs and evidence are all owned by the item.
+            try store.transaction { tx in
+                try tx.deleteOwned(by: item.id)
+                try tx.delete(NoteDocument.self, id: item.id)
+                try tx.delete(AnalysisItem.self, id: item.id)
+            }
+        } catch {
+            report(error); return
         }
         paths.removeOwned(paths.analysisAssets(item.id))
         if route == .analysis(item.id) { route = .song(item.songId) }

@@ -355,5 +355,29 @@ do {
     eq(legacy.result(in: st)?.revision, 4, "older runs resolve to the revision they saved")
 } catch { check(false, "adoption: \(error)") }
 
+// Store: reading inside a transaction must not deadlock (deleting a song used to crash);
+// deleteOwned removes every kind owned by the item and nothing else.
+do {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-store-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let st = try Store(url: dir.appendingPathComponent("t.sqlite"))
+    let src = SourceRef(fileName: "a.wav", pathHint: "/a.wav", bookmark: nil, bytes: 1, durationSec: 10, sampleRate: 44100, frames: 441000, fingerprint: "x")
+    let a = AnalysisItem(songId: UUID(), title: "a", source: src, trimStartUs: 0, trimEndUs: 1)
+    let b = AnalysisItem(songId: UUID(), title: "b", source: src, trimStartUs: 0, trimEndUs: 1)
+    try st.save(a); try st.save(b)
+    for it in [a, b] {
+        try st.save(HarmonyRevision(analysisId: it.id, revision: 1, midiRevision: 1, timingRevision: 0, key: cMajor, events: [], params: [:], namerVersion: "t"))
+        try st.save(AutoRun(analysisId: it.id, trimRevision: 0, provider: "codex", model: "m", maxToolCalls: 1, maxSeconds: 1))
+    }
+    try st.transaction { tx in
+        _ = st.all(HarmonyRevision.self, owner: a.id) // re-entrant read
+        try tx.deleteOwned(by: a.id)
+        try tx.delete(AnalysisItem.self, id: a.id)
+    }
+    check(st.all(HarmonyRevision.self, owner: a.id).isEmpty && st.all(AutoRun.self, owner: a.id).isEmpty && st.fetch(AnalysisItem.self, id: a.id) == nil, "item and everything it owns deleted")
+    check(st.all(HarmonyRevision.self, owner: b.id).count == 1 && st.all(AutoRun.self, owner: b.id).count == 1, "other items untouched")
+} catch { check(false, "store: \(error)") }
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
