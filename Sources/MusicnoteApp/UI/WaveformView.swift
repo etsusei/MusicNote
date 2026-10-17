@@ -14,6 +14,10 @@ struct WaveformSelectionView: View {
     @Binding var viewRange: Range<Int64>
     var beatFrames: [Int64] = []
     var downbeatFrames: Set<Int64> = []
+    /// Bar numbers drawn at these frames (selection stage: bar 1 at the selection start).
+    var barLabels: [(frame: Int64, number: Int)] = []
+    /// Applied to edges while dragging; holding ⌥ drags freely.
+    var snap: ((Int64) -> Int64)? = nil
     var onSeek: (Int64) -> Void
     var onCommit: () -> Void
 
@@ -32,12 +36,25 @@ struct WaveformSelectionView: View {
                     // Selection fill
                     let sx = toX(selection.lowerBound), ex = toX(selection.upperBound)
                     ctx.fill(Path(CGRect(x: sx, y: 0, width: max(1, ex - sx), height: size.height)), with: .color(Theme.selectionFill))
-                    // Beat grid (only inside selection)
-                    for b in beatFrames where b >= viewRange.lowerBound && b < viewRange.upperBound {
-                        let x = toX(b)
+                    // Beat grid; weak beats only when they are far enough apart to read.
+                    let visible = beatFrames.filter { $0 >= viewRange.lowerBound && $0 < viewRange.upperBound }
+                    let spacing = visible.count > 1 ? size.width / CGFloat(visible.count) : size.width
+                    for b in visible {
                         let strong = downbeatFrames.contains(b)
+                        if !strong && spacing < 6 { continue }
+                        if strong && spacing * 4 < 3 { continue }
+                        let x = toX(b)
                         ctx.fill(Path(CGRect(x: x, y: 0, width: strong ? 1.5 : 1, height: size.height)),
                                  with: .color(Theme.accent.opacity(strong ? 0.55 : 0.22)))
+                    }
+                    if !barLabels.isEmpty {
+                        let shown = barLabels.filter { $0.frame >= viewRange.lowerBound && $0.frame < viewRange.upperBound }
+                        let gap = shown.count > 1 ? size.width / CGFloat(shown.count) : size.width
+                        let every = gap >= 22 ? 1 : gap >= 11 ? 2 : gap >= 5 ? 4 : 8
+                        for l in shown where (l.number - 1) % every == 0 {
+                            ctx.draw(Text("\(l.number)").font(.system(size: 10, weight: .semibold)).foregroundColor(Theme.accent),
+                                     at: CGPoint(x: toX(l.frame) + 3, y: 3), anchor: .topLeading)
+                        }
                     }
                     // Waveform
                     if let peaks {
@@ -76,17 +93,19 @@ struct WaveformSelectionView: View {
                                 dragStartSelection = selection
                             }
                             let df = Int64(Double(v.translation.width / w) * span)
+                            let sn: (Int64) -> Int64 = NSEvent.modifierFlags.contains(.option) ? { $0 } : (snap ?? { $0 })
                             switch drag {
                             case .left:
-                                let s = min(max(0, dragStartSelection.lowerBound + df), selection.upperBound - 1)
+                                let s = min(max(0, sn(dragStartSelection.lowerBound + df)), selection.upperBound - 1)
                                 selection = s..<selection.upperBound
                             case .right:
-                                let e = max(min(totalFrames, dragStartSelection.upperBound + df), selection.lowerBound + 1)
+                                let e = max(min(totalFrames, sn(dragStartSelection.upperBound + df)), selection.lowerBound + 1)
                                 selection = selection.lowerBound..<e
                             case .move:
                                 let len = dragStartSelection.count
-                                // At the file edge the whole selection stops; length is kept.
-                                let s = min(max(0, dragStartSelection.lowerBound + df), totalFrames - Int64(len))
+                                // At the file edge the whole selection stops; length is kept. The start snaps,
+                                // so a selection of whole bars stays on bar lines.
+                                let s = min(max(0, sn(dragStartSelection.lowerBound + df)), totalFrames - Int64(len))
                                 selection = s..<(s + Int64(len))
                             case nil: break
                             }

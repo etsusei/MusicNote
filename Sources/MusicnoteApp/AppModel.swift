@@ -61,6 +61,8 @@ final class AppModel {
     var autoTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored var _autoProvider: CodexProvider?
     @ObservationIgnored var _autoClaude: ClaudeAgentProvider?
+    var songGridRunning: Set<UUID> = []
+    var songGridError: [UUID: String] = [:]
     @ObservationIgnored var auditionCache: [String: AVAudioPCMBuffer] = [:]
     @ObservationIgnored var auditionStop: Task<Void, Never>?
 
@@ -361,6 +363,43 @@ final class AppModel {
         })
     }
 
+    /// Whole-song beats and bar lines for the selection stage. Reuses a sibling clip's grid (same
+    /// source file); otherwise detects it and, if another clip of the song has a confirmed tempo
+    /// and bar line, lines the grid up with that.
+    func detectSongGrid(_ itemId: UUID) {
+        guard let item = item(itemId), item.songGrid == nil, !songGridRunning.contains(itemId) else { return }
+        let siblings = items(of: item.songId).filter { $0.id != itemId && $0.source.fingerprint == item.source.fingerprint }
+        if let g = siblings.compactMap(\.songGrid).first {
+            var cur = item; cur.songGrid = g; save(cur); return
+        }
+        songGridRunning.insert(itemId)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.songGridRunning.remove(itemId) }
+            do {
+                var g = try await self.pipeline.detectSongGrid(item.source)
+                if let ref = siblings.first(where: { $0.hasValidTiming }), let t = ref.timing {
+                    let bar = t.barAnchorUs.map { (Double(ref.trimStartUs + $0)) / 1e6 }
+                    g.calibrate(confirmedBpm: t.bpm, beatsPerBar: t.meter.numerator, barLineAt: bar)
+                }
+                guard var cur = self.item(itemId), cur.songGrid == nil else { return }
+                cur.songGrid = g
+                self.save(cur)
+            } catch {
+                self.songGridError[itemId] = error.localizedDescription
+                self.dataVersion += 1
+            }
+        }
+    }
+
+    /// Bar-line adjustments (half-time, meter, shift); the selection itself is unchanged.
+    func updateSongGrid(_ itemId: UUID, _ f: (inout SongGrid) -> Void) {
+        guard var item = item(itemId), var g = item.songGrid else { return }
+        f(&g)
+        item.songGrid = g
+        save(item)
+    }
+
     func updateSelection(_ itemId: UUID, start: Int64, end: Int64) {
         guard var item = item(itemId), item.separation == nil else { return }
         guard start != item.trimStartUs || end != item.trimEndUs else { return }
@@ -423,6 +462,9 @@ final class AppModel {
             guard var cur = self.item(itemId) else { return }
             cur.state = .editingMidi
             self.save(cur)
+            // No proofreading stop: the transcription is taken as is and harmony starts right away.
+            // The MIDI tab on the result page still allows fixes later.
+            self.confirmMidi(itemId)
         }, onError: { [weak self] error in
             guard let self, var cur = self.item(itemId) else { return }
             cur.state = .awaitingStem

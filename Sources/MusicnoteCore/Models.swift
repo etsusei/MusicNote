@@ -169,7 +169,7 @@ public enum AnalysisState: String, Codable, Sendable {
         case .separating: "拆轨中"
         case .awaitingStem: "待选分轨"
         case .transcribing: "转录中"
-        case .editingMidi: "MIDI 校对"
+        case .editingMidi: "转录完成"
         case .harmonizing: "和声分析中"
         case .ready: "完成"
         }
@@ -187,6 +187,8 @@ public struct AnalysisItem: Record {
     public var trimEndUs: Int64
     public var trimRevision: Int
     public var detection: Detection?
+    /// Whole-song beats and bar lines for snapping the selection; adjusting it never touches the selection.
+    public var songGrid: SongGrid?
     public var timing: TimingConfirmation?
     public var timingRevision: Int
     public var separation: SeparationRecord?

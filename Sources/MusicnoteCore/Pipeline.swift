@@ -134,6 +134,24 @@ public final class Pipeline: @unchecked Sendable {
             version: result["version"] as? String ?? "", errors: errors, detectedAt: Date())
     }
 
+    /// Beats and bar lines of the whole original (seconds in the source file). A few seconds for a song.
+    public func detectSongGrid(_ source: SourceRef) async throws -> SongGrid {
+        guard let url = Pipeline.resolve(source) else { throw WorkerError(code: "SOURCE_MISSING", message: "原曲文件找不到了") }
+        nonisolated(unsafe) var result: [String: Any]?
+        let w = WorkerProcess(tools.essentiaPython, [tools.workers + "/essentia_worker.py", "bars", url.path])
+        let r = try await w.run { line in if let o = decodeJSONLine(line) { result = o } }
+        guard let result else { throw WorkerError(code: "DETECTION_FAILED", message: "整曲节拍检测无输出：\(r.stderr.suffix(300))") }
+        if let err = result["error"] as? [String: Any] {
+            throw WorkerError(code: "DETECTION_FAILED", message: err["message"] as? String ?? "整曲节拍检测失败")
+        }
+        let ticks = result["ticks"] as? [Double] ?? []
+        guard ticks.count >= 8 else { throw WorkerError(code: "DETECTION_FAILED", message: "整曲没检测到足够的拍点") }
+        return SongGrid(ticks: ticks, detectedBpm: result["bpm"] as? Double ?? 120, halfTime: false,
+                        beatsPerBar: result["beatsPerBar"] as? Int ?? 4, phase: result["downbeatPhase"] as? Int ?? 0,
+                        halfTimePhase: result["halfTimePhase"] as? Int, margin: result["downbeatMargin"] as? Double ?? 0,
+                        fingerprint: source.fingerprint)
+    }
+
     // MARK: Separation
 
     public func separate(_ item: AnalysisItem, jobDir: URL, progress: @escaping ProgressHandler) async throws -> SeparationRecord {

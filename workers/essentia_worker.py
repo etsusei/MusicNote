@@ -7,6 +7,7 @@ stdout; logs go to stderr.
 
   detect AUDIO            -> {"rawBpm", "ticks", "confidence", "estimates", "key", "scale", "strength", ...}
   chords AUDIO --ticks .. -> {"chords": [{"startSec", "endSec", "label", "strength"}]}
+  bars AUDIO              -> {"bpm", "ticks", "beatsPerBar", "downbeatPhase", "phaseScores", ...} (whole song)
 """
 import argparse
 import json
@@ -104,6 +105,82 @@ def chroma(path, start, end):
     return {"chroma": {names[i]: round(by_c[i], 3) for i in range(12)}, "frames": n}
 
 
+def bars(path):
+    """Beats and bar lines for the whole song, so a selection can snap to bar lines.
+
+    Essentia has no downbeat tracker. In most songs the harmony changes and the bass is
+    struck on the first beat of a bar, so for each meter (4, 3) and phase we score how much
+    beat-synchronous chroma change and bass onset energy falls on the candidate downbeats.
+    """
+    import numpy as np
+    import essentia.standard as es
+    audio = load_mono(path)
+    sr = 44100.0
+    bpm, ticks, confidence, estimates, _ = es.RhythmExtractor2013(method="multifeature")(audio)
+    ticks = [float(t) for t in ticks]
+    result = {"bpm": float(bpm), "ticks": ticks, "confidence": float(confidence), "durationSec": len(audio) / sr}
+    if len(ticks) < 12:
+        result.update(beatsPerBar=4, downbeatPhase=0, phaseScores={}, note="too few beats")
+        return result
+    frame, hop = 4096, 2048
+    window = es.Windowing(type="blackmanharris62")
+    spectrum = es.Spectrum()
+    peaks = es.SpectralPeaks(orderBy="magnitude", magnitudeThreshold=1e-5, minFrequency=40, maxFrequency=5000, maxPeaks=60)
+    hpcp = es.HPCP(size=12, referenceFrequency=440, harmonics=8, bandPreset=True, minFrequency=40, maxFrequency=5000,
+                   weightType="cosine", nonLinear=False, windowSize=1.0)
+    lo_bin = int(30 * frame / sr)
+    hi_bin = int(160 * frame / sr)
+    chroma, bass = [], []
+    for f in es.FrameGenerator(audio, frameSize=frame, hopSize=hop, startFromZero=True):
+        sp = spectrum(window(f))
+        fr, mg = peaks(sp)
+        chroma.append(hpcp(fr, mg))
+        bass.append(float(np.sum(sp[lo_bin:hi_bin] ** 2)))
+    chroma = np.array(chroma)
+    bass = np.array(bass)
+    times = np.arange(len(bass)) * hop / sr
+    n = len(ticks)
+    sync = np.zeros((n, 12))
+    onset = np.zeros(n)
+    for i, t in enumerate(ticks):
+        end = ticks[i + 1] if i + 1 < n else t + 60.0 / max(bpm, 1)
+        m = (times >= t) & (times < end)
+        if m.any():
+            sync[i] = chroma[m].mean(axis=0)
+        head = (times >= t - 0.03) & (times < t + 0.12)
+        before = (times >= t - 0.25) & (times < t - 0.03)
+        if head.any():
+            onset[i] = max(0.0, np.log1p(bass[head].max()) - (np.log1p(bass[before].mean()) if before.any() else 0.0))
+    norms = np.linalg.norm(sync, axis=1) + 1e-9
+    novelty = np.zeros(n)
+    for i in range(1, n):
+        novelty[i] = 1.0 - float(np.dot(sync[i], sync[i - 1]) / (norms[i] * norms[i - 1]))
+    def z(x):
+        sd = x.std()
+        return (x - x.mean()) / sd if sd > 0 else x * 0
+    feat = z(novelty) + 0.6 * z(onset)
+    scores = {}
+    for meter in (4, 3):
+        for p in range(meter):
+            scores["%d/%d" % (meter, p)] = float(feat[p::meter].mean())
+    # Half-time reading (a 4/4 bar spans 8 detected beats): which of the two 4-beat phases is beat 1.
+    for p in range(8):
+        scores["8/%d" % p] = float(feat[p::8].mean())
+    best4 = max(range(4), key=lambda p: scores["4/%d" % p])
+    best3 = max(range(3), key=lambda p: scores["3/%d" % p])
+    # 4/4 unless 3/4 is clearly stronger: most material here is 4/4, and 3/4 fits half the 4/4 patterns too.
+    if scores["3/%d" % best3] > scores["4/%d" % best4] + 0.25:
+        meter, phase = 3, best3
+    else:
+        meter, phase = 4, best4
+    ranked = sorted([scores["%d/%d" % (meter, p)] for p in range(meter)], reverse=True)
+    half = max(range(8), key=lambda p: scores["8/%d" % p]) if meter == 4 else None
+    result.update(halfTimePhase=half)
+    result.update(beatsPerBar=meter, downbeatPhase=phase, phaseScores=scores,
+                  downbeatMargin=float(ranked[0] - ranked[1]) if len(ranked) > 1 else 0.0)
+    return result
+
+
 def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -116,10 +193,14 @@ def main():
     h.add_argument("audio")
     h.add_argument("--start", type=float, required=True)
     h.add_argument("--end", type=float, required=True)
+    b = sub.add_parser("bars")
+    b.add_argument("audio")
     a = p.parse_args()
     try:
         if a.cmd == "detect":
             out(detect(a.audio))
+        elif a.cmd == "bars":
+            out(bars(a.audio))
         elif a.cmd == "chroma":
             out(chroma(a.audio, a.start, a.end))
         else:

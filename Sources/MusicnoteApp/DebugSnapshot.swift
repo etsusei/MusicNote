@@ -119,14 +119,7 @@ enum DebugFlow {
             note("stems \(model.item(id)!.separation!.stems.map { "\($0.kind.rawValue):\($0.level.rawValue)" })")
             await shot("3-stems")
             model.transcribe(id, stem: .piano)
-            guard await wait("transcription", { model.item(id)?.state == .editingMidi }) else { NSApp.terminate(nil); return }
-            var notes = model.workingMidi(id)!.notes
-            note("notes \(notes.count)")
-            await shot("4-midi")
-            // Simulated edit: delete the shortest note.
-            if let shortest = notes.min(by: { $0.durationUs < $1.durationUs }) { notes.removeAll { $0.id == shortest.id } }
-            model.saveDraft(id, notes: notes)
-            model.confirmMidi(id)
+            // No proofreading stop: transcription is confirmed and harmony starts on its own.
             guard await wait("harmony", { model.item(id)?.state == .ready && model.jobs[id] == nil }) else { NSApp.terminate(nil); return }
             let item = model.item(id)!
             let h = model.latestHarmony(id)

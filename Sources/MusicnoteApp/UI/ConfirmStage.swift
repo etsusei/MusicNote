@@ -24,6 +24,7 @@ struct ConfirmStage: View {
     @ViewState private var viewRange: Range<Int64> = 0..<1
     @ViewState private var selection: Range<Int64> = 0..<1
     @ViewState private var ready = false
+    @ViewState private var fromSongGrid = false
 
     private var rate: Double { item.source.sampleRate }
     private var trimStartFrame: Int64 { Int64((Double(item.trimStartUs) * rate / 1_000_000).rounded()) }
@@ -97,6 +98,10 @@ struct ConfirmStage: View {
                         if let s = d.keyStrength { Text("强度 \(String(format: "%.2f", s))").font(.caption12).foregroundStyle(Theme.textSecondary) }
                     }
                     ForEach(d.errors, id: \.self) { Text($0).font(.caption12).foregroundStyle(Theme.warning) }
+                    if fromSongGrid {
+                        Label("速度、拍号和第 1 小节的位置沿用了选区阶段的整曲小节线；如果改了 BPM 或拍点偏移，记得核对小节线。", systemImage: "metronome")
+                            .font(.caption12).foregroundStyle(Theme.accent)
+                    }
                     Text("检测的是大调/小调与四分音符拍点，不是完整调式、拍号或强拍检测；片段内转调或明显变速时可回去重新切分。")
                         .font(.caption12).foregroundStyle(Theme.textSecondary)
                 }
@@ -195,9 +200,26 @@ struct ConfirmStage: View {
                 tonic = pc; mode = d.rawScale == "minor" ? .minor : .major
                 flats = Pitch.prefersFlats(KeySignature(tonic: pc, tonicName: k, mode: mode))
             }
+            applySongGrid(clipBpm: d.roundedBpm)
         }
         ready = true
         setupAudio()
+    }
+
+    /// The selection stage's whole-song bar lines carry over: tempo reading (half-time or not),
+    /// meter, and bar 1 on the first bar line of the clip (its start when the selection snapped).
+    /// The clip's own BPM wins when it agrees with the song's within 4%, since it is local.
+    private func applySongGrid(clipBpm: Double?) {
+        guard let g = item.songGrid else { return }
+        let s = Double(item.trimStartUs) / 1e6, e = Double(item.trimEndUs) / 1e6
+        if let r = clipBpm, abs(r - g.bpm) / g.bpm < 0.04 { bpmText = String(format: "%.1f", r) }
+        else if let r = Tempo.roundToHalf(g.bpm) { bpmText = String(format: "%.1f", r) }
+        numerator = g.beatsPerBar; denominator = 4
+        if let a = g.barAnchor(clipStart: s, clipEnd: e) {
+            barAnchorUs = Int64(a * 1e6)
+            detectedOriginUs = Int64(a * 1e6)
+            fromSongGrid = true
+        }
     }
 
     /// Fits the beat phase to detected ticks: circular mean of tick positions modulo the beat.

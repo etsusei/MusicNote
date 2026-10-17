@@ -388,5 +388,22 @@ eq(KeyProfile.fits(cMajScale).first.map { "\($0.tonic)\($0.minor)" }, "0false", 
 let aMin: [Double] = [0.6, 0, 0.5, 0, 0.8, 0.5, 0, 0.5, 0, 1, 0, 0.6]
 eq(KeyProfile.fits(aMin).first.map { "\($0.tonic)\($0.minor)" }, "9true", "A minor profile")
 
+// Song grid: bar lines from detected beats, half-time reading, shifting, snapping, calibration.
+do {
+    let tk = (0..<64).map { 0.5 + Double($0) * 0.25 }   // detected at 240 BPM-ish spacing (0.25 s)
+    var sg = SongGrid(ticks: tk, detectedBpm: 240, halfTime: false, beatsPerBar: 4, phase: 1, halfTimePhase: 3, margin: 1, fingerprint: "f")
+    eq(sg.downbeats(from: 0, to: 3).map { ($0 * 100).rounded() / 100 }, [0.75, 1.75, 2.75], "bar lines every 4 beats from the phase")
+    eq(sg.downbeats(from: -0.6, to: 0.5).map { ($0 * 100).rounded() / 100 }, [-0.25], "extrapolated before the first beat")
+    eq(sg.snap(1.6, toBars: true), 1.75, "snap to nearest bar line")
+    eq(sg.snap(1.6, toBars: false), 1.5, "snap to nearest beat")
+    sg.shift(beats: 1); eq(sg.downbeats(from: 0.1, to: 2).first, 1.0, "shift by one beat")
+    sg.setHalfTime(true); eq(sg.bpm, 120, "half-time BPM")
+    eq(sg.downbeats(from: 0, to: 4).map { ($0 * 100).rounded() / 100 }, [1.25, 3.25], "half-time bars span 8 detected beats")
+    var cal = SongGrid(ticks: tk, detectedBpm: 240, halfTime: false, beatsPerBar: 4, phase: 0, halfTimePhase: nil, margin: 0, fingerprint: "f")
+    cal.calibrate(confirmedBpm: 120, beatsPerBar: 4, barLineAt: 2.26)
+    check(cal.halfTime && abs(cal.snap(2.26, toBars: true) - 2.25) < 0.001, "calibrated to a confirmed half-time bar line")
+    eq(cal.barAnchor(clipStart: 2.25, clipEnd: 10), 0, "clip starting on a bar line has its anchor at 0")
+}
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

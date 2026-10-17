@@ -53,7 +53,7 @@ struct AnalysisPage: View {
                     case .awaitingStem:
                         StemStage(item: item, transport: transport)
                     case .editingMidi:
-                        MidiStage(item: item, transport: transport)
+                        TranscribedStage(item: item, transport: transport)
                     case .ready:
                         ReadyStage(item: item, transport: transport)
                     }
@@ -142,7 +142,7 @@ struct StepIndicator: View {
     var step: Int
     var harmonic: Bool
     var body: some View {
-        let names = ["选区", "速度调性", "拆轨选轨", "MIDI 校对", harmonic ? "和声与笔记" : "笔记"]
+        let names = ["选区", "速度调性", "拆轨选轨", "转录", harmonic ? "和声与笔记" : "笔记"]
         HStack(spacing: 4) {
             ForEach(Array(names.enumerated()), id: \.offset) { i, n in
                 Text(n).font(.system(size: 11, weight: i == step ? .semibold : .regular))
@@ -164,8 +164,41 @@ struct SelectionStage: View {
     @ViewState private var viewRange: Range<Int64> = 0..<1
     @ViewState private var loopOn = false
     @ViewState private var stopAt: Int64?
+    @AppStorage("selectionSnap") private var snapMode = "bar" // bar / beat / off
+    @AppStorage("selectionClick") private var clickOn = false
 
     private var rate: Double { item.source.sampleRate }
+    private var grid: SongGrid? { item.songGrid }
+    private func sec(_ f: Int64) -> Double { Double(f) / rate }
+    private func fr(_ t: Double) -> Int64 { Int64((t * rate).rounded()) }
+
+    private var viewSeconds: (Double, Double) { (sec(viewRange.lowerBound), sec(viewRange.upperBound)) }
+    private var beatFrames: [Int64] {
+        guard let g = grid else { return [] }
+        let (a, b) = viewSeconds
+        return g.beats(from: a, to: b).map(fr)
+    }
+    private var downbeatFrames: Set<Int64> {
+        guard let g = grid else { return [] }
+        let (a, b) = viewSeconds
+        return Set(g.downbeats(from: a, to: b).map(fr))
+    }
+    /// Bar numbers counted from the bar line at the selection start.
+    private var barLabels: [(frame: Int64, number: Int)] {
+        guard let g = grid else { return [] }
+        let s = sec(selection.lowerBound), e = sec(selection.upperBound)
+        return g.downbeats(from: s - 0.06, to: e - 0.06).enumerated().map { (fr($0.element), $0.offset + 1) }
+    }
+    private var snapper: ((Int64) -> Int64)? {
+        guard let g = grid, snapMode != "off" else { return nil }
+        let bars = snapMode == "bar"
+        return { f in fr(g.snap(sec(f), toBars: bars)) }
+    }
+    /// How far an edge is from the nearest bar line, in ms.
+    private func offBar(_ f: Int64) -> Int? {
+        guard let g = grid else { return nil }
+        return Int(((sec(f) - g.snap(sec(f), toBars: true)) * 1000).rounded())
+    }
     private func frame(_ us: Int64) -> Int64 { Int64((Double(us) * rate / 1_000_000).rounded()) }
     private func us(_ f: Int64) -> Int64 { Int64((Double(f) / rate * 1_000_000).rounded()) }
 
@@ -174,13 +207,15 @@ struct SelectionStage: View {
             if let e = source.error {
                 Card { HStack { Text(e).foregroundStyle(Theme.warning); Button("重新选择原曲…") { model.relinkSource(item.id) } } }
             }
-            SectionHeader(title: "圈出想学的片段", subtitle: "拖两侧边界调整起止，拖中间整体平移。拖动不会触发分析。")
+            SectionHeader(title: "圈出想学的片段", subtitle: "拖两侧边界调整起止，拖中间整体平移；默认吸附到整曲的小节线（按住 ⌥ 自由拖动），这样第 1 小节就从选区开头算起。拖动不会触发分析。")
             WaveformSelectionView(peaks: source.peaks, totalFrames: item.source.frames, selection: $selection,
                                   playhead: transport.positionFrame, editable: item.state == .draft, viewRange: $viewRange,
+                                  beatFrames: beatFrames, downbeatFrames: downbeatFrames, barLabels: barLabels, snap: snapper,
                                   onSeek: { AudioEngine.shared.seek($0) }, onCommit: commit)
                 .frame(height: 180)
                 .overlay { if source.loading { ProgressView("正在读取整曲波形…") } }
             ZoomBar(viewRange: $viewRange, totalFrames: item.source.frames, anchor: transport.positionFrame, fitRange: selection)
+            barGridBar
             HStack(spacing: 18) {
                 TimeField(label: "起点", us: us(selection.lowerBound)) { v in setRange(frame(v), selection.upperBound) }
                 TimeField(label: "终点", us: us(selection.upperBound)) { v in setRange(selection.lowerBound, frame(v)) }
@@ -194,6 +229,9 @@ struct SelectionStage: View {
                     .buttonStyle(SecondaryButtonStyle())
                 Button { AudioEngine.shared.pause() } label: { Label("停止", systemImage: "stop.fill") }.buttonStyle(SecondaryButtonStyle())
                 Toggle("循环选区", isOn: $loopOn).toggleStyle(.checkbox)
+                if grid != nil {
+                    Toggle("节拍器（重拍）", isOn: $clickOn).toggleStyle(.checkbox).help("按整曲小节线打拍，用来听小节线对不对")
+                }
                 Spacer()
                 if item.state == .detecting {
                     ProgressView().controlSize(.small)
@@ -208,8 +246,10 @@ struct SelectionStage: View {
             Spacer()
         }
         .padding(24)
-        .onAppear(perform: setup)
+        .onAppear { setup(); model.detectSongGrid(item.id) }
         .onChange(of: source.buffer != nil) { _, _ in setup() }
+        .onChange(of: clickOn) { _, _ in updateClick() }
+        .onChange(of: item.songGrid) { _, _ in updateClick() }
         .onChange(of: loopOn) { _, on in AudioEngine.shared.setLoop(on ? selection : nil) }
         .onChange(of: selection) { _, s in if loopOn { AudioEngine.shared.setLoop(s) } }
         .onChange(of: transport.positionFrame) { _, p in
@@ -233,6 +273,80 @@ struct SelectionStage: View {
         e.setTracks([AudioTrack(id: "source", buffer: buf)])
         e.setLength(item.source.frames)
         e.seek(selection.lowerBound)
+        updateClick()
+    }
+
+    /// Whole-song bar lines: snapping, half-time, meter, nudging, and whether the edges sit on bar lines.
+    @ViewBuilder private var barGridBar: some View {
+        if let g = grid {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    Picker("", selection: $snapMode) { Text("吸附小节").tag("bar"); Text("吸附拍").tag("beat"); Text("不吸附").tag("off") }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 230)
+                        .help("拖动边界时吸附；按住 ⌥ 临时不吸附")
+                    Text(String(format: "整曲 %.1f BPM", g.bpm)).font(.mono13)
+                    Toggle("半速", isOn: Binding(get: { g.halfTime }, set: { on in model.updateSongGrid(item.id) { $0.setHalfTime(on) } }))
+                        .toggleStyle(.checkbox)
+                        .help(String(format: "检测到 %.1f BPM。慢歌常被测成两倍速：勾上后按一半的速度数拍，一小节变长一倍。", g.detectedBpm))
+                    Picker("", selection: Binding(get: { g.beatsPerBar }, set: { n in model.updateSongGrid(item.id) { $0.setBeatsPerBar(n) } })) {
+                        Text("4/4").tag(4); Text("3/4").tag(3)
+                    }.labelsHidden().frame(width: 70)
+                    HStack(spacing: 2) {
+                        Button { model.updateSongGrid(item.id) { $0.shift(beats: -1) } } label: { Image(systemName: "chevron.left") }
+                        Text("小节线").font(.caption12)
+                        Button { model.updateSongGrid(item.id) { $0.shift(beats: 1) } } label: { Image(systemName: "chevron.right") }
+                    }
+                    .buttonStyle(.borderless)
+                    .help("重拍不对时，把所有小节线整体挪一拍")
+                    Spacer()
+                    if item.state == .draft {
+                        Button("选区对齐到小节线") {
+                            let s0 = fr(g.snap(sec(selection.lowerBound), toBars: true))
+                            var e0 = fr(g.snap(sec(selection.upperBound), toBars: true))
+                            if e0 <= s0 { e0 = fr(g.downbeats(from: sec(s0) + 0.05, to: sec(s0) + 30).first ?? sec(selection.upperBound)) }
+                            setRange(s0, e0)
+                        }.buttonStyle(SecondaryButtonStyle(compact: true))
+                    }
+                }
+                HStack(spacing: 14) {
+                    edgeStatus("起点", selection.lowerBound)
+                    edgeStatus("终点", selection.upperBound)
+                    let n = barLabels.count
+                    if n > 0 { Text("选区内 \(n) 个小节线").font(.caption12).foregroundStyle(Theme.textSecondary) }
+                    if g.margin < 0.3 {
+                        Label("小节线位置把握不大：打开节拍器听一下重拍，不对就用 ‹ › 挪一拍", systemImage: "ear")
+                            .font(.caption12).foregroundStyle(Theme.warning)
+                    }
+                }
+            }
+        } else if model.songGridRunning.contains(item.id) {
+            HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在分析整曲的拍子和小节线…").font(.caption12) }
+        } else if let e = model.songGridError[item.id] {
+            HStack(spacing: 8) {
+                Text("整曲小节线没检测出来：\(e)").font(.caption12).foregroundStyle(Theme.warning)
+                Button("重试") { model.songGridError[item.id] = nil; model.detectSongGrid(item.id) }.buttonStyle(.borderless).font(.caption12)
+            }
+        }
+    }
+
+    private func edgeStatus(_ label: String, _ f: Int64) -> some View {
+        let off = offBar(f) ?? 0
+        let on = abs(off) <= 30
+        return Label(on ? "\(label)在小节线上" : "\(label)离小节线 \(off > 0 ? "+" : "")\(off) ms", systemImage: on ? "checkmark.circle" : "exclamationmark.triangle")
+            .font(.caption12).foregroundStyle(on ? Theme.success : Theme.warning)
+    }
+
+    /// Click on the song's bar lines, starting from the downbeat nearest the selection start.
+    private func updateClick() {
+        guard let g = grid, clickOn else { AudioEngine.shared.setMetronome(MetronomeConfig()); return }
+        var m = MetronomeConfig()
+        m.enabled = true
+        m.bpm = g.bpm
+        let anchor = fr(g.snap(sec(selection.lowerBound), toBars: true))
+        m.originFrame = anchor
+        m.barAnchorFrame = anchor
+        m.beatsPerBar = Double(g.beatsPerBar)
+        AudioEngine.shared.setMetronome(m)
     }
 
     private func setRange(_ s: Int64, _ e: Int64) {
@@ -242,7 +356,10 @@ struct SelectionStage: View {
         commit()
     }
 
-    private func commit() { model.updateSelection(item.id, start: us(selection.lowerBound), end: us(selection.upperBound)) }
+    private func commit() {
+        model.updateSelection(item.id, start: us(selection.lowerBound), end: us(selection.upperBound))
+        updateClick()
+    }
 
     private func playSelection() {
         stopAt = loopOn ? nil : selection.upperBound
@@ -396,5 +513,30 @@ struct StemStage: View {
 
     private func toggle() {
         if AudioEngine.shared.isPlaying { AudioEngine.shared.pause() } else { AudioEngine.shared.play() }
+    }
+}
+
+/// Clips left waiting at the old proofreading step: continue with the transcription as is,
+/// or open the MIDI editor first if wanted.
+struct TranscribedStage: View {
+    @Environment(AppModel.self) private var model
+    var item: AnalysisItem
+    var transport: TransportModel
+    @ViewState private var editing = false
+
+    var body: some View {
+        if editing {
+            MidiStage(item: item, transport: transport)
+        } else {
+            VStack(spacing: 14) {
+                Text("转录完成").font(.system(size: 16, weight: .semibold))
+                Text("不再需要逐个校对 MIDI：直接用转录结果分析和声，之后在结果页的 MIDI 标签里仍可修改。").font(.caption12).foregroundStyle(Theme.textSecondary)
+                HStack {
+                    Button("继续分析和声") { model.confirmMidi(item.id) }.buttonStyle(PrimaryButtonStyle())
+                    Button("先打开 MIDI") { editing = true }.buttonStyle(SecondaryButtonStyle())
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 }
