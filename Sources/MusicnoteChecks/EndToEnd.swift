@@ -230,3 +230,27 @@ func runAutoAnalyze(_ args: [String]) async -> Int32 {
     print("final:", r.finalMessage)
     return r.status == .succeeded ? 0 : 1
 }
+
+/// Read-only: what "片段" plays for each chord of the current harmony, next to everything the chord covers.
+func runVoicings(_ args: [String]) -> Int32 {
+    guard args.count >= 3, let store = try? Store(url: AppPaths(root: URL(fileURLWithPath: args[1])).database),
+          let id = UUID(uuidString: args[2]), let item = store.fetch(AnalysisItem.self, id: id),
+          let h = store.all(HarmonyRevision.self, owner: id).first(where: { $0.revision == item.harmonyRevision }),
+          let r = item.confirmedMidiRevision, let midi = store.all(MidiRevision.self, owner: id).first(where: { $0.revision == r }) else { return 2 }
+    let window = min(0.6, (item.timing?.grid.beatUs ?? 600_000) / 1e6)
+    var fallback = 0
+    for ev in h.events {
+        let rel: [PlayedVoicing.Note] = midi.notes.filter { ev.noteIds.contains($0.id) }.map { n in
+            let s = max(n.startUs, ev.startUs)
+            return (pitch: n.pitch, start: Double(s - ev.startUs) / 1e6, duration: Double(min(n.endUs, ev.endUs) - s) / 1e6)
+        }
+        let played = PlayedVoicing.pitches(symbol: ev.symbol, notes: rel, onsetWindow: window)
+        if played == nil { fallback += 1 }
+        let all = Array(Set(rel.map(\.pitch))).sorted()
+        print((ev.symbol ?? "?").padding(toLength: 12, withPad: " ", startingAt: 0),
+              "片段:", played.map { $0.map { Pitch.noteName($0) }.joined(separator: " ") } ?? "→ 标准",
+              " | 原来全部:", all.map { Pitch.noteName($0) }.joined(separator: " "))
+    }
+    print("\(h.events.count) chords, \(fallback) fall back to standard")
+    return 0
+}

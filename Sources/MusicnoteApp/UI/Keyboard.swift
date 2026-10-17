@@ -64,10 +64,9 @@ struct ChordPreviewCard: View {
     @ViewState private var useStandard = false
 
     private var standard: [Int] { StandardVoicing.pitches(symbol: symbol) ?? [] }
-    private var shown: [Int] {
-        if useStandard || original == nil { return standard }
-        return Array(Set(original!.map(\.pitch))).sorted()
-    }
+    /// Chord tones as struck in the clip (melody and passing notes left out); nil → standard.
+    private var played: [Int]? { original.flatMap { PlayedVoicing.pitches(symbol: symbol, notes: $0) } }
+    private var shown: [Int] { useStandard ? standard : (played ?? standard) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -75,7 +74,7 @@ struct ChordPreviewCard: View {
                 Text(symbol).font(.system(size: 18, weight: .semibold))
                 if let degree { Text(degree).font(.control13).foregroundStyle(Theme.textSecondary) }
                 Spacer()
-                if original != nil {
+                if played != nil {
                     Picker("", selection: $useStandard) { Text("片段按法").tag(false); Text("标准按法").tag(true) }
                         .pickerStyle(.segmented).frame(width: 150)
                 }
@@ -93,8 +92,6 @@ struct ChordPreviewCard: View {
     }
 
     private func play() {
-        if !useStandard, let o = original {
-            AudioEngine.shared.playNotes(o.map { (pitch: $0.pitch, start: $0.start, duration: $0.duration, velocity: 96) })
-        } else { AudioEngine.shared.playChord(standard) }
+        AudioEngine.shared.playChord(shown)
     }
 }

@@ -205,9 +205,17 @@ struct ChordEventCard: View {
     @ViewState private var showNotes = false
 
     private var members: [MidiNote] { notes.filter { event.noteIds.contains($0.id) }.sorted { ($0.startUs, $0.pitch) < ($1.startUs, $1.pitch) } }
-    private var actualPitches: [Int] { Array(Set(members.map(\.pitch))).sorted() }
-    private var useStandard: Bool { standard || forceStandard }
-    private var shownPitches: [Int] { useStandard ? (event.symbol.flatMap(StandardVoicing.pitches(symbol:)) ?? []) : actualPitches }
+    private var relative: [PlayedVoicing.Note] {
+        members.map { n in
+            let s = max(n.startUs, event.startUs)
+            return (pitch: n.pitch, start: Double(s - event.startUs) / 1e6, duration: Double(min(n.endUs, event.endUs) - s) / 1e6)
+        }
+    }
+    /// Chord tones as struck in the clip; nil when the clip doesn't cover the chord.
+    private var playedPitches: [Int]? { PlayedVoicing.pitches(symbol: event.symbol, notes: relative, onsetWindow: onsetWindow) }
+    private var onsetWindow: Double { min(0.6, (item.timing?.grid.beatUs ?? 600_000) / 1e6) }
+    private var useStandard: Bool { standard || forceStandard || playedPitches == nil }
+    private var shownPitches: [Int] { useStandard ? (event.symbol.flatMap(StandardVoicing.pitches(symbol:)) ?? []) : (playedPitches ?? []) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -234,11 +242,12 @@ struct ChordEventCard: View {
             }
             KeyboardView(pitches: shownPitches, height: 58)
             HStack(spacing: 6) {
-                Picker("", selection: $standard) { Text("片段").tag(false); Text("标准").tag(true) }
-                    .pickerStyle(.segmented).frame(width: 100).disabled(forceStandard)
+                Picker("", selection: Binding(get: { useStandard }, set: { standard = $0 })) { Text("片段").tag(false); Text("标准").tag(true) }
+                    .pickerStyle(.segmented).frame(width: 100).disabled(forceStandard || playedPitches == nil)
+                    .help(playedPitches == nil ? "片段里的和弦音凑不成这个和弦，用标准按法" : "片段：只取属于这个和弦的音，按和弦起拍时的按法；旋律和经过音不算")
                 Button { play() } label: { Image(systemName: "play.fill") }.buttonStyle(SecondaryButtonStyle(compact: true)).help("按当前音色发声")
                 if !useStandard && event.texture != .block {
-                    Toggle("柱式", isOn: $block).toggleStyle(.checkbox).font(.caption12).help("默认按原时序回放；勾选后合并成柱式和弦")
+                    Toggle("原时序", isOn: $block).toggleStyle(.checkbox).font(.caption12).help("按原曲的时序回放这个和弦的和弦音（不含旋律和经过音）")
                 }
                 Spacer()
                 Menu {
@@ -297,11 +306,11 @@ struct ChordEventCard: View {
 
     private func play() {
         if useStandard { AudioEngine.shared.playChord(shownPitches); return }
-        if block || event.texture == .block { AudioEngine.shared.playChord(actualPitches, duration: min(2.5, Double(event.durationUs) / 1e6)); return }
-        AudioEngine.shared.playNotes(members.map { n in
-            let s = max(n.startUs, event.startUs)
-            return (pitch: n.pitch, start: Double(s - event.startUs) / 1e6, duration: Double(min(n.endUs, event.endUs) - s) / 1e6, velocity: n.velocity)
-        })
+        if block && event.texture != .block, let tones = PlayedVoicing.chordTones(symbol: event.symbol, notes: relative) {
+            AudioEngine.shared.playNotes(tones.map { (pitch: $0.pitch, start: $0.start, duration: $0.duration, velocity: 90) })
+            return
+        }
+        AudioEngine.shared.playChord(shownPitches, duration: min(2.5, max(0.8, Double(event.durationUs) / 1e6)))
     }
 
     private func rename(_ s: String) {

@@ -318,6 +318,33 @@ public enum Degrees {
 
 // MARK: - Standard voicing
 
+/// The chord as it was actually played: only notes that belong to the chord name, taken from where
+/// the chord is struck (widened to the whole event for broken textures). Melody and passing notes
+/// drop out. Nil when the notes don't cover the chord; callers then use the standard voicing.
+public enum PlayedVoicing {
+    public typealias Note = (pitch: Int, start: Double, duration: Double)
+
+    /// `notes` are relative to the chord start, in seconds.
+    public static func chordTones(symbol: String?, notes: [Note]) -> [Note]? {
+        guard let spec = symbol.flatMap(ChordSymbol.parse(_:)) else { return nil }
+        var pcs = Set(spec.intervals.map { (spec.root + $0) % 12 })
+        if let b = spec.bass { pcs.insert(b) }
+        return notes.filter { pcs.contains($0.pitch % 12) && $0.duration > 0.03 }
+    }
+
+    public static func pitches(symbol: String?, notes: [Note], onsetWindow: Double = 0.6) -> [Int]? {
+        guard let spec = symbol.flatMap(ChordSymbol.parse(_:)), let tones = chordTones(symbol: symbol, notes: notes) else { return nil }
+        var pcs = Set(spec.intervals.map { (spec.root + $0) % 12 })
+        if let b = spec.bass { pcs.insert(b) }
+        let need = min(3, pcs.count)
+        func distinct(_ ns: [Note]) -> [Int] { Array(Set(ns.map(\.pitch))).sorted() }
+        let struck = distinct(tones.filter { $0.start <= onsetWindow })
+        if Set(struck.map { $0 % 12 }).count >= need { return struck }
+        let all = distinct(tones)
+        return Set(all.map { $0 % 12 }).count >= need ? all : nil
+    }
+}
+
 public enum StandardVoicing {
     /// Centered close voicing that keeps every tone the symbol requires, plus the slash bass.
     /// Root sits in C3–B3; upper tones stack above; extensions go above the seventh.

@@ -16,6 +16,9 @@ if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "autoanalyze" {
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "skeleton" {
     exit(await runSkeleton(Array(CommandLine.arguments.dropFirst())))
 }
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "voicings" {
+    exit(runVoicings(Array(CommandLine.arguments.dropFirst())))
+}
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "regroup" {
     exit(runRegroup(Array(CommandLine.arguments.dropFirst())))
 }
@@ -270,6 +273,14 @@ eq([BarEvidence.position(500_000, grid: pkg).bar, BarEvidence.position(2_500_000
 eq(BarEvidence.position(1_750_000, grid: pkg).beat, 3.5, "off-beat half")
 eq(BarEvidence.usAt(bar: 2, beat: 3.5, grid: pkg), 3_750_000, "bar.beat back to time")
 eq(BarEvidence.barCount(grid: pkg, durationUs: 8_400_000), 4, "partial last bar counted")
+
+// Played voicing: Cm9 struck on the beat with a melody F and a passing A♭ later; only chord tones, as struck.
+let cm9Bar: [PlayedVoicing.Note] = [(48, 0, 2), (55, 0, 2), (58, 0, 2), (62, 0, 2), (63, 0.02, 2),   // C G B♭ D E♭
+                                    (77, 0.4, 0.3), (68, 1.0, 0.2), (72, 1.2, 0.3)]                  // F (melody), A♭ (passing), C later
+eq(PlayedVoicing.pitches(symbol: "Cm9", notes: cm9Bar), [48, 55, 58, 62, 63], "melody/passing notes and later notes left out")
+// Broken chord: tones arrive one by one, so the whole event is used.
+eq(PlayedVoicing.pitches(symbol: "F", notes: [(53, 0, 0.3), (57, 0.7, 0.3), (60, 1.4, 0.3), (62, 1.6, 0.2)]), [53, 57, 60], "arpeggio gathered, D dropped")
+check(PlayedVoicing.pitches(symbol: "G7", notes: [(67, 0, 1), (74, 0, 1)]) == nil, "too few chord tones → standard voicing")
 
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

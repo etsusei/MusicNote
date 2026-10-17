@@ -266,13 +266,14 @@ struct BarProgressionView: View {
         symbol.replacingOccurrences(of: "(", with: "\u{200B}(").replacingOccurrences(of: "/", with: "\u{200B}/")
     }
 
-    /// Plays the chord as the user's corrected MIDI has it; the standard voicing if there are no notes.
+    /// Plays the chord tones as struck in the corrected MIDI; the standard voicing if they don't cover the chord.
     private func play(_ ev: ChordEvent) {
-        let notes = (model.confirmedMidi(item)?.notes ?? []).filter { ev.noteIds.contains($0.id) }
-        if notes.isEmpty, let p = ev.symbol.flatMap(StandardVoicing.pitches(symbol:)) { AudioEngine.shared.playChord(p); return }
-        AudioEngine.shared.playNotes(notes.map { n in
+        let rel: [PlayedVoicing.Note] = (model.confirmedMidi(item)?.notes ?? []).filter { ev.noteIds.contains($0.id) }.map { n in
             let st = max(n.startUs, ev.startUs)
-            return (pitch: n.pitch, start: Double(st - ev.startUs) / 1e6, duration: Double(min(n.endUs, ev.endUs) - st) / 1e6, velocity: n.velocity)
-        })
+            return (pitch: n.pitch, start: Double(st - ev.startUs) / 1e6, duration: Double(min(n.endUs, ev.endUs) - st) / 1e6)
+        }
+        let window = min(0.6, grid.beatUs / 1e6)
+        guard let p = PlayedVoicing.pitches(symbol: ev.symbol, notes: rel, onsetWindow: window) ?? ev.symbol.flatMap(StandardVoicing.pitches(symbol:)) else { return }
+        AudioEngine.shared.playChord(p, duration: min(2.5, max(0.8, Double(ev.endUs - ev.startUs) / 1e6)))
     }
 }
