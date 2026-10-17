@@ -319,22 +319,28 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     private var chordTask: Task<Void, Never>?
+    private var chordGeneration = 0
 
-    /// Plays notes with relative timing (seconds); `block` sounds them together.
+    /// Plays notes with relative timing (seconds). A new call cuts the previous one off
+    /// immediately; the old task must never send its pending note-offs, or it would
+    /// silence the same pitches in the new chord.
     func playNotes(_ notes: [(pitch: Int, start: Double, duration: Double, velocity: Int)]) {
         start()
         chordTask?.cancel()
+        chordGeneration += 1
+        let generation = chordGeneration
         stopPreview()
         sampler.sendController(123, withValue: 0, onChannel: 1)
         let sorted = notes.sorted { $0.start < $1.start }
         chordTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            func current() -> Bool { !Task.isCancelled && self.chordGeneration == generation }
             let t0 = Date()
             var offs: [(Double, UInt8)] = []
             for n in sorted {
                 let wait = n.start - Date().timeIntervalSince(t0)
                 if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1e9)) }
-                if Task.isCancelled { break }
+                guard current() else { return }
                 // Fire due note-offs first.
                 let now = Date().timeIntervalSince(t0)
                 for (t, p) in offs where t <= now { self.sampler.stopNote(p, onChannel: 1) }
@@ -346,6 +352,7 @@ final class AudioEngine: @unchecked Sendable {
             for (t, p) in offs.sorted(by: { $0.0 < $1.0 }) {
                 let wait = t - Date().timeIntervalSince(t0)
                 if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1e9)) }
+                guard current() else { return }
                 self.sampler.stopNote(p, onChannel: 1)
             }
         }
@@ -357,6 +364,7 @@ final class AudioEngine: @unchecked Sendable {
 
     func stopChord() {
         chordTask?.cancel()
+        chordGeneration += 1
         sampler.sendController(123, withValue: 0, onChannel: 1)
     }
 }

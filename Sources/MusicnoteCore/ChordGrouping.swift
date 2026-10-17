@@ -16,7 +16,7 @@ import Foundation
 /// Parameters are a baseline to tune against labelled clips (待定 P0-05).
 public struct ChordGrouper: Sendable {
     /// Bump when grouping changes so existing analyses can offer a re-run.
-    public static let algorithm = "meter-slots-v5"
+    public static let algorithm = "meter-slots-v6"
 
     public struct Params: Sendable {
         public var maxSegmentBars = 4.0
@@ -36,6 +36,9 @@ public struct ChordGrouper: Sendable {
         public var penaltyOffbeat = 0.6
         public var penaltyNoAttack = 1.0
         public var restBreakBars = 1.0
+        /// Cost per pitch class when a chord re-struck on a strong beat has a different voicing.
+        public var voicingChangeCost = 0.3
+        public var voicingChangeCap = 0.9
         public init() {}
 
         public var dictionary: [String: String] {
@@ -117,6 +120,8 @@ public struct ChordGrouper: Sendable {
         var canStart: Bool // struck chord or new bass
         var metric: Metric
         var anticipates: Bool // off-beat strike tied over the following beat
+        /// Pitch classes struck together, without the top note when four or more are struck (often melody).
+        var voicing: Set<Int>
         var isRest: Bool { evidence == 0 }
     }
 
@@ -177,8 +182,11 @@ public struct ChordGrouper: Sendable {
             // Anticipation: struck off the beat, nothing new on the next eighth, and it rings through it.
             let nextStruck = i + 1 < attacks.count ? attacks[i + 1] : []
             let ties = struck.contains { $0.endUs > t + Int64(eighth * 1.5) }
+            let ordered = struck.sorted { $0.pitch < $1.pitch }
+            let harmonic = ordered.count >= 4 ? ordered.dropLast() : ordered[...]
             out.append(Slot(time: t, index: kk, attacks: struck, weights: w, bassPitch: bass, evidence: evidence,
-                            canStart: canStart, metric: metric(kk, grid: grid), anticipates: nextStruck.isEmpty && ties && struck.count >= 2))
+                            canStart: canStart, metric: metric(kk, grid: grid), anticipates: nextStruck.isEmpty && ties && struck.count >= 2,
+                            voicing: struck.count >= 2 ? Set(harmonic.map { Pitch.pc($0.pitch) }) : []))
             if let b = bass, inBassRegister || struck.count >= 2 { prevBass = b }
         }
         return out
@@ -292,6 +300,27 @@ public struct ChordGrouper: Sendable {
             for c in 0..<m { for t in 0..<T { p[c + 1][t] = p[c][t] + (c < o.count ? misfit[o[c]][t] : 0) } }
             prefixes.append(p)
         }
+        // voice[i][l]: cost of keeping slots i+1 ..< i+l in the chord that starts at i when they are
+        // re-struck on strong beats with a different voicing. Same voicing (comping) costs nothing.
+        var voice = [[Double]](repeating: [], count: m)
+        for i in 0..<m {
+            let o = occ[0]
+            var ref: Set<Int>? = nil
+            var acc = 0.0
+            var row = [0.0, 0.0]
+            for c in i..<min(m, i + maxLen) {
+                let sl = slots[o[c]]
+                if ref == nil, !sl.voicing.isEmpty { ref = sl.voicing }
+                else if c > i, let r = ref, !sl.voicing.isEmpty, sl.voicing != r {
+                    var mt = sl.metric
+                    if mt == .offbeat, sl.anticipates, o[c] + 1 < slots.count { mt = slots[o[c] + 1].metric }
+                    let w: Double = mt == .downbeat ? 1 : mt == .halfBar ? 0.6 : mt == .beat ? 0.3 : 0
+                    acc += w * min(params.voicingChangeCap, params.voicingChangeCost * Double(sl.voicing.symmetricDifference(r).count))
+                }
+                row.append(acc)
+            }
+            voice[i] = row
+        }
         let penalties: [Double] = (0..<m).map { c in
             let ps = occ.compactMap { c < $0.count ? startPenalty(slots[$0[c]], slots: slots, at: $0[c]) : nil }
             return ps.isEmpty ? 0 : ps.reduce(0, +) / Double(ps.count) * Double(occ.count)
@@ -302,7 +331,7 @@ public struct ChordGrouper: Sendable {
         for j in 1...m {
             var i = j - 1
             while i >= 0, j - i <= maxLen {
-                var cost = i == 0 ? 0 : penalties[i]
+                var cost = (i == 0 ? 0 : penalties[i]) + (j - i < voice[i].count ? voice[i][j - i] : voice[i].last ?? 0)
                 for p in prefixes {
                     var seg = Double.infinity
                     for t in 0..<T { seg = min(seg, p[j][t] - p[i][t]) }

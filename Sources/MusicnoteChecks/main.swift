@@ -212,5 +212,14 @@ eq(sr.barAnchorUs, 500_000, "bar line estimated at the first chord, not the firs
 check(sr.barAnchorEstimated, "anchor marked as estimated")
 eq(sr.groups.map { $0.candidates.first?.symbol ?? "?" }, ["C", "F", "G", "C"], "one chord per bar")
 
+// A new voicing struck on a downbeat is a new chord, even when the basic chord is the same
+// (Gmaj7 for a bar, then G B D E F♯ A next bar); re-striking the same voicing stays one chord.
+var vc: [MidiNote] = []
+func vput(_ q: Double, _ len: Double, _ ps: [Int]) { for p in ps { vc.append(n(p, q * b140, (q + len) * b140 - 0.01)) } }
+vput(0, 2, [55, 59, 62, 66, 71]); vput(2.5, 1.5, [55, 59, 62, 66])     // Gmaj7, re-struck
+vput(4, 3.5, [55, 59, 62, 64, 66, 69])                               // next bar: add E and A
+let vg = ChordGrouper().group(notes: vc, grid: BeatGrid(bpm: 140, beatOriginUs: 0, barAnchorUs: 0), durationUs: Int64(8 * b140 * 1e6), key: bm)
+eq(vg.count, 2, "new voicing on the downbeat splits; the re-strike in bar 1 doesn't")
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
