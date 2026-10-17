@@ -21,6 +21,7 @@ from pathlib import Path
 STEMS = ["vocals", "drums", "bass", "guitar", "piano", "other"]
 SILENT_DB = -90.0
 WEAK_DB = -40.0
+MP3_FRAME = 1152
 
 
 def run(cmd):
@@ -95,9 +96,13 @@ def main():
             r = inspect(dest, ffmpeg, ffprobe)
             if r["codec"] != "mp3" or r["bitRate"] != 192000 or r["channels"] != 2 or r["sampleRate"] != 44100:
                 raise RuntimeError(f"Incorrect MP3 format: {name}")
-            if r["decodedFrames"] != frames:
+            # The start is gapless-trimmed exactly; ffmpeg's LAME tag can leave a few padding
+            # samples at the end. Accept less than one MP3 frame of trailing padding: it is not
+            # new audio (valid length stays `frames`) and no music is cut. Shorter is an error.
+            extra = r["decodedFrames"] - frames
+            if extra < 0 or extra >= MP3_FRAME:
                 raise RuntimeError(f"Gapless decoded length mismatch: {name} {r['decodedFrames']} != {frames}")
-            r.update(stem=name, file=dest.name, level=level(r["peakDbfs"]))
+            r.update(stem=name, file=dest.name, level=level(r["peakDbfs"]), trailingPaddingFrames=extra)
             results.append(r)
         decoded = [r["peakDbfs"] for r in results if r["peakDbfs"] is not None]
         decoded_peak = max(decoded) if decoded else -120.0
