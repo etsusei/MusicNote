@@ -291,8 +291,13 @@ public final class Pipeline: @unchecked Sendable {
             let topTemplate = g.candidates.first
             let symbol: String?
             let source: NamingSource?
-            if let s = names[id]?.symbol { symbol = s; source = .musicpy }
+            // Musicpy names with omitted tones are often contrived for transcribed clusters;
+            // a well-fitting plain template name reads better. Both stay as candidates.
+            let musicpy = names[id]?.symbol
+            let contrived = musicpy?.contains("(omit") ?? false
+            if let s = musicpy, !(contrived && (topTemplate?.score ?? 0) >= 0.6) { symbol = s; source = .musicpy }
             else if let t = topTemplate, (t.score ?? 0) >= 0.6 { symbol = t.symbol; source = .template }
+            else if let s = musicpy { symbol = s; source = .musicpy }
             else { symbol = nil; source = nil }
             var ev = ChordEvent(id: id, order: i, startUs: g.startUs, endUs: g.endUs, noteIds: g.noteIds, noteRoles: g.roles,
                                 texture: g.texture, excludedNoteIds: [], namingPitches: g.namingPitches, candidates: candidates,

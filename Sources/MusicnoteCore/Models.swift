@@ -20,7 +20,7 @@ public enum StemKind: String, Codable, CaseIterable, Sendable {
     public var isHarmonic: Bool { self == .piano || self == .guitar || self == .other }
 }
 
-public struct Song: Record {
+public struct Song: Record, Hashable {
     public static let kind = "song"
     public var id: UUID
     public var title: String
@@ -99,6 +99,10 @@ public struct Detection: Codable, Hashable, Sendable {
     public var version: String
     public var errors: [String]
     public var detectedAt: Date
+
+    public init(trimRevision: Int, rawBpm: Double?, roundedBpm: Double?, ticksSec: [Double], confidence: Double?, estimates: [Double], rawKey: String?, rawScale: String?, keyStrength: Double?, params: [String: String], version: String, errors: [String], detectedAt: Date) {
+        self.trimRevision = trimRevision; self.rawBpm = rawBpm; self.roundedBpm = roundedBpm; self.ticksSec = ticksSec; self.confidence = confidence; self.estimates = estimates; self.rawKey = rawKey; self.rawScale = rawScale; self.keyStrength = keyStrength; self.params = params; self.version = version; self.errors = errors; self.detectedAt = detectedAt
+    }
 }
 
 public struct TimingConfirmation: Codable, Hashable, Sendable {
@@ -130,6 +134,10 @@ public struct StemAsset: Codable, Hashable, Sendable {
     public var decodedFrames: Int64
     public var peakDbfs: Double?
     public var level: StemLevel
+
+    public init(kind: StemKind, relativePath: String, bytes: Int64, decodedFrames: Int64, peakDbfs: Double?, level: StemLevel) {
+        self.kind = kind; self.relativePath = relativePath; self.bytes = bytes; self.decodedFrames = decodedFrames; self.peakDbfs = peakDbfs; self.level = level
+    }
 }
 
 public struct SeparationRecord: Codable, Hashable, Sendable {
@@ -143,6 +151,10 @@ public struct SeparationRecord: Codable, Hashable, Sendable {
     public var candidatesDeleted: Bool
 
     public func stem(_ kind: StemKind) -> StemAsset? { stems.first { $0.kind == kind } }
+
+    public init(trimRevision: Int, stems: [StemAsset], sharedGainDb: Double, encoder: String, logicVersion: String?, frames: Int64, createdAt: Date, candidatesDeleted: Bool) {
+        self.trimRevision = trimRevision; self.stems = stems; self.sharedGainDb = sharedGainDb; self.encoder = encoder; self.logicVersion = logicVersion; self.frames = frames; self.createdAt = createdAt; self.candidatesDeleted = candidatesDeleted
+    }
 }
 
 public enum AnalysisState: String, Codable, Sendable {
@@ -285,6 +297,10 @@ public struct ChordCandidate: Codable, Hashable, Sendable {
     public var source: NamingSource
     public var score: Double?
     public var raw: String?
+
+    public init(symbol: String, source: NamingSource, score: Double?, raw: String?) {
+        self.symbol = symbol; self.source = source; self.score = score; self.raw = raw
+    }
 }
 
 public struct DegreeLabel: Codable, Hashable, Sendable {
@@ -294,6 +310,10 @@ public struct DegreeLabel: Codable, Hashable, Sendable {
     public var minorThird: Bool
     public var bassDegree: String?
     public var display: String
+
+    public init(degreeIndex: Int, accidental: Int, quality: String, minorThird: Bool, bassDegree: String?, display: String) {
+        self.degreeIndex = degreeIndex; self.accidental = accidental; self.quality = quality; self.minorThird = minorThird; self.bassDegree = bassDegree; self.display = display
+    }
 }
 
 public struct ChordEvent: Codable, Hashable, Identifiable, Sendable {
@@ -312,6 +332,15 @@ public struct ChordEvent: Codable, Hashable, Identifiable, Sendable {
     public var manualOverride: Bool
     public var degree: DegreeLabel?
     public var bassPitch: Int?
+
+    public init(id: String, order: Int, startUs: Int64, endUs: Int64, noteIds: [UUID], noteRoles: [UUID: NoteRole],
+                texture: Texture, excludedNoteIds: [UUID], namingPitches: [Int], candidates: [ChordCandidate],
+                symbol: String?, namingSource: NamingSource?, manualOverride: Bool, degree: DegreeLabel?, bassPitch: Int?) {
+        self.id = id; self.order = order; self.startUs = startUs; self.endUs = endUs; self.noteIds = noteIds
+        self.noteRoles = noteRoles; self.texture = texture; self.excludedNoteIds = excludedNoteIds
+        self.namingPitches = namingPitches; self.candidates = candidates; self.symbol = symbol
+        self.namingSource = namingSource; self.manualOverride = manualOverride; self.degree = degree; self.bassPitch = bassPitch
+    }
 
     public var durationUs: Int64 { endUs - startUs }
 }
@@ -346,11 +375,19 @@ public struct SkeletonRelation: Codable, Hashable, Sendable {
     public var kind: String // passing / connecting / substitute / other
     public var targetEventId: String?
     public var reason: String
+
+    public init(eventId: String, kind: String, targetEventId: String?, reason: String) {
+        self.eventId = eventId; self.kind = kind; self.targetEventId = targetEventId; self.reason = reason
+    }
 }
 
 public struct SkeletonAlternative: Codable, Hashable, Sendable {
     public var backboneEventIds: [String]
     public var reason: String
+
+    public init(backboneEventIds: [String], reason: String) {
+        self.backboneEventIds = backboneEventIds; self.reason = reason
+    }
 }
 
 public enum JobStatus: String, Codable, Sendable { case queued, running, succeeded, failed, cancelled, interrupted }
@@ -405,6 +442,10 @@ public struct Mention: Codable, Hashable, Sendable {
     public var revisions: [String: Int]
     public var scope: String // "wholeConversation" for conversations, "song" / "analysis" otherwise
     public var complete: Bool
+
+    public init(kind: MentionKind, objectId: UUID, title: String, revisions: [String: Int], scope: String, complete: Bool) {
+        self.kind = kind; self.objectId = objectId; self.title = title; self.revisions = revisions; self.scope = scope; self.complete = complete
+    }
 }
 
 public enum MessageRole: String, Codable, Sendable { case user, assistant, system }
@@ -441,12 +482,20 @@ public struct ProviderBinding: Codable, Hashable, Sendable {
     public var backendSessionId: String?
     /// Last local message sequence the backend session has seen.
     public var syncedThroughSequence: Int
+
+    public init(provider: String, backendSessionId: String?, syncedThroughSequence: Int) {
+        self.provider = provider; self.backendSessionId = backendSessionId; self.syncedThroughSequence = syncedThroughSequence
+    }
 }
 
 public struct ContextSummary: Codable, Hashable, Sendable {
     public var throughSequence: Int
     public var summary: String
     public var createdAt: Date
+
+    public init(throughSequence: Int, summary: String, createdAt: Date) {
+        self.throughSequence = throughSequence; self.summary = summary; self.createdAt = createdAt
+    }
 }
 
 public struct Conversation: Record {
@@ -523,6 +572,10 @@ public struct CollectionItem: Codable, Hashable, Sendable {
     public var harmonyRevision: Int
     public var symbol: String
     public var notes: [BlockNote]
+
+    public init(analysisId: UUID, eventId: String, harmonyRevision: Int, symbol: String, notes: [BlockNote]) {
+        self.analysisId = analysisId; self.eventId = eventId; self.harmonyRevision = harmonyRevision; self.symbol = symbol; self.notes = notes
+    }
 }
 
 public struct LearningCollection: Record {
@@ -547,6 +600,10 @@ public struct BlockNote: Codable, Hashable, Sendable {
     public var durationQ: Double
     /// Identity of the source note, so shared sustains are not re-triggered.
     public var sourceNoteId: UUID?
+
+    public init(pitch: Int, velocity: Int, startQ: Double, durationQ: Double, sourceNoteId: UUID?) {
+        self.pitch = pitch; self.velocity = velocity; self.startQ = startQ; self.durationQ = durationQ; self.sourceNoteId = sourceNoteId
+    }
 }
 
 public enum VoicingMode: String, Codable, Sendable { case original, standard }
@@ -559,6 +616,10 @@ public struct BlockSource: Codable, Hashable, Sendable {
     public var sourceKey: KeySignature?
     public var sourceBpm: Double?
     public var label: String
+
+    public init(kind: String, analysisId: UUID? = nil, eventId: String? = nil, harmonyRevision: Int? = nil, sourceKey: KeySignature? = nil, sourceBpm: Double? = nil, label: String) {
+        self.kind = kind; self.analysisId = analysisId; self.eventId = eventId; self.harmonyRevision = harmonyRevision; self.sourceKey = sourceKey; self.sourceBpm = sourceBpm; self.label = label
+    }
 }
 
 public struct ChordBlock: Codable, Hashable, Identifiable, Sendable {
@@ -594,7 +655,7 @@ public struct PlaygroundSection: Codable, Hashable, Identifiable, Sendable {
     public init(name: String, barCount: Int) { id = UUID(); self.name = name; self.barCount = barCount; blocks = [] }
 }
 
-public struct PlaygroundProject: Record {
+public struct PlaygroundProject: Record, Hashable {
     public static let kind = "playground"
     public var id: UUID
     public var title: String

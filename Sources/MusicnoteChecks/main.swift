@@ -2,6 +2,17 @@
 import Foundation
 import MusicnoteCore
 
+enum TagTextCheck {
+    static func normalize(_ s: String) -> String {
+        var t = s
+        for d in ["–", "—", "−", " "] { t = t.replacingOccurrences(of: d, with: "-") }
+        return t
+    }
+}
+
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "seed" {
+    exit(runSeed(Array(CommandLine.arguments.dropFirst())))
+}
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "e2e" {
     let code = await runEndToEnd(Array(CommandLine.arguments.dropFirst()))
     exit(code)
@@ -122,6 +133,37 @@ let midi = MidiFileWriter(bpm: 94.5, meter: .fourFour, key: cMajor)
     .data(notes: [.init(pitch: 60, velocity: 100, startTick: 0, durationTicks: 960)])
 check(midi.prefix(4) == Data("MThd".utf8), "MThd")
 check(midi.suffix(4) == Data([0x00, 0xFF, 0x2F, 0x00]), "end of track")
+
+
+// Playground (A23–A26): transposition keeps quality and slash bass; sustained notes aren't duplicated.
+let srcTiming = TimingConfirmation(trimRevision: 1, bpm: 120, beatOriginUs: 0, meter: .fourFour, meterConfirmed: true, barAnchorUs: 0, key: cMajor)
+let sustain = MidiNote(pitch: 36, startUs: 0, endUs: 2_000_000)
+let e1n = [sustain, n(52, 0, 0.9), n(55, 0, 0.9)]
+let e2n = [n(53, 1.0, 1.9), n(57, 1.0, 1.9)]
+let allN = e1n + e2n
+let ev1 = ChordEvent(id: "chord-01", order: 0, startUs: 0, endUs: 1_000_000, noteIds: e1n.map(\.id), noteRoles: [:], texture: .block, excludedNoteIds: [], namingPitches: [], candidates: [], symbol: "C/E", namingSource: .user, manualOverride: true, degree: nil, bassPitch: nil)
+let ev2 = ChordEvent(id: "chord-02", order: 1, startUs: 1_000_000, endUs: 2_000_000, noteIds: [sustain.id] + e2n.map(\.id), noteRoles: [:], texture: .block, excludedNoteIds: [], namingPitches: [], candidates: [], symbol: "Fmaj7", namingSource: .user, manualOverride: true, degree: nil, bassPitch: nil)
+let ctx = PlaygroundOps.SourceContext(analysisId: UUID(), harmonyRevision: 1, timing: srcTiming, notes: allN, segmentDurationUs: 2_000_000)
+let dKey = KeySignature(tonic: 2, tonicName: "D", mode: .major)
+let blocks = try! PlaygroundOps.blocks(events: [ev1, ev2], context: ctx, kind: "progression", voicing: .original, target: dKey)
+eq(blocks.map(\.symbol), ["D/F♯", "Gmaj7"], "transposed symbols")
+eq(blocks[1].startQ, 2, "second block at beat 2")
+eq(blocks.flatMap { $0.originalNotes }.filter { $0.sourceNoteId == sustain.id }.count, 1, "sustain once")
+eq(blocks[0].originalNotes.first { $0.sourceNoteId == sustain.id }?.pitch, 38, "transposed by +2")
+check((try? PlaygroundOps.blocks(events: [ev1], context: ctx, kind: "chord", voicing: .original, target: dKey, octaveShift: -4)) == nil, "out of range rejected")
+var resized = blocks[1]; resized.durationQ = 4
+eq(PlaygroundOps.sounding(resized).first?.durationQ, 3.6, "edge drag scales inner timing (2→4 beats doubles 1.8)")
+let sk = try! PlaygroundOps.skeletonBlocks(backbone: ["chord-02"], events: [ev1, ev2], context: ctx, voicing: .original, target: cMajor)
+eq(sk.first?.startQ, 2, "skeleton keeps original gap")
+check(sk.first?.simplified == true, "skeleton marked simplified")
+var proj = PlaygroundProject(title: "t", key: cMajor, bpm: 100, meter: .fourFour)
+proj.sections[0].blocks = blocks
+let mid = PlaygroundOps.exportMidi(proj)
+check(mid.count > 40, "playground midi")
+eq(PlaygroundOps.problems(proj).count, 0, "no problems")
+proj.sections[0].blocks.append(blocks[0])
+check(!PlaygroundOps.problems(proj).isEmpty, "overlap reported")
+eq(TagTextCheck.normalize("4–5–3–6"), TagTextCheck.normalize("4-5-3-6"), "tag normalize")
 
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

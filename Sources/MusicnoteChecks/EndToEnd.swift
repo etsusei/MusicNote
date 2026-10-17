@@ -77,3 +77,38 @@ func runEndToEnd(_ args: [String]) async -> Int32 {
         return 1
     }
 }
+
+/// `swift run MusicnoteChecks seed <dataRoot>`: copies the first ready item into one item per
+/// earlier state, plus a Playground project, so every page can be snapshot-checked.
+func runSeed(_ args: [String]) -> Int32 {
+    guard args.count >= 2 else { print("usage: seed DATA_ROOT"); return 2 }
+    let paths = AppPaths(root: URL(fileURLWithPath: args[1]))
+    guard let store = try? Store(url: paths.database), let base = store.all(AnalysisItem.self).first(where: { $0.state == .ready }) else {
+        print("no ready item"); return 1
+    }
+    func copy(_ title: String, _ f: (inout AnalysisItem) -> Void) -> UUID {
+        var i = base
+        i.id = UUID(); i.title = title
+        i.confirmedMidiRevision = nil; i.harmonyRevision = nil
+        f(&i)
+        try? store.save(i)
+        return i.id
+    }
+    let draft = copy("选区阶段") { $0.state = .draft; $0.detection = nil; $0.timing = nil; $0.separation = nil; $0.selectedStem = nil }
+    let confirm = copy("确认阶段") { $0.state = .awaitingConfirmation; $0.timing = nil; $0.separation = nil; $0.selectedStem = nil }
+    let stems = copy("选轨阶段") { $0.state = .awaitingStem; $0.selectedStem = nil }
+    // Playground with the base item's progression.
+    var ids: [String] = ["draft:\(draft)", "confirm:\(confirm)", "stems:\(stems)", "ready:\(base.id)"]
+    if let h = store.all(HarmonyRevision.self, owner: base.id).last, let t = base.timing,
+       let midi = store.all(MidiRevision.self, owner: base.id).last {
+        let ctx = PlaygroundOps.SourceContext(analysisId: base.id, harmonyRevision: h.revision, timing: t, notes: midi.notes, segmentDurationUs: base.durationUs)
+        var p = PlaygroundProject(title: "练习作品", key: KeySignature(tonic: 2, tonicName: "D", mode: .minor), bpm: 96, meter: .fourFour)
+        p.sections = [PlaygroundSection(name: "Verse", barCount: 8), PlaygroundSection(name: "Chorus", barCount: 4)]
+        p.sections[0].blocks = (try? PlaygroundOps.blocks(events: h.events, context: ctx, kind: "progression", voicing: .original, target: p.key)) ?? []
+        if let m = PlaygroundOps.manualBlock(rootPc: 7, suffix: "m7", target: p.key, durationQ: 4) { p.sections[1].blocks = [m] }
+        try? store.save(p)
+        ids.append("playground:\(p.id)")
+    }
+    print(ids.joined(separator: "\n"))
+    return 0
+}
