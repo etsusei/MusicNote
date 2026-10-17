@@ -149,3 +149,31 @@ func runRegroup(_ args: [String]) -> Int32 {
     }
     return 0
 }
+
+/// `swift run MusicnoteChecks skeleton <dataRoot> [codex|claude]`: runs the skeleton prompt on the
+/// first harmonic item and prints what the learner would read. Doesn't save.
+func runSkeleton(_ args: [String]) async -> Int32 {
+    guard args.count >= 2, let store = try? Store(url: AppPaths(root: URL(fileURLWithPath: args[1])).database),
+          let item = store.all(AnalysisItem.self).first(where: { $0.isHarmonic && $0.confirmedMidiRevision != nil }) else { return 2 }
+    let paths = AppPaths(root: URL(fileURLWithPath: args[1]))
+    let tools = ToolSettings.defaults(projectRoot: FileManager.default.currentDirectoryPath, separatorBinary: "")
+    let builder = SnapshotBuilder(store: store)
+    guard let h = builder.latestHarmony(item.id) else { return 1 }
+    let text = TeacherPrompt.skeletonTask + "\n\n数据：\n" + SnapshotBuilder.json(builder.analysisSnapshot(item))
+    let provider: ChatProvider = args.count > 2 && args[2] == "claude"
+        ? ClaudeProvider(binary: tools.claudeBinary, sandboxDir: paths.chatSandbox)
+        : CodexProvider(binary: tools.codexBinary, sandboxDir: paths.chatSandbox)
+    do {
+        let r = try await provider.send(ProviderTurn(sessionId: nil, systemPrompt: TeacherPrompt.system, text: text, model: nil,
+                                                     effort: "medium", outputSchema: TeacherPrompt.skeletonSchema)) { _ in }
+        guard let p = SkeletonParser.parse(r.text, events: h.events) else { print("UNPARSED:\n" + r.text); return 1 }
+        let byId = Dictionary(uniqueKeysWithValues: h.events.map { ($0.id, $0) })
+        print("一句话：", p.summary)
+        print("骨架：", p.backbone.map { byId[$0]?.symbol ?? "?" }.joined(separator: " → "))
+        for rel in p.relations { print("  ·", byId[rel.eventId]?.symbol ?? "?", rel.kind, rel.reason) }
+        for a in p.alternatives { print("  另一种：", a.backboneEventIds.map { byId[$0]?.symbol ?? "?" }.joined(separator: " → "), a.reason) }
+        print("—— explanation（\(p.explanation.count) 字）——\n" + p.explanation)
+        print("标签：", p.suggestedTags)
+        return 0
+    } catch { print("FAILED:", error.localizedDescription); return 1 }
+}

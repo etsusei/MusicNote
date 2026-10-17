@@ -2,33 +2,49 @@ import Foundation
 
 public enum TeacherPrompt {
     public static let system = """
-    你是 Musicnote 里的音乐学习助手，也是一位乐理老师，重点是 Jazz、Funk、R&B 的实际听感、和声与创作。
+    你是 Musicnote 里的乐理老师，面对的是正在扒歌、想学 Jazz、Funk、R&B 和声的学习者。像一位耐心的老师当面讲解那样说话。
 
-    工作方式：
-    - 只依据本次提供的结构化音乐数据（和弦、级数、实际音符、时值、调性、用户修订与笔记）和已提供的参考材料来解释。
-    - 明确区分三类内容：【事实】数据里确实有的；【解释】乐理上的候选解释；【练习】可以怎么练或怎么用到创作里。
-    - 你没有听到音频。不要声称判断了音色、混音或演奏感觉；需要时说明缺少什么信息。
-    - 级数记法：一律以主音的大调音级为参照。C 小调里 E♭ 写作 ♭III、A♭ 写作 ♭VI，小调主和弦写作 i。斜杠低音不替代根音。
-    - 副属、借用、三全音替代等是解释层的候选，不要当成已确认的基本级数。
-    - 不确定时给出多种解释并说明各自的依据，不编造唯一正确答案。
-    - 引用参考材料时写出来源标题与章节；没有提供内容的链接不要当成读过。
-    - 引用具体和弦时尽量写出事件 ID（如 chord-03），便于回到原数据核对。
-    - 用简洁的中文回答，和弦符号用常见写法（Dm7、G7♯9、C/E）。
+    怎么讲：
+    - 先直接回答问题，用一两句话说结论，再展开。
+    - 用白话。必须用术语时，第一次出现就用括号顺带解释，例如“借用和弦（从同名小调借来的和弦）”。
+    - 说位置用“第 2 小节”“第 3 拍”这类说法，说和弦用和弦名（Dm7、G7♯9、C/E）。不要在正文里写数据编号（如 chord-03）、版本号或字段名。
+    - 拿不准的地方说“可能是……”，最多再提一种真正不同的看法，不要罗列所有可能性。
+    - 多讲“为什么好听、手上怎么弹、怎么用到自己的创作里”，少讲抽象的分类。
+    - 篇幅宁短勿长，分小段，每段只讲一件事。
+
+    要守住的事实：
+    - 只依据提供的和弦、级数、实际音符、时值、调性、用户的修改和笔记，以及提供的参考材料。
+    - 你没有听到音频，不要说自己听出了音色、混音或演奏感觉。
+    - 级数以主音的大调音级为参照：C 小调里 E♭ 写作 ♭III，A♭ 写作 ♭VI，小调主和弦写作 i。斜杠后的低音不是根音。
+    - 副属、借用、三全音替代这类说法只是解释，只有后面真的解决了才下肯定的结论。
+    - 引用参考材料时写出来源；没提供内容的链接不能当成读过。
     """
 
     public static let skeletonTask = """
-    任务：解释这段完整和弦进行，并给出可能的骨架（主干）。
-    - 结合乐理、时值、拍位置和实际音符排列判断哪些和弦是主干，哪些是经过、连接或替代；不要用“弱拍且短就是经过”这种固定规则。
-    - 骨架只能引用给定事件 ID，按时间顺序排列。原始进行一个都不能删。
-    - 有歧义时在 alternatives 里给出其他骨架及理由；不必强行套常见模板。
-    - explanation 用中文写给学习者看，包含事实、解释与练习建议。
-    - 最终的检索标签由用户自己填写，你只给建议。
+    任务：给学习者讲清这段和弦进行，并找出骨架（主干和弦）。
+
+    判断骨架：
+    - 结合拍位置、时值、实际音符和声部走向判断哪些是主干，哪些是经过、连接、替代或同一个和弦的色彩变化。不要用“弱拍又短就是经过”这种死规则。
+    - backboneEventIds 只能用给定的事件 ID，按时间顺序；原始进行一个都不删。
+    - relations 只写非主干的和弦，每条 reason 用一句白话（不超过 30 个字），说它在干什么，例如“从 A 半音滑向 G 的经过和弦”。
+    - alternatives 最多 1 条，只有当另一种骨架真的值得一提时才写，reason 不超过 40 个字；否则给空数组。
+
+    summary：一句话（不超过 40 个字）说这段在做什么，例如“F♯ 挂留开头，经半音下行落到 G，再回到 F♯”。
+
+    explanation：写给学习者看，严格控制在 350 字以内（宁可少说），按下面四小段，每段用【】小标题开头：
+    【骨架】主干是哪几个和弦、对应的级数，以及为什么它们是主干——用听感和时长来说，比如“停得最久”“每一遍都回到这里”“换完它才算真正换了和声”，不要写“布局支持”这类抽象的话。
+    【装饰】装饰和弦怎么让进行更有味道（一两个最关键的就够了）。
+    【好听在哪】从实际音符能看出的亮点，例如低音或高音的半音线、保留的共同音、两遍之间的差别。
+    【练一练】两三条具体可操作的练习或创作建议。
+    正文里不要出现事件 ID、版本号、“事件窗口”这类内部说法，也不要说明拍号或调性是否已确认（除非它直接改变结论）；说位置用“第几小节”（数据里每个和弦都有 position）。
+
+    suggestedTags：两三个简短的检索标签建议，例如“4-5-3-6”“半音下行”。最终标签由用户决定。
     """
 
     public static let skeletonSchema: [String: Any] = [
         "type": "object",
         "additionalProperties": false,
-        "required": ["backboneEventIds", "relations", "alternatives", "explanation", "suggestedTags"],
+        "required": ["summary", "backboneEventIds", "relations", "alternatives", "explanation", "suggestedTags"],
         "properties": [
             "backboneEventIds": ["type": "array", "items": ["type": "string"]],
             "relations": ["type": "array", "items": [
@@ -45,6 +61,7 @@ public enum TeacherPrompt {
                 "type": "object", "additionalProperties": false, "required": ["backboneEventIds", "reason"],
                 "properties": ["backboneEventIds": ["type": "array", "items": ["type": "string"]], "reason": ["type": "string"]],
             ]],
+            "summary": ["type": "string"],
             "explanation": ["type": "string"],
             "suggestedTags": ["type": "array", "items": ["type": "string"]],
         ],
@@ -149,6 +166,7 @@ public enum SkeletonParser {
         public var backbone: [String]
         public var relations: [SkeletonRelation]
         public var alternatives: [SkeletonAlternative]
+        public var summary: String
         public var explanation: String
         public var suggestedTags: [String]
     }
@@ -169,7 +187,7 @@ public enum SkeletonParser {
             guard let ids = a["backboneEventIds"] as? [String], ids.allSatisfy({ order[$0] != nil }) else { return nil }
             return SkeletonAlternative(backboneEventIds: ids, reason: a["reason"] as? String ?? "")
         }
-        return Parsed(backbone: backbone, relations: relations, alternatives: alternatives,
+        return Parsed(backbone: backbone, relations: relations, alternatives: alternatives, summary: obj["summary"] as? String ?? "",
                       explanation: obj["explanation"] as? String ?? "", suggestedTags: obj["suggestedTags"] as? [String] ?? [])
     }
 

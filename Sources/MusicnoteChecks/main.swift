@@ -10,6 +10,9 @@ enum TagTextCheck {
     }
 }
 
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "skeleton" {
+    exit(await runSkeleton(Array(CommandLine.arguments.dropFirst())))
+}
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "regroup" {
     exit(runRegroup(Array(CommandLine.arguments.dropFirst())))
 }

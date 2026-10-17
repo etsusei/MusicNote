@@ -566,6 +566,7 @@ final class AppModel {
                         sk.relations = parsed.relations
                         sk.alternatives = parsed.alternatives
                         sk.explanation = parsed.explanation
+                        sk.summary = parsed.summary.isEmpty ? nil : parsed.summary
                         sk.status = .succeeded
                         sk.error = parsed.suggestedTags.isEmpty ? nil : "建议标签：" + parsed.suggestedTags.joined(separator: "、")
                         break

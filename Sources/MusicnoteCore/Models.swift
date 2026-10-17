@@ -404,6 +404,7 @@ public struct Skeleton: Record {
     public var relations: [SkeletonRelation]
     public var alternatives: [SkeletonAlternative]
     public var explanation: String
+    public var summary: String?
     public var unstructured: Bool
     public var error: String?
     public var createdAt: Date

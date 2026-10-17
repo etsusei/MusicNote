@@ -351,18 +351,32 @@ struct SkeletonSection: View {
                                         .buttonStyle(SecondaryButtonStyle(compact: true))
                                 }
                             }
+                            if let summary = sk.summary, !summary.isEmpty {
+                                Text(summary).font(.system(size: 15, weight: .semibold))
+                            }
                             if !sk.backboneEventIds.isEmpty {
                                 let byId = Dictionary(uniqueKeysWithValues: harmony.events.map { ($0.id, $0) })
-                                Text("主干：" + sk.backboneEventIds.map { id in (byId[id]?.symbol ?? id) }.joined(separator: " → "))
-                                    .font(.system(size: 15, weight: .medium))
-                                Text(sk.backboneEventIds.map { id in byId[id]?.degree?.display ?? "?" }.joined(separator: " → "))
-                                    .font(.control13).foregroundStyle(Theme.textSecondary)
-                                ForEach(sk.relations, id: \.eventId) { r in
-                                    Text("· \(byId[r.eventId]?.symbol ?? r.eventId)（\(r.eventId)）：\(relationName(r.kind))\(r.targetEventId.map { " → \(byId[$0]?.symbol ?? $0)" } ?? "")。\(r.reason)")
-                                        .font(.caption12).foregroundStyle(Theme.textSecondary)
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text("骨架").font(.caption12).foregroundStyle(Theme.textSecondary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(sk.backboneEventIds.map { id in (byId[id]?.symbol ?? "?") }.joined(separator: " → "))
+                                            .font(.system(size: 15, weight: .medium))
+                                        Text(sk.backboneEventIds.map { id in byId[id]?.degree?.display ?? "?" }.joined(separator: " → "))
+                                            .font(.control13).foregroundStyle(Theme.textSecondary)
+                                    }
                                 }
-                                ForEach(Array(sk.alternatives.enumerated()), id: \.offset) { _, a in
-                                    Text("另一种骨架：" + a.backboneEventIds.map { byId[$0]?.symbol ?? $0 }.joined(separator: " → ") + "。\(a.reason)")
+                                if !sk.relations.isEmpty {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        ForEach(sk.relations, id: \.eventId) { r in
+                                            let ev = byId[r.eventId]
+                                            let pos = ev.flatMap { e in item.timing.map { harmony.position(of: e.startUs, grid: $0.grid) } } ?? ""
+                                            Text("· \(pos.replacingOccurrences(of: " ", with: "")) \(ev?.symbol ?? "?")\(r.targetEventId.flatMap { byId[$0]?.symbol }.map { " → \($0)" } ?? "")（\(relationName(r.kind))）：\(r.reason)")
+                                                .font(.caption12).foregroundStyle(Theme.textSecondary)
+                                        }
+                                    }
+                                }
+                                if let a = sk.alternatives.first {
+                                    Text("另一种看法：" + a.backboneEventIds.map { byId[$0]?.symbol ?? "?" }.joined(separator: " → ") + "。\(a.reason)")
                                         .font(.caption12)
                                 }
                             }
@@ -393,7 +407,7 @@ struct SkeletonSection: View {
     }
 
     private func relationName(_ k: String) -> String {
-        switch k { case "passing": "经过"; case "connecting": "连接"; case "substitute": "替代"; default: "其他" }
+        switch k { case "passing": "经过"; case "connecting": "连接"; case "substitute": "替代"; default: "色彩变化" }
     }
 }
 
