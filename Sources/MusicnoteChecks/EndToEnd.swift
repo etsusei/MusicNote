@@ -190,15 +190,17 @@ func runSkeleton(_ args: [String]) async -> Int32 {
 
 /// `swift run MusicnoteChecks autoanalyze <dataRoot> <analysisId> [model] [effort]`: runs the
 /// model-driven analysis on a library (use a copy) and prints the trail and the result.
-func runAutoAnalyze(_ args: [String]) async -> Int32 {
-    guard args.count >= 3, let id = UUID(uuidString: args[2]) else { print("usage: autoanalyze DATA_ROOT ANALYSIS_ID [model] [effort]"); return 2 }
+func runAutoAnalyze(_ rawArgs: [String]) async -> Int32 {
+    let useClaude = rawArgs.contains("--claude")
+    let args = rawArgs.filter { $0 != "--claude" }
+    guard args.count >= 3, let id = UUID(uuidString: args[2]) else { print("usage: autoanalyze DATA_ROOT ANALYSIS_ID [model] [effort] [--claude]"); return 2 }
     let paths = AppPaths(root: URL(fileURLWithPath: args[1]))
     guard let store = try? Store(url: paths.database), let item = store.fetch(AnalysisItem.self, id: id) else { print("no item"); return 2 }
     let root = FileManager.default.currentDirectoryPath
     let tools = ToolSettings.defaults(projectRoot: root, separatorBinary: root + "/.build/debug/musicnote-separate")
     let model = args.count > 3 ? args[3] : nil
     let effort = args.count > 4 ? args[4] : "medium"
-    let run = AutoRun(analysisId: id, trimRevision: item.trimRevision, provider: "codex", model: model ?? "默认",
+    let run = AutoRun(analysisId: id, trimRevision: item.trimRevision, provider: useClaude ? "claude" : "codex", model: model ?? "默认",
                       maxToolCalls: AutoAgent.defaultMaxToolCalls, maxSeconds: AutoAgent.defaultMaxSeconds)
     let box = AutoToolbox(store: store, paths: paths, tools: tools, item: item, run: run)
     nonisolated(unsafe) var shown = 0
@@ -209,7 +211,9 @@ func runAutoAnalyze(_ args: [String]) async -> Int32 {
             print("        " + s.summary.replacingOccurrences(of: "\n", with: "\n        ").prefix(500))
         }
     }
-    let provider = CodexProvider(binary: tools.codexBinary, sandboxDir: paths.chatSandbox, enableCodeMode: true)
+    let provider: any AgentProvider = useClaude
+        ? ClaudeAgentProvider(binary: tools.claudeBinary, sandboxDir: paths.chatSandbox, python: tools.systemPython, bridgeScript: tools.workers + "/mcp_bridge.py")
+        : CodexProvider(binary: tools.codexBinary, sandboxDir: paths.chatSandbox, enableCodeMode: true)
     let t0 = Date()
     let song = store.fetch(Song.self, id: item.songId)?.title ?? ""
     await AutoAgent.run(toolbox: box, provider: provider, songTitle: song, model: model, effort: effort)

@@ -97,13 +97,14 @@ public enum AutoAgent {
 
     /// Runs one analysis end to end. Throws only if the model couldn't be reached; a run that
     /// ends without a submission is reported in the run record.
-    public static func run(toolbox: AutoToolbox, provider: CodexProvider, songTitle: String, model: String?, effort: String?,
+    public static func run(toolbox: AutoToolbox, provider: any AgentProvider, songTitle: String, model: String?, effort: String?,
                            onDelta: @escaping @Sendable (String) -> Void = { _ in }) async {
         do {
             let item = try toolbox.item()
             let bars = try toolbox.bars(item)
+            let scratch = toolbox.paths.jobs.appendingPathComponent("auto-\(toolbox.run.id.uuidString)", isDirectory: true)
             let final = try await provider.runAgent(systemPrompt: manual, task: task(songTitle: songTitle, item: item, bars: bars),
-                                                    tools: toolSpecs(), model: model, effort: effort,
+                                                    tools: toolSpecs(), model: model, effort: effort, scratchDir: scratch,
                                                     handler: { name, args in await toolbox.call(name, args) }, onDelta: onDelta)
             if toolbox.run.harmonyRevision == nil {
                 toolbox.finish(status: .failed, message: final, error: "模型结束时没有提交结果")

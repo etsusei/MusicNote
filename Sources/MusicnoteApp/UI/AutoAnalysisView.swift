@@ -22,6 +22,11 @@ enum AutoToolLabel {
 struct AutoAnalysisSection: View {
     @Environment(AppModel.self) private var model
     var item: AnalysisItem
+    @AppStorage("autoProvider") private var providerId = "codex"
+
+    private static let providers = [("codex", "Codex"), ("claude", "Claude Code")]
+    private var connected: Bool { model.providerStatus[providerId]?.state == .connected }
+    private var providerName: String { Self.providers.first { $0.0 == providerId }?.1 ?? providerId }
 
     var body: some View {
         let _ = model.dataVersion
@@ -36,10 +41,17 @@ struct AutoAnalysisSection: View {
                 if running {
                     Button("停止") { model.cancelAutoAnalysis(item.id) }.buttonStyle(SecondaryButtonStyle(compact: true))
                 } else {
-                    Button(harmony?.auto == nil ? "开始自主分析" : "重新自主分析") { model.startAutoAnalysis(item.id) }
+                    Picker("", selection: $providerId) {
+                        ForEach(Self.providers, id: \.0) { p in
+                            Text(p.1 + (model.providerStatus[p.0]?.state == .connected ? "" : "（未连接）")).tag(p.0)
+                        }
+                    }
+                    .labelsHidden().frame(width: 150)
+                    .help("模型和推理强度沿用设置里给这个客户端选的")
+                    Button(harmony?.auto == nil ? "开始自主分析" : "重新自主分析") { model.startAutoAnalysis(item.id, provider: providerId) }
                         .buttonStyle(PrimaryButtonStyle())
-                        .disabled(model.providerStatus["codex"]?.state != .connected)
-                        .help(model.providerStatus["codex"]?.state == .connected ? "使用 Codex（\(model.settings.providerModels["codex"] ?? "默认模型")）" : "需要先连接 Codex")
+                        .disabled(!connected)
+                        .help(connected ? "使用 \(providerName)（\(model.settings.providerModels[providerId] ?? "默认模型")）" : "需要先连接 \(providerName)")
                 }
             }
             if let run, running || run.status != .succeeded || harmony?.auto?.runId != run.id {
@@ -63,7 +75,7 @@ struct RunProgress: View {
             HStack(spacing: 8) {
                 if running { ProgressView().controlSize(.small) }
                 Text(running ? "分析中" : statusText).font(.system(size: 13, weight: .semibold))
-                Text("工具 \(run.toolCalls)/\(run.maxToolCalls) 次 · \(Int((run.finishedAt ?? Date()).timeIntervalSince(run.startedAt))) 秒 · Codex \(run.model)")
+                Text("工具 \(run.toolCalls)/\(run.maxToolCalls) 次 · \(Int((run.finishedAt ?? Date()).timeIntervalSince(run.startedAt))) 秒 · \(run.provider == "claude" ? "Claude Code" : "Codex") \(run.model)")
                     .font(.caption12).foregroundStyle(Theme.textSecondary)
             }
             if let e = run.error, !running { Text(e).font(.caption12).foregroundStyle(Theme.warning) }

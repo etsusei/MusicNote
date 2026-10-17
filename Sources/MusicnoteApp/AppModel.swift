@@ -60,6 +60,7 @@ final class AppModel {
     var autoRuns: [UUID: AutoRun] = [:]
     var autoTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored var _autoProvider: CodexProvider?
+    @ObservationIgnored var _autoClaude: ClaudeAgentProvider?
     @ObservationIgnored var auditionCache: [String: AVAudioPCMBuffer] = [:]
     @ObservationIgnored var auditionStop: Task<Void, Never>?
 
@@ -716,22 +717,31 @@ extension AppModel {
         return p
     }
 
+    /// Claude Code reaches the same toolbox through `workers/mcp_bridge.py`.
+    var autoClaudeProvider: ClaudeAgentProvider {
+        if let p = _autoClaude { return p }
+        let t = settings.tools
+        let p = ClaudeAgentProvider(binary: t.claudeBinary, sandboxDir: paths.chatSandbox, python: t.systemPython, bridgeScript: t.workers + "/mcp_bridge.py")
+        _autoClaude = p
+        return p
+    }
+
     /// Lets the model analyse the selection with Musicnote's tools. Older harmony revisions,
     /// the user's MIDI, notes and tags are never modified.
-    func startAutoAnalysis(_ itemId: UUID) {
+    func startAutoAnalysis(_ itemId: UUID, provider pid: String = "codex") {
         guard autoTasks[itemId] == nil, let item = item(itemId) else { return }
         guard item.timing != nil else {
             alert = AppAlert(title: "还不能自主分析", message: "先确认速度与调性，这样才能按小节分析。"); return
         }
-        let model = settings.providerModels["codex"]
-        let effort = validEffort("codex", model: model, effort: settings.providerEfforts["codex"]) ?? "medium"
-        let run = AutoRun(analysisId: itemId, trimRevision: item.trimRevision, provider: "codex", model: model ?? "默认",
+        let model = settings.providerModels[pid]
+        let effort = validEffort(pid, model: model, effort: settings.providerEfforts[pid]) ?? "medium"
+        let run = AutoRun(analysisId: itemId, trimRevision: item.trimRevision, provider: pid, model: model ?? "默认",
                           maxToolCalls: AutoAgent.defaultMaxToolCalls, maxSeconds: AutoAgent.defaultMaxSeconds)
         let box = AutoToolbox(store: store, paths: paths, tools: settings.tools, item: item, run: run)
         box.onUpdate = { [weak self] r in Task { @MainActor in self?.autoRuns[itemId] = r } }
         autoRuns[itemId] = run
         try? store.save(run)
-        let provider = autoAnalysisProvider
+        let provider: any AgentProvider = pid == "claude" ? autoClaudeProvider : autoAnalysisProvider
         let title = song(item.songId)?.title ?? ""
         autoTasks[itemId] = Task { [weak self] in
             await AutoAgent.run(toolbox: box, provider: provider, songTitle: title, model: model, effort: effort)

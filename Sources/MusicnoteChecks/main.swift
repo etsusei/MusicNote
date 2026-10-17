@@ -282,5 +282,37 @@ eq(PlayedVoicing.pitches(symbol: "Cm9", notes: cm9Bar), [48, 55, 58, 62, 63], "m
 eq(PlayedVoicing.pitches(symbol: "F", notes: [(53, 0, 0.3), (57, 0.7, 0.3), (60, 1.4, 0.3), (62, 1.6, 0.2)]), [53, 57, 60], "arpeggio gathered, D dropped")
 check(PlayedVoicing.pitches(symbol: "G7", notes: [(67, 0, 1), (74, 0, 1)]) == nil, "too few chord tones → standard voicing")
 
+// MCP bridge: initialize, list and call go through workers/mcp_bridge.py to the app-side socket;
+// a wrong token is refused.
+do {
+    let sock = AgentToolSocket(tools: [["name": "echo", "description": "d", "inputSchema": ["type": "object"]]]) { name, args in
+        ("\(name):\(args["x"] as? Int ?? -1)", true)
+    }
+    try sock.start()
+    let reqs = [#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+                #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+                #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+                #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{"x":7}}}"#]
+    func bridge(token: String) async -> [[String: Any]] {
+        let w = WorkerProcess("/usr/bin/python3", ["-I", FileManager.default.currentDirectoryPath + "/workers/mcp_bridge.py"])
+        w.environment = ["MUSICNOTE_MCP_SOCKET": sock.path, "MUSICNOTE_MCP_TOKEN": token]
+        w.stdinData = Data((reqs.joined(separator: "\n") + "\n").utf8)
+        nonisolated(unsafe) var out: [[String: Any]] = []
+        _ = try? await w.run { if let m = decodeJSONLine($0) { out.append(m) } }
+        return out
+    }
+    let ok = await bridge(token: sock.token)
+    eq(ok.compactMap { $0["id"] as? Int }, [1, 2, 3], "bridge answers requests, skips notifications")
+    let listed = ((ok.first { $0["id"] as? Int == 2 }?["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String }
+    eq(listed ?? [], ["echo"], "tools listed from the app")
+    let called = (ok.first { $0["id"] as? Int == 3 }?["result"] as? [String: Any])
+    eq(((called?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "", "echo:7", "call forwarded with arguments")
+    let bad = await bridge(token: "wrong")
+    let badCall = bad.first { $0["id"] as? Int == 3 }?["result"] as? [String: Any]
+    check(bad.first { $0["id"] as? Int == 2 }.flatMap { (($0["result"] as? [String: Any])?["tools"] as? [Any])?.isEmpty } ?? true, "wrong token gets no tools")
+    check(badCall?["isError"] as? Bool == true, "wrong token cannot call tools")
+    sock.stop()
+} catch { check(false, "socket: \(error)") }
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
