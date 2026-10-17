@@ -383,6 +383,7 @@ struct StemStage: View {
         }
         e.setTracks(tracks)
         e.setLength(sep.frames)
+        e.seek(0) // the confirmation page left the cursor at the clip's position in the whole song
         listen(listening ?? chosen ?? .piano, start: false)
         loaded = true
     }

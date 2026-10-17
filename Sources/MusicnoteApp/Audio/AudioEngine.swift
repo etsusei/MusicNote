@@ -121,8 +121,7 @@ final class AudioEngine: @unchecked Sendable {
     func setTracks(_ new: [AudioTrack]) {
         os_unfair_lock_lock(&lock)
         tracks = new
-        lengthFrames = max(new.map(\.frames).max() ?? 0, lengthFrames)
-        if new.isEmpty { lengthFrames = 0 }
+        lengthFrames = new.map(\.frames).max() ?? 0
         os_unfair_lock_unlock(&lock)
     }
 
@@ -181,6 +180,10 @@ final class AudioEngine: @unchecked Sendable {
         start()
         os_unfair_lock_lock(&lock)
         if let frame { position = max(0, frame); eventCursor = cursorIndex(for: position); needsAllOff = true }
+        // A position left over from a longer source (e.g. the whole song) restarts at the top.
+        if lengthFrames > 0, position >= lengthFrames {
+            position = loop?.lowerBound ?? 0; eventCursor = cursorIndex(for: position); needsAllOff = true
+        }
         playing = true
         os_unfair_lock_unlock(&lock)
     }
