@@ -392,6 +392,27 @@ public struct SkeletonAlternative: Codable, Hashable, Sendable {
 
 public enum JobStatus: String, Codable, Sendable { case queued, running, succeeded, failed, cancelled, interrupted }
 
+/// The model's view of the key, checked against the one the user set.
+public struct KeySuggestion: Codable, Hashable, Sendable {
+    public var tonic: String
+    public var mode: String // major / minor (how the app stores it)
+    public var modeName: String // e.g. "F♯ 小调（弗里几亚色彩）"
+    public var agreesWithCurrent: Bool
+    public var reason: String
+    public init(tonic: String, mode: String, modeName: String, agreesWithCurrent: Bool, reason: String) {
+        self.tonic = tonic; self.mode = mode; self.modeName = modeName; self.agreesWithCurrent = agreesWithCurrent; self.reason = reason
+    }
+    public var key: KeySignature? {
+        Pitch.parsePitchClass(tonic).map { KeySignature(tonic: $0, tonicName: Pitch.normalizeName(tonic), mode: mode == "minor" ? .minor : .major) }
+    }
+}
+
+public struct SkeletonVoicing: Codable, Hashable, Sendable {
+    public var eventId: String
+    public var description: String
+    public init(eventId: String, description: String) { self.eventId = eventId; self.description = description }
+}
+
 public struct Skeleton: Record {
     public static let kind = "skeleton"
     public var id: UUID
@@ -405,6 +426,10 @@ public struct Skeleton: Record {
     public var alternatives: [SkeletonAlternative]
     public var explanation: String
     public var summary: String?
+    public var numberPattern: String?
+    public var keySuggestion: KeySuggestion?
+    public var voicings: [SkeletonVoicing]?
+    public var keyUsed: String?
     public var unstructured: Bool
     public var error: String?
     public var createdAt: Date

@@ -168,12 +168,22 @@ func runSkeleton(_ args: [String]) async -> Int32 {
                                                      effort: "medium", outputSchema: TeacherPrompt.skeletonSchema)) { _ in }
         guard let p = SkeletonParser.parse(r.text, events: h.events) else { print("UNPARSED:\n" + r.text); return 1 }
         let byId = Dictionary(uniqueKeysWithValues: h.events.map { ($0.id, $0) })
+        if let k = p.keySuggestion { print("调性：", k.modeName, k.agreesWithCurrent ? "（与当前一致）" : "（与当前不同）", "—", k.reason) }
+        print("数字型：", p.numberPattern)
         print("一句话：", p.summary)
+        for v in p.voicings { print("  voicing", byId[v.eventId]?.symbol ?? "?", v.description) }
         print("骨架：", p.backbone.map { byId[$0]?.symbol ?? "?" }.joined(separator: " → "))
         for rel in p.relations { print("  ·", byId[rel.eventId]?.symbol ?? "?", rel.kind, rel.reason) }
         for a in p.alternatives { print("  另一种：", a.backboneEventIds.map { byId[$0]?.symbol ?? "?" }.joined(separator: " → "), a.reason) }
         print("—— explanation（\(p.explanation.count) 字）——\n" + p.explanation)
         print("标签：", p.suggestedTags)
+        if args.contains("--save") {
+            var sk = Skeleton(analysisId: item.id, harmonyRevision: h.revision, provider: provider.id, model: "默认")
+            sk.backboneEventIds = p.backbone; sk.relations = p.relations; sk.alternatives = p.alternatives
+            sk.explanation = p.explanation; sk.summary = p.summary; sk.numberPattern = p.numberPattern
+            sk.keySuggestion = p.keySuggestion; sk.voicings = p.voicings; sk.keyUsed = item.timing?.key.display; sk.status = .succeeded
+            try? store.save(sk)
+        }
         return 0
     } catch { print("FAILED:", error.localizedDescription); return 1 }
 }

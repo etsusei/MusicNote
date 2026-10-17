@@ -21,30 +21,45 @@ public enum TeacherPrompt {
     """
 
     public static let skeletonTask = """
-    任务：给学习者讲清这段和弦进行，并找出骨架（主干和弦）。
+    任务：先下结论，再讲这段和弦进行是怎么做出高级感的。读者是正在扒歌学习的人。
 
-    判断骨架：
-    - 结合拍位置、时值、实际音符和声部走向判断哪些是主干，哪些是经过、连接、替代或同一个和弦的色彩变化。不要用“弱拍又短就是经过”这种死规则。
-    - backboneEventIds 只能用给定的事件 ID，按时间顺序；原始进行一个都不删。
-    - relations 只写非主干的和弦，每条 reason 用一句白话（不超过 30 个字），说它在干什么，例如“从 A 半音滑向 G 的经过和弦”。
-    - alternatives 最多 1 条，只有当另一种骨架真的值得一提时才写，reason 不超过 40 个字；否则给空数组。
+    第一步：核对调性。数据里有 keyCheck：用户当前设的调、音频检测的调、以及根据和弦推算的候选（含理由）。
+    结合“每一遍从哪里开始、落在哪里、哪个和弦停得最久、有没有终止式”判断这段真正的主音和调式。
+    keySuggestion 写你认为对的调：tonic 用音名（如 F♯），mode 只能是 major 或 minor（教会调式按最接近的大小调记，
+    modeName 里再写清楚，如“F♯ 小调（带弗里几亚色彩的 ♭II）”），agreesWithCurrent 表示是否与用户当前设的调一致，
+    reason 用一句白话说依据。后面所有的级数、数字和讲解都按你判断的这个调来写。
 
-    summary：一句话（不超过 40 个字）说这段在做什么，例如“F♯ 挂留开头，经半音下行落到 G，再回到 F♯”。
+    第二步：结论。
+    - numberPattern：骨架的简谱级数（如“4-5-3-6”“2-5-1-6”）。不要自己数：keyCheck.numbersByKey 里已按每个候选调
+      算好了每个和弦的数字（以大调主音为 1，小调按关系大调计，所以 F♯ 小调里 F♯m 是 6、G 是 ♭7），
+      从你选定的那个调里按骨架顺序抄出来，用“-”连接。有两遍就写一遍的型即可。summary 和正文里提到数字型时也用同一个写法。
+    - summary：一句话结论（不超过 50 字），以“这是一首……”开头，说出数字型，像哪个常见套路（4536、4321、2516、1645……）
+      就点出来；不像任何套路就说它独特在哪。
 
-    explanation：写给学习者看，严格控制在 350 字以内（宁可少说），按下面四小段，每段用【】小标题开头：
-    【骨架】主干是哪几个和弦、对应的级数，以及为什么它们是主干——用听感和时长来说，比如“停得最久”“每一遍都回到这里”“换完它才算真正换了和声”，不要写“布局支持”这类抽象的话。
-    【装饰】装饰和弦怎么让进行更有味道（一两个最关键的就够了）。
-    【好听在哪】从实际音符能看出的亮点，例如低音或高音的半音线、保留的共同音、两遍之间的差别。
-    【练一练】两三条具体可操作的练习或创作建议。
-    正文里不要出现事件 ID、版本号、“事件窗口”这类内部说法，也不要说明拍号或调性是否已确认（除非它直接改变结论）；说位置用“第几小节”（数据里每个和弦都有 position）。
+    第三步：骨架与装饰。
+    - backboneEventIds 只能用给定的事件 ID，按时间顺序；原始进行一个都不删。判断时结合拍位置、时值、实际音符和声部走向，
+      不要用“弱拍又短就是经过”这种死规则。
+    - relations 只写非主干的和弦，reason 用一句白话（不超过 30 字）说它为什么能让听感更高级。
+    - alternatives 最多 1 条，真有必要才写，reason 不超过 40 字；否则给空数组。
+    - voicings：挑 2-4 个最值得学的和弦，description 用一句话说这个按法的特点和好听的原因（比如“省略三音的 sus 让开头悬着”
+      “顶上叠 9 音和 13 音更亮”“上方声部 C♯→C→B 半音下行”）。界面会自动列出实际音名，description 里不要再重复音名列表。
 
-    suggestedTags：两三个简短的检索标签建议，例如“4-5-3-6”“半音下行”。最终标签由用户决定。
+    第四步：explanation，严格 400 字以内，按五小段，每段用【】小标题开头：
+    【结论】重复数字型和一句话结论，并说调性（如果和用户设的不同，说明为什么）。
+    【骨架】只弹骨架听起来是什么样，为什么这几个是主干（用“停得最久”“每遍都回到这里”这种说法）。
+    【加了什么让它高级】在第几小节第几拍加了哪些经过、连接或替代和弦，各自让听感好在哪。
+    【voicing】关键和弦的实际按法和特点。
+    【练一练】两三条具体练习：先弹骨架，再逐步加回装饰；可以怎么用到自己的创作里。
+
+    通用要求：用白话，术语第一次出现时用括号解释；说位置用“第几小节第几拍”（数据里每个和弦都有 position）；
+    正文不出现事件 ID、版本号、“事件窗口”这类内部说法。suggestedTags 给两三个检索标签建议（如“6-♭7-6”“半音下行”），
+    最终标签由用户决定。
     """
 
     public static let skeletonSchema: [String: Any] = [
         "type": "object",
         "additionalProperties": false,
-        "required": ["summary", "backboneEventIds", "relations", "alternatives", "explanation", "suggestedTags"],
+        "required": ["keySuggestion", "numberPattern", "summary", "backboneEventIds", "relations", "alternatives", "voicings", "explanation", "suggestedTags"],
         "properties": [
             "backboneEventIds": ["type": "array", "items": ["type": "string"]],
             "relations": ["type": "array", "items": [
@@ -62,6 +77,19 @@ public enum TeacherPrompt {
                 "properties": ["backboneEventIds": ["type": "array", "items": ["type": "string"]], "reason": ["type": "string"]],
             ]],
             "summary": ["type": "string"],
+            "numberPattern": ["type": "string"],
+            "keySuggestion": [
+                "type": "object", "additionalProperties": false,
+                "required": ["tonic", "mode", "modeName", "agreesWithCurrent", "reason"],
+                "properties": [
+                    "tonic": ["type": "string"], "mode": ["type": "string", "enum": ["major", "minor"]],
+                    "modeName": ["type": "string"], "agreesWithCurrent": ["type": "boolean"], "reason": ["type": "string"],
+                ],
+            ],
+            "voicings": ["type": "array", "items": [
+                "type": "object", "additionalProperties": false, "required": ["eventId", "description"],
+                "properties": ["eventId": ["type": "string"], "description": ["type": "string"]],
+            ]],
             "explanation": ["type": "string"],
             "suggestedTags": ["type": "array", "items": ["type": "string"]],
         ],
@@ -131,6 +159,26 @@ public struct SnapshotBuilder {
         if let s = latestSkeleton(item.id) {
             o["skeleton"] = ["backboneEventIds": s.backboneEventIds, "explanation": s.explanation, "fromHarmonyRevision": s.harmonyRevision]
         }
+        if let harmony {
+            var check: [String: Any] = ["userSetKey": item.timing?.key.display ?? "未设"]
+            if let d = item.detection, let k = d.rawKey { check["audioDetected"] = "\(k) \(d.rawScale == "minor" ? "小调" : "大调")（Essentia，基于混合音频）" }
+            let cands = KeyEstimator.candidates(events: harmony.events)
+            check["fromChords"] = cands.map {
+                ["key": $0.key.display, "score": ($0.score * 100).rounded() / 100, "reasons": $0.reasons] as [String: Any]
+            }
+            // 简谱 numbers per candidate key (1 = major tonic; minor counted from the relative major),
+            // precomputed so the model copies rather than counts.
+            var keys = cands.map(\.key)
+            if let cur = item.timing?.key, !keys.contains(cur) { keys.insert(cur, at: 0) }
+            var numbers: [String: [String: String]] = [:]
+            for k in keys {
+                var m: [String: String] = [:]
+                for e in harmony.events { if let sym = e.symbol { m[e.id] = Degrees.numberPattern([sym], key: k) } }
+                numbers[k.display] = m
+            }
+            check["numbersByKey"] = numbers
+            o["keyCheck"] = check
+        }
         o["userSkeletonTags"] = item.skeletonTags
         o["userTags"] = item.tags
         if includeNotes, let doc = store.fetch(NoteDocument.self, id: item.id), !doc.text.isEmpty { o["userNotes"] = doc.text }
@@ -167,6 +215,9 @@ public enum SkeletonParser {
         public var relations: [SkeletonRelation]
         public var alternatives: [SkeletonAlternative]
         public var summary: String
+        public var numberPattern: String
+        public var keySuggestion: KeySuggestion?
+        public var voicings: [SkeletonVoicing]
         public var explanation: String
         public var suggestedTags: [String]
     }
@@ -187,7 +238,17 @@ public enum SkeletonParser {
             guard let ids = a["backboneEventIds"] as? [String], ids.allSatisfy({ order[$0] != nil }) else { return nil }
             return SkeletonAlternative(backboneEventIds: ids, reason: a["reason"] as? String ?? "")
         }
+        var key: KeySuggestion?
+        if let k = obj["keySuggestion"] as? [String: Any], let t = k["tonic"] as? String, Pitch.parsePitchClass(t) != nil {
+            key = KeySuggestion(tonic: t, mode: k["mode"] as? String == "minor" ? "minor" : "major", modeName: k["modeName"] as? String ?? "",
+                                agreesWithCurrent: k["agreesWithCurrent"] as? Bool ?? true, reason: k["reason"] as? String ?? "")
+        }
+        let voicings = (obj["voicings"] as? [[String: Any]] ?? []).compactMap { v -> SkeletonVoicing? in
+            guard let e = v["eventId"] as? String, order[e] != nil else { return nil }
+            return SkeletonVoicing(eventId: e, description: v["description"] as? String ?? "")
+        }
         return Parsed(backbone: backbone, relations: relations, alternatives: alternatives, summary: obj["summary"] as? String ?? "",
+                      numberPattern: obj["numberPattern"] as? String ?? "", keySuggestion: key, voicings: voicings,
                       explanation: obj["explanation"] as? String ?? "", suggestedTags: obj["suggestedTags"] as? [String] ?? [])
     }
 

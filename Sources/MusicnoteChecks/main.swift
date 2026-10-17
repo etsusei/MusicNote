@@ -232,5 +232,20 @@ let struckIn = MidiNote(pitch: 59, startUs: 1_000_000, endUs: 2_000_000)
 let mem = ChordGrouper.members([tail, held, struckIn], start: 1_000_000, end: 3_000_000, beatUs: 428_571)
 eq(Set(mem.map(\.id)), Set([held.id, struckIn.id]), "legato tails excluded, held bass included")
 
+// Key estimate from chords: the user's clip circles F♯ with G as ♭II → F♯ minor, not A major.
+func ev(_ id: String, _ sym: String, _ s: Double, _ e: Double) -> ChordEvent {
+    ChordEvent(id: id, order: 0, startUs: Int64(s * 1e6), endUs: Int64(e * 1e6), noteIds: [], noteRoles: [:], texture: .block,
+               excludedNoteIds: [], namingPitches: [], candidates: [], symbol: sym, namingSource: .user, manualOverride: true, degree: nil, bassPitch: nil)
+}
+let clip = [ev("1", "F♯7sus4", 0.74, 1.79), ev("2", "A", 1.79, 2.02), ev("3", "G♯", 2.02, 2.22), ev("4", "G", 2.22, 4.17),
+            ev("5", "Gmaj9", 4.17, 5.67), ev("6", "F♯m7", 5.67, 7.6), ev("7", "F♯7sus4", 7.6, 8.68), ev("8", "A", 8.68, 8.9),
+            ev("9", "G♯", 8.9, 9.1), ev("10", "G", 9.1, 11.02), ev("11", "Gmaj13", 11.02, 12.31), ev("12", "F♯", 12.52, 13.4)]
+let kc = KeyEstimator.candidates(events: clip)
+eq(kc.first.map { "\($0.key.tonic)\($0.key.mode)" }, "6minor", "F♯ minor from where phrases start and land")
+let twoFiveOne = [ev("1", "Dm7", 0, 2), ev("2", "G7", 2, 4), ev("3", "Cmaj7", 4, 8)]
+eq(KeyEstimator.candidates(events: twoFiveOne).first.map { "\($0.key.tonic)\($0.key.mode)" }, "0major", "ii-V-I in C")
+eq(Degrees.numberPattern(["F", "G", "Em", "Am"], key: cMajor), "4-5-3-6", "4536 numbering")
+eq(Degrees.numberPattern(["F♯m7", "G", "F♯"], key: KeySignature(tonic: 6, tonicName: "F♯", mode: .minor)), "6-♭7-6", "minor counted from relative major")
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

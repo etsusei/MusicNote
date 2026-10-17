@@ -46,7 +46,16 @@ enum DebugSnapshot {
 
     static func snapshot(to url: URL) {
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }), let view = window.contentView else { return }
-        if ProcessInfo.processInfo.environment["MUSICNOTE_SCROLLTOP"] != nil {
+        if let y = ProcessInfo.processInfo.environment["MUSICNOTE_SCROLLY"].flatMap(Double.init) {
+            func deepest(_ v: NSView) -> NSScrollView? {
+                for sv in v.subviews { if let f = deepest(sv) { return f } }
+                return (v as? NSScrollView).flatMap { ($0.documentView?.bounds.height ?? 0) > 1500 ? $0 : nil }
+            }
+            if let sv = deepest(view), let doc = sv.documentView {
+                doc.scroll(NSPoint(x: 0, y: doc.isFlipped ? y : max(0, doc.bounds.height - sv.contentSize.height - y)))
+                view.layoutSubtreeIfNeeded()
+            }
+        } else if ProcessInfo.processInfo.environment["MUSICNOTE_SCROLLTOP"] != nil {
             func visit(_ v: NSView) {
                 if let sv = v as? NSScrollView, let doc = sv.documentView {
                     doc.scroll(NSPoint(x: 0, y: doc.isFlipped ? 0 : max(0, doc.bounds.height - sv.contentSize.height)))

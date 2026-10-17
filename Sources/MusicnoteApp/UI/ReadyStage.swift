@@ -82,7 +82,30 @@ struct NotesStage: View {
         .sheet(item: $playgroundSend) { req in PlaygroundSendSheet(request: req).environment(model) }
     }
 
+    /// Key the chords themselves point to, when it differs clearly from the one set.
+    private var chordKeyHint: (KeySignature, [String])? {
+        guard let h = model.latestHarmony(item.id), let cur = item.timing?.key else { return nil }
+        let cands = KeyEstimator.candidates(events: h.events, limit: 24)
+        guard let top = cands.first, top.key.tonic != cur.tonic || top.key.mode != cur.mode else { return nil }
+        let curScore = cands.first { $0.key.tonic == cur.tonic && $0.key.mode == cur.mode }?.score ?? 0
+        guard top.score - curScore > 0.5 else { return nil }
+        // A skeleton that already ran with this key and agreed overrides the heuristic.
+        if let sk = model.latestSkeleton(item.id), sk.keyUsed == cur.display, sk.keySuggestion?.agreesWithCurrent ?? true { return nil }
+        return (top.key, top.reasons)
+    }
+
     private var summary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+        // The model's check (made with the current key) comes first; otherwise the chord-based estimate.
+        if let sk = model.latestSkeleton(item.id), let ks = sk.keySuggestion, !ks.agreesWithCurrent, let k = ks.key,
+           sk.keyUsed == item.timing?.key.display, k != item.timing?.key {
+            KeyCorrectionCard(title: "调性可能设错了：更像 \(ks.modeName.isEmpty ? k.display : ks.modeName)", reason: ks.reason,
+                              apply: { model.applyKey(item.id, k) }, applyTitle: "改为 \(k.display) 并重新分析",
+                              dismiss: { var x = sk; x.keySuggestion = nil; try? model.store.save(x); model.dataVersion += 1 })
+        } else if let (k, reasons) = chordKeyHint {
+            KeyCorrectionCard(title: "从和弦看更像 \(k.display)", reason: reasons.joined(separator: "；"),
+                              apply: { model.applyKey(item.id, k) }, applyTitle: "改为 \(k.display) 并重新分析", dismiss: nil)
+        }
         HStack(spacing: 10) {
             Text("\(formatTime(us: item.trimStartUs))–\(formatTime(us: item.trimEndUs))").font(.mono13)
             if let t = item.timing {
@@ -92,6 +115,7 @@ struct NotesStage: View {
             }
             if let s = item.selectedStem { StatusPill(text: s.displayName + "轨") }
             Spacer()
+        }
         }
     }
 
@@ -351,8 +375,16 @@ struct SkeletonSection: View {
                                         .buttonStyle(SecondaryButtonStyle(compact: true))
                                 }
                             }
-                            if let summary = sk.summary, !summary.isEmpty {
-                                Text(summary).font(.system(size: 15, weight: .semibold))
+                            if (sk.numberPattern ?? "").isEmpty == false || (sk.summary ?? "").isEmpty == false {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    if let np = sk.numberPattern, !np.isEmpty {
+                                        Text(np).font(.system(size: 26, weight: .bold)).foregroundStyle(Theme.accent)
+                                    }
+                                    if let summary = sk.summary, !summary.isEmpty {
+                                        Text(summary).font(.system(size: 15, weight: .semibold))
+                                    }
+                                    if let used = sk.keyUsed { Text("按 \(used) 分析").font(.caption12).foregroundStyle(Theme.textSecondary) }
+                                }
                             }
                             if !sk.backboneEventIds.isEmpty {
                                 let byId = Dictionary(uniqueKeysWithValues: harmony.events.map { ($0.id, $0) })
@@ -366,14 +398,21 @@ struct SkeletonSection: View {
                                     }
                                 }
                                 if !sk.relations.isEmpty {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        ForEach(sk.relations, id: \.eventId) { r in
-                                            let ev = byId[r.eventId]
-                                            let pos = ev.flatMap { e in item.timing.map { harmony.position(of: e.startUs, grid: $0.grid) } } ?? ""
-                                            Text("· \(pos.replacingOccurrences(of: " ", with: "")) \(ev?.symbol ?? "?")\(r.targetEventId.flatMap { byId[$0]?.symbol }.map { " → \($0)" } ?? "")（\(relationName(r.kind))）：\(r.reason)")
-                                                .font(.caption12).foregroundStyle(Theme.textSecondary)
+                                    DisclosureGroup("逐个装饰和弦（\(sk.relations.count)）") {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            ForEach(sk.relations, id: \.eventId) { r in
+                                                let ev = byId[r.eventId]
+                                                let pos = ev.flatMap { e in item.timing.map { harmony.position(of: e.startUs, grid: $0.grid) } } ?? ""
+                                                Text("· \(pos.replacingOccurrences(of: " ", with: "")) \(ev?.symbol ?? "?")\(r.targetEventId.flatMap { byId[$0]?.symbol }.map { " → \($0)" } ?? "")（\(relationName(r.kind))）：\(r.reason)")
+                                                    .font(.caption12).foregroundStyle(Theme.textSecondary)
+                                            }
                                         }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
                                     }
+                                    .font(.caption12)
+                                }
+                                if let vs = sk.voicings, !vs.isEmpty {
+                                    VoicingList(item: item, harmony: harmony, voicings: vs)
                                 }
                                 if let a = sk.alternatives.first {
                                     Text("另一种看法：" + a.backboneEventIds.map { byId[$0]?.symbol ?? "?" }.joined(separator: " → ") + "。\(a.reason)")
@@ -639,5 +678,65 @@ extension AppModel {
         for i in h.events.indices { h.events[i].degree = h.events[i].symbol.flatMap { Degrees.label(symbol: $0, key: key) } }
         h.needsReview.removeAll { $0.contains("调性") }
         saveHarmony(h)
+    }
+}
+
+struct KeyCorrectionCard: View {
+    var title: String
+    var reason: String
+    var apply: () -> Void
+    var applyTitle: String
+    var dismiss: (() -> Void)?
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "tuningfork").foregroundStyle(Theme.warning)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                if !reason.isEmpty { Text(reason).font(.caption12).foregroundStyle(Theme.textSecondary) }
+                HStack {
+                    Button(applyTitle, action: apply).buttonStyle(SecondaryButtonStyle(compact: true))
+                    if let dismiss { Button("保持当前调", action: dismiss).buttonStyle(.borderless).font(.caption12) }
+                }
+            }
+            Spacer()
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.warning.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.warning.opacity(0.4)))
+    }
+}
+
+/// Voicings worth learning: chord, where it is, the actual notes low → high, and why it sounds good.
+struct VoicingList: View {
+    @Environment(AppModel.self) private var model
+    var item: AnalysisItem
+    var harmony: HarmonyRevision
+    var voicings: [SkeletonVoicing]
+
+    var body: some View {
+        let byId = Dictionary(uniqueKeysWithValues: harmony.events.map { ($0.id, $0) })
+        let notes = model.confirmedMidi(item)?.notes ?? []
+        VStack(alignment: .leading, spacing: 6) {
+            Text("值得学的 voicing").font(.system(size: 13, weight: .semibold))
+            ForEach(voicings, id: \.eventId) { v in
+                if let e = byId[v.eventId] {
+                    let members = notes.filter { e.noteIds.contains($0.id) }
+                    let pitches = Array(Set(members.map(\.pitch))).sorted()
+                    HStack(alignment: .top, spacing: 10) {
+                        Button { AudioEngine.shared.playChord(pitches) } label: { Image(systemName: "play.circle") }
+                            .buttonStyle(.borderless).help("按实际按法发声")
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(e.symbol ?? "?").font(.system(size: 14, weight: .semibold))
+                                Text(item.timing.map { harmony.position(of: e.startUs, grid: $0.grid) } ?? "").font(.caption12).foregroundStyle(Theme.textSecondary)
+                                Text(pitches.map { Pitch.noteName($0, flats: Pitch.prefersFlats(item.timing?.key)) }.joined(separator: " – "))
+                                    .font(.mono13).foregroundStyle(Theme.accent)
+                            }
+                            Text(v.description).font(.caption12).foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

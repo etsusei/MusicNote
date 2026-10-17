@@ -567,6 +567,15 @@ final class AppModel {
                         sk.alternatives = parsed.alternatives
                         sk.explanation = parsed.explanation
                         sk.summary = parsed.summary.isEmpty ? nil : parsed.summary
+                        // Numbered degrees are computed, not taken from the model: 1 = major tonic,
+                        // minor keys counted from the relative major.
+                        let byId = Dictionary(uniqueKeysWithValues: harmony.events.map { ($0.id, $0) })
+                        let numKey = parsed.keySuggestion?.key ?? item.timing?.key ?? harmony.key
+                        let pattern = Degrees.numberPattern(parsed.backbone.compactMap { byId[$0]?.symbol }, key: numKey)
+                        sk.numberPattern = Self.onePass(pattern) ?? (parsed.numberPattern.isEmpty ? nil : parsed.numberPattern)
+                        sk.keySuggestion = parsed.keySuggestion
+                        sk.voicings = parsed.voicings
+                        sk.keyUsed = item.timing?.key.display
                         sk.status = .succeeded
                         sk.error = parsed.suggestedTags.isEmpty ? nil : "建议标签：" + parsed.suggestedTags.joined(separator: "、")
                         break
@@ -587,6 +596,27 @@ final class AppModel {
             self.skeletonRunning.remove(itemId)
             self.dataVersion += 1
         }
+    }
+
+    /// "6-♭7-6-6-♭7-6" → "6-♭7-6" when the backbone simply repeats.
+    static func onePass(_ pattern: String) -> String? {
+        let parts = pattern.split(separator: "-").map(String.init)
+        guard !parts.isEmpty else { return nil }
+        for n in 1...parts.count where parts.count % n == 0 {
+            let unit = Array(parts[0..<n])
+            if stride(from: 0, to: parts.count, by: n).allSatisfy({ Array(parts[$0..<($0 + n)]) == unit }) { return unit.joined(separator: "-") }
+        }
+        return pattern
+    }
+
+    /// Applies a corrected key: re-derives degrees, then regenerates the explanation in the new key.
+    func applyKey(_ itemId: UUID, _ key: KeySignature) {
+        guard var item = item(itemId), var t = item.timing else { return }
+        t.key = key
+        item.timing = t
+        save(item)
+        recomputeDegrees(itemId)
+        generateSkeleton(itemId)
     }
 
     // MARK: Notes
