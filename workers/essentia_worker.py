@@ -76,6 +76,34 @@ def chords(path, ticks):
     return {"chords": items}
 
 
+def chroma(path, start, end):
+    """Average 12-bin pitch-class energy (HPCP) of [start, end) seconds: local audio evidence."""
+    import numpy as np
+    import essentia.standard as es
+    audio = es.MonoLoader(filename=path, sampleRate=44100)()
+    seg = audio[int(start * 44100):int(end * 44100)]
+    if len(seg) < 4096:
+        return {"error": {"code": "INVALID_RANGE", "message": "片段太短"}}
+    window = es.Windowing(type="blackmanharris62")
+    spectrum = es.Spectrum()
+    peaks = es.SpectralPeaks(orderBy="magnitude", magnitudeThreshold=1e-5, minFrequency=40, maxFrequency=5000, maxPeaks=60)
+    hpcp = es.HPCP(size=12, referenceFrequency=440, harmonics=8, bandPreset=True, minFrequency=40, maxFrequency=5000,
+                   weightType="cosine", nonLinear=False, windowSize=1.0)
+    acc = np.zeros(12)
+    n = 0
+    for f in es.FrameGenerator(seg, frameSize=4096, hopSize=2048, startFromZero=True):
+        fr, mg = peaks(spectrum(window(f)))
+        acc += hpcp(fr, mg)
+        n += 1
+    acc = acc / max(1, n)
+    if acc.max() > 0:
+        acc = acc / acc.max()
+    # Essentia HPCP index 0 is A; rotate so index 0 is C.
+    names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    by_c = [float(acc[(i + 3) % 12]) for i in range(12)]
+    return {"chroma": {names[i]: round(by_c[i], 3) for i in range(12)}, "frames": n}
+
+
 def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -84,10 +112,16 @@ def main():
     c = sub.add_parser("chords")
     c.add_argument("audio")
     c.add_argument("--ticks", required=True, help="JSON array of beat times in seconds")
+    h = sub.add_parser("chroma")
+    h.add_argument("audio")
+    h.add_argument("--start", type=float, required=True)
+    h.add_argument("--end", type=float, required=True)
     a = p.parse_args()
     try:
         if a.cmd == "detect":
             out(detect(a.audio))
+        elif a.cmd == "chroma":
+            out(chroma(a.audio, a.start, a.end))
         else:
             out(chords(a.audio, json.loads(a.ticks)))
     except Exception as e:  # noqa: BLE001

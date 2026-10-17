@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import MusicnoteCore
 import Observation
@@ -56,6 +57,11 @@ final class AppModel {
     var providerStatus: [String: ProviderStatus] = [:]
     var providerModels: [String: [ProviderModel]] = [:]
     var chat: ChatController!
+    var autoRuns: [UUID: AutoRun] = [:]
+    var autoTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored var _autoProvider: CodexProvider?
+    @ObservationIgnored var auditionCache: [String: AVAudioPCMBuffer] = [:]
+    @ObservationIgnored var auditionStop: Task<Void, Never>?
 
     init() {
         paths = AppPaths(root: ProcessInfo.processInfo.environment["MUSICNOTE_DATA_ROOT"].map { URL(fileURLWithPath: $0) })
@@ -692,5 +698,95 @@ enum TagText {
         for dash in ["–", "—", "−", "→", "~", "_", "/", " "] { t = t.replacingOccurrences(of: dash, with: "-") }
         while t.contains("--") { t = t.replacingOccurrences(of: "--", with: "-") }
         return t.trimmingCharacters(in: CharacterSet(charactersIn: "- ")).lowercased()
+    }
+}
+
+// MARK: - Autonomous analysis
+
+extension AppModel {
+    func latestAutoRun(_ itemId: UUID) -> AutoRun? {
+        if let live = autoRuns[itemId] { return live }
+        return store.all(AutoRun.self, owner: itemId).max { $0.startedAt < $1.startedAt }
+    }
+
+    var autoAnalysisProvider: CodexProvider {
+        if let p = _autoProvider { return p }
+        let p = CodexProvider(binary: settings.tools.codexBinary, sandboxDir: paths.chatSandbox, enableCodeMode: true)
+        _autoProvider = p
+        return p
+    }
+
+    /// Lets the model analyse the selection with Musicnote's tools. Older harmony revisions,
+    /// the user's MIDI, notes and tags are never modified.
+    func startAutoAnalysis(_ itemId: UUID) {
+        guard autoTasks[itemId] == nil, let item = item(itemId) else { return }
+        guard item.timing != nil else {
+            alert = AppAlert(title: "还不能自主分析", message: "先确认速度与调性，这样才能按小节分析。"); return
+        }
+        let model = settings.providerModels["codex"]
+        let effort = validEffort("codex", model: model, effort: settings.providerEfforts["codex"]) ?? "medium"
+        let run = AutoRun(analysisId: itemId, trimRevision: item.trimRevision, provider: "codex", model: model ?? "默认",
+                          maxToolCalls: AutoAgent.defaultMaxToolCalls, maxSeconds: AutoAgent.defaultMaxSeconds)
+        let box = AutoToolbox(store: store, paths: paths, tools: settings.tools, item: item, run: run)
+        box.onUpdate = { [weak self] r in Task { @MainActor in self?.autoRuns[itemId] = r } }
+        autoRuns[itemId] = run
+        try? store.save(run)
+        let provider = autoAnalysisProvider
+        let title = song(item.songId)?.title ?? ""
+        autoTasks[itemId] = Task { [weak self] in
+            await AutoAgent.run(toolbox: box, provider: provider, songTitle: title, model: model, effort: effort)
+            guard let self else { return }
+            self.autoRuns[itemId] = nil
+            self.autoTasks[itemId] = nil
+            self.reload()
+            if box.run.status == .failed { self.alert = AppAlert(title: "自主分析没有完成", message: box.run.error ?? box.run.finalMessage) }
+        }
+    }
+
+    func cancelAutoAnalysis(_ itemId: UUID) { autoTasks[itemId]?.cancel() }
+
+    /// Makes the revision before the latest one current again, as a new revision (nothing deleted).
+    func restorePreviousHarmony(_ itemId: UUID) {
+        let revs = store.all(HarmonyRevision.self, owner: itemId).sorted { $0.revision < $1.revision }
+        guard revs.count >= 2, var prev = revs.dropLast().last, var item = item(itemId) else { return }
+        prev.id = UUID()
+        prev.revision = revs.last!.revision + 1
+        prev.createdAt = Date()
+        try? store.save(prev)
+        item.harmonyRevision = prev.revision
+        save(item)
+    }
+
+    /// Plays the selection's audio (original mix or the selected stem) for [startUs, endUs).
+    func audition(_ itemId: UUID, startUs: Int64, endUs: Int64, original: Bool) {
+        guard let item = item(itemId) else { return }
+        let url: URL?
+        var offset: Int64 = 0
+        if original { url = Pipeline.resolve(item.source); offset = item.trimStartUs }
+        else { url = item.selectedStem.flatMap { item.separation?.stem($0) }.map { paths.url(relative: $0.relativePath) } }
+        guard let url else { alert = AppAlert(title: "无法试听", message: "找不到音频文件"); return }
+        let key = url.path
+        let buffer: AVAudioPCMBuffer
+        if let b = auditionCache[key] { buffer = b } else {
+            guard let b = try? AudioLoader.load(url) else { return }
+            auditionCache = [key: b]
+            buffer = b
+        }
+        let rate = buffer.format.sampleRate
+        let e = AudioEngine.shared
+        e.pause()
+        e.configure(sampleRate: rate)
+        e.setMidi([], enabled: false)
+        e.setMetronome(MetronomeConfig())
+        e.setTracks([AudioTrack(id: "audition", buffer: buffer)])
+        e.setLength(Int64(buffer.frameLength))
+        e.setLoop(nil)
+        let f0 = Int64(Double(startUs + offset) / 1e6 * rate)
+        e.play(from: f0)
+        auditionStop?.cancel()
+        auditionStop = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(max(0.2, Double(endUs - startUs) / 1e6) * 1e9))
+            if !Task.isCancelled { AudioEngine.shared.pause() }
+        }
     }
 }

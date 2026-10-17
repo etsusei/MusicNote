@@ -65,6 +65,14 @@ public struct ToolSettings: Codable, Hashable, Sendable {
     public var soundFont: String
     public var codexBinary: String
     public var claudeBinary: String
+    /// Optional so settings saved before MT3 existed still decode.
+    public var mt3PythonPath: String?
+    public var mt3DirPath: String?
+
+    /// Thin venv layered over the user's MT3 environment, adding the jax-mps GPU backend.
+    public var mt3Python: String { mt3PythonPath ?? projectRoot + "/workers/mt3/.venv/bin/python" }
+    /// The user's MT3 checkout (transcribe.py + checkpoints), referenced, never copied.
+    public var mt3Dir: String { mt3DirPath ?? "/Users/yao/Desktop/midi" }
 
     public static func defaults(projectRoot: String, separatorBinary: String) -> ToolSettings {
         ToolSettings(
@@ -90,7 +98,7 @@ public struct ToolSettings: Codable, Hashable, Sendable {
         var out: [String] = []
         for (name, path) in [("ffmpeg", ffmpeg), ("ffprobe", ffprobe), ("Python", systemPython),
                              ("Essentia", essentiaPython), ("Musicpy", musicpyPython), ("MuScriptor", muscriptorPython),
-                             ("拆轨程序", separatorBinary), ("音色库", soundFont)] where !fm.fileExists(atPath: path) {
+                             ("拆轨程序", separatorBinary), ("音色库", soundFont), ("MT3", mt3Python)] where !fm.fileExists(atPath: path) {
             out.append(name)
         }
         return out

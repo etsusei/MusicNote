@@ -113,6 +113,8 @@ public final class CodexProvider: ChatProvider, @unchecked Sendable {
     private var nextId = 0
     private var pending: [Int: CheckedContinuation<[String: Any], Error>] = [:]
     private var listeners: [UUID: ([String: Any]) -> Void] = [:]
+    /// Musicnote's own tools, per thread; the only tool calls ever answered.
+    private var toolHandlers: [String: @Sendable (String, [String: Any]) async -> (String, Bool)] = [:]
     private var buffer = Data()
     private let lock = NSLock()
     private var resumed: Set<String> = []
@@ -124,7 +126,14 @@ public final class CodexProvider: ChatProvider, @unchecked Sendable {
                                    "code_mode_host", "skill_mcp_dependency_install", "remote_plugin"]
     static let allowedItems: Set<String> = ["agentMessage", "reasoning", "userMessage", "contextCompaction", "plan"]
 
-    public init(binary: String, sandboxDir: URL) { self.binary = binary; self.sandboxDir = sandboxDir }
+    /// Code mode hosts Codex's client-provided tools. Only the autonomous-analysis provider turns
+    /// it on; its JS host has no file system, process or network access (verified), and the
+    /// watchdog still interrupts anything other than Musicnote's own tools.
+    let enableCodeMode: Bool
+
+    public init(binary: String, sandboxDir: URL, enableCodeMode: Bool = false) {
+        self.binary = binary; self.sandboxDir = sandboxDir; self.enableCodeMode = enableCodeMode
+    }
 
     deinit { process?.terminate() }
 
@@ -135,7 +144,7 @@ public final class CodexProvider: ChatProvider, @unchecked Sendable {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: binary)
         var args = ["app-server"]
-        for f in Self.disabledFeatures { args += ["--disable", f] }
+        for f in Self.disabledFeatures where !(enableCodeMode && f == "code_mode_host") { args += ["--disable", f] }
         args += ["-c", "web_search=\"disabled\"", "-c", "agents.enabled=false",
                  "-c", "mcp_servers.node_repl.enabled=false", "-c", "mcp_servers.openaiDeveloperDocs.enabled=false"]
         p.arguments = args
@@ -147,7 +156,9 @@ public final class CodexProvider: ChatProvider, @unchecked Sendable {
         try p.run()
         process = p; stdin = inp.fileHandleForWriting
         resumed = []
-        _ = try await request("initialize", ["clientInfo": ["name": "musicnote", "title": "Musicnote", "version": "0.1"], "capabilities": NSNull()])
+        // experimentalApi enables client-provided (dynamic) tools for autonomous analysis.
+        _ = try await request("initialize", ["clientInfo": ["name": "musicnote", "title": "Musicnote", "version": "0.1"],
+                                             "capabilities": ["experimentalApi": true, "requestAttestation": false]])
         notify("initialized", nil)
     }
 
@@ -174,7 +185,21 @@ public final class CodexProvider: ChatProvider, @unchecked Sendable {
             return
         }
         if let id = m["id"], let method = m["method"] as? String {
-            // Server → client requests (approvals, user input): always decline.
+            if method == "item/tool/call", let params = m["params"] as? [String: Any], let thread = params["threadId"] as? String {
+                lock.lock(); let handler = toolHandlers[thread]; lock.unlock()
+                if let handler {
+                    let tool = params["tool"] as? String ?? ""
+                    let args = params["arguments"] as? [String: Any] ?? [:]
+                    Task { [weak self] in
+                        let (text, ok) = await handler(tool, args)
+                        self?.respond(id: id, result: ["contentItems": [["type": "inputText", "text": text]], "success": ok])
+                    }
+                } else {
+                    respond(id: id, result: ["contentItems": [["type": "inputText", "text": "这个会话没有可用的工具"]], "success": false])
+                }
+                return
+            }
+            // Other server → client requests (approvals, user input): always decline.
             respond(id: id, result: method.contains("Approval") || method.contains("approval") ? ["decision": "decline"] : [:])
         }
         lock.lock(); let ls = Array(listeners.values); lock.unlock()
@@ -355,6 +380,88 @@ public final class CodexProvider: ChatProvider, @unchecked Sendable {
         if case .failure(let e) = finished { throw e }
         if let v = violation { throw ProviderError.permissionViolation(v) }
         return ProviderTurnResult(sessionId: tid, text: text, contextTokens: tokens, contextWindow: window)
+    }
+
+    /// Runs one agent turn in which the model may call Musicnote's tools (and nothing else).
+    /// Returns the model's final message.
+    public func runAgent(systemPrompt: String, task: String, tools: [[String: Any]], model: String?, effort: String?,
+                         handler: @escaping @Sendable (String, [String: Any]) async -> (String, Bool),
+                         onDelta: @escaping @Sendable (String) -> Void) async throws -> String {
+        try await ensureStarted()
+        var p: [String: Any] = ["cwd": sandboxDir.path, "approvalPolicy": "never", "sandbox": "read-only",
+                                "baseInstructions": systemPrompt, "ephemeral": true,
+                                "dynamicTools": tools.map { t -> [String: Any] in var x = t; x["type"] = "function"; return x }]
+        if let model { p["model"] = model }
+        let r = try await request("thread/start", p)
+        guard let tid = (r["thread"] as? [String: Any])?["id"] as? String else { throw ProviderError.other("无法创建 Codex 会话") }
+        lock.lock(); toolHandlers[tid] = handler; lock.unlock()
+        defer { lock.lock(); toolHandlers[tid] = nil; lock.unlock() }
+        let allowed = Self.allowedItems.union(["dynamicToolCall"])
+        nonisolated(unsafe) var finalText = ""
+        nonisolated(unsafe) var turnId: String?
+        nonisolated(unsafe) var violation: String?
+        let textLock = NSLock()
+        let outcome: Result<Void, Error> = await withTaskCancellationHandler {
+            await withCheckedContinuation { (c: CheckedContinuation<Result<Void, Error>, Never>) in
+                nonisolated(unsafe) var resolved = false
+                nonisolated(unsafe) var token: UUID?
+                func finish(_ r: Result<Void, Error>) {
+                    textLock.lock(); defer { textLock.unlock() }
+                    guard !resolved else { return }
+                    resolved = true
+                    if let t = token { unlisten(t) }
+                    c.resume(returning: r)
+                }
+                token = listen { [weak self] m in
+                    guard let method = m["method"] as? String, let params = m["params"] as? [String: Any] else { return }
+                    if let t = params["threadId"] as? String, t != tid { return }
+                    switch method {
+                    case "turn/started": turnId = (params["turn"] as? [String: Any])?["id"] as? String
+                    case "item/agentMessage/delta":
+                        if let d = params["delta"] as? String { onDelta(d) }
+                    case "item/completed":
+                        if let item = params["item"] as? [String: Any], (item["type"] as? String) == "agentMessage", let t = item["text"] as? String {
+                            textLock.lock(); finalText = t; textLock.unlock()
+                        }
+                    case "item/started":
+                        // Codex's own (empty) MCP resource listing is harmless; every other built-in tool interrupts.
+                        let harmlessMcp: Bool = {
+                            guard let item = params["item"] as? [String: Any], (item["type"] as? String) == "mcpToolCall" else { return false }
+                            return (item["server"] as? String) == "codex" &&
+                                ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"].contains(item["tool"] as? String ?? "")
+                        }()
+                        if let item = params["item"] as? [String: Any], let type = item["type"] as? String, !allowed.contains(type), !harmlessMcp {
+                            violation = type
+                            if let turnId { Task { _ = try? await self?.request("turn/interrupt", ["threadId": tid, "turnId": turnId]) } }
+                        }
+                    case "error":
+                        let msg = (params["error"] as? [String: Any])?["message"] as? String ?? "Codex 错误"
+                        if params["willRetry"] as? Bool != true { finish(.failure(Self.mapError(msg))) }
+                    case "turn/completed":
+                        let t = params["turn"] as? [String: Any]
+                        if (t?["status"] as? String) == "failed" {
+                            finish(.failure(Self.mapError((t?["error"] as? [String: Any])?["message"] as? String ?? "分析失败")))
+                        } else if (t?["status"] as? String) == "interrupted" {
+                            finish(.failure(violation.map { ProviderError.permissionViolation($0) } ?? CancellationError()))
+                        } else { finish(.success(())) }
+                    default: break
+                    }
+                }
+                Task { [weak self] in
+                    guard let self else { return }
+                    var tp: [String: Any] = ["threadId": tid, "input": [["type": "text", "text": task, "text_elements": []]],
+                                             "approvalPolicy": "never", "sandboxPolicy": ["type": "readOnly", "networkAccess": false]]
+                    if let model { tp["model"] = model }
+                    if let effort { tp["effort"] = effort }
+                    do { _ = try await self.request("turn/start", tp) } catch { finish(.failure(error)) }
+                }
+            }
+        } onCancel: { [weak self] in
+            Task { if let turnId { _ = try? await self?.request("turn/interrupt", ["threadId": tid, "turnId": turnId]) } }
+        }
+        if case .failure(let e) = outcome { throw e }
+        if let v = violation { throw ProviderError.permissionViolation(v) }
+        return finalText
     }
 
     public func interrupt(threadId: String) async {

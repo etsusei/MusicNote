@@ -41,6 +41,7 @@ struct NotesStage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 summary
+                if item.isHarmonic { AutoAnalysisSection(item: item) }
                 let stale = model.harmonyStale(item)
                 if !stale.isEmpty {
                     Card {
@@ -221,6 +222,13 @@ struct ChordEventCard: View {
                 }
                 Text(event.degree?.display ?? "").font(.control13).foregroundStyle(Theme.textSecondary)
                 Spacer()
+                if let info = harmony.auto?.chordInfo[event.id] {
+                    Text(info.roleDisplay).font(.system(size: 10)).padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Capsule().stroke(Theme.noteFill)).help(info.reason)
+                }
+                if harmony.auto?.toConfirm.contains(where: { $0.eventId == event.id }) == true {
+                    Image(systemName: "questionmark.circle.fill").foregroundStyle(Theme.warning).help("模型标记为待确认")
+                }
                 if event.manualOverride { Image(systemName: "pencil.circle").foregroundStyle(Theme.accent).help("人工命名") }
                 Text(event.texture.display).font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
             }

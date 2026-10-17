@@ -146,6 +146,7 @@ public struct SnapshotBuilder {
                 ]
                 if let l = BeatGrid.durationLabel(quarterBeats: q1 - q0) { ev["durationLabel"] = l }
                 ev["position"] = harmony.position(of: e.startUs, grid: grid)
+                if let info = harmony.auto?.chordInfo[e.id] { ev["role"] = info.roleDisplay; ev["roleReason"] = info.reason }
                 // Actual notes in time order, compact: name@beat(+len)
                 ev["notes"] = members.prefix(48).map { n -> String in
                     let role = e.noteRoles[n.id].map { $0 == .chordTone ? "" : "[" + $0.display + "]" } ?? ""
@@ -155,6 +156,10 @@ public struct SnapshotBuilder {
                 if !e.excludedNoteIds.isEmpty { ev["userExcludedNotes"] = e.excludedNoteIds.count }
                 return ev
             }
+        }
+        if let h = harmony, let auto = h.auto, let t = item.timing {
+            o["autonomousAnalysis"] = ["summary": auto.summary, "sources": auto.sources,
+                                       "toConfirm": auto.toConfirm.map { ["position": h.position(of: $0.startUs, grid: t.grid), "question": $0.question] }]
         }
         if let s = latestSkeleton(item.id) {
             o["skeleton"] = ["backboneEventIds": s.backboneEventIds, "explanation": s.explanation, "fromHarmonyRevision": s.harmonyRevision]

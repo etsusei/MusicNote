@@ -290,7 +290,7 @@ public enum Texture: String, Codable, Sendable {
     }
 }
 
-public enum NamingSource: String, Codable, Sendable { case musicpy, template, user }
+public enum NamingSource: String, Codable, Sendable { case musicpy, template, user, agent }
 
 public struct ChordCandidate: Codable, Hashable, Sendable {
     public var symbol: String
@@ -357,6 +357,8 @@ public struct HarmonyRevision: Record {
     public var params: [String: String]
     public var namerVersion: String
     public var needsReview: [String] // e.g. "timing changed"
+    /// Present when the revision was produced by model-driven analysis.
+    public var auto: AutoHarmony?
     public var createdAt: Date
 
     public init(analysisId: UUID, revision: Int, midiRevision: Int, timingRevision: Int, key: KeySignature,

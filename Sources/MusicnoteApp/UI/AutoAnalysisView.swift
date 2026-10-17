@@ -1,0 +1,278 @@
+import MusicnoteCore
+import SwiftUI
+
+enum AutoToolLabel {
+    static func text(_ tool: String) -> String {
+        switch tool {
+        case "inspect_analysis": "查看现状"
+        case "run_logic_chords": "Logic 和弦候选"
+        case "run_transcription": "转录"
+        case "align_transcriptions": "对齐双转录"
+        case "bar_evidence": "读小节证据"
+        case "local_audio_check": "定向复核"
+        case "harmony_draft": "看程序草稿"
+        case "note_review": "记录复核"
+        case "submit_analysis": "提交结果"
+        default: tool
+        }
+    }
+}
+
+/// Model-driven analysis on the notes page: start/cancel, live steps, and the bar-by-bar result.
+struct AutoAnalysisSection: View {
+    @Environment(AppModel.self) private var model
+    var item: AnalysisItem
+
+    var body: some View {
+        let _ = model.dataVersion
+        let running = model.autoTasks[item.id] != nil
+        let run = model.latestAutoRun(item.id)
+        let harmony = model.latestHarmony(item.id)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                SectionHeader(title: "模型自主分析",
+                              subtitle: "模型自己调用 Logic 和弦候选、MT3 + MuScriptor 双转录、局部音频复核，最后交付按小节的和弦走向。你的 MIDI、笔记和标签不会被改动，旧的和声版本都保留。")
+                Spacer()
+                if running {
+                    Button("停止") { model.cancelAutoAnalysis(item.id) }.buttonStyle(SecondaryButtonStyle(compact: true))
+                } else {
+                    Button(harmony?.auto == nil ? "开始自主分析" : "重新自主分析") { model.startAutoAnalysis(item.id) }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(model.providerStatus["codex"]?.state != .connected)
+                        .help(model.providerStatus["codex"]?.state == .connected ? "使用 Codex（\(model.settings.providerModels["codex"] ?? "默认模型")）" : "需要先连接 Codex")
+                }
+            }
+            if let run, running || run.status != .succeeded || harmony?.auto?.runId != run.id {
+                RunProgress(run: run, running: running)
+            }
+            if let h = harmony, let auto = h.auto, let timing = item.timing {
+                AutoResult(item: item, harmony: h, auto: auto, timing: timing, run: run?.id == auto.runId ? run : model.store.fetch(AutoRun.self, id: auto.runId))
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.accent.opacity(0.35)))
+    }
+}
+
+struct RunProgress: View {
+    var run: AutoRun
+    var running: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                if running { ProgressView().controlSize(.small) }
+                Text(running ? "分析中" : statusText).font(.system(size: 13, weight: .semibold))
+                Text("工具 \(run.toolCalls)/\(run.maxToolCalls) 次 · \(Int((run.finishedAt ?? Date()).timeIntervalSince(run.startedAt))) 秒 · Codex \(run.model)")
+                    .font(.caption12).foregroundStyle(Theme.textSecondary)
+            }
+            if let e = run.error, !running { Text(e).font(.caption12).foregroundStyle(Theme.warning) }
+            ForEach(Array(run.steps.suffix(running ? 8 : 4).enumerated()), id: \.offset) { _, s in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: s.ok ? "checkmark.circle" : "exclamationmark.circle").foregroundStyle(s.ok ? Theme.success : Theme.warning)
+                    Text(AutoToolLabel.text(s.tool)).font(.system(size: 12, weight: .medium)).frame(width: 96, alignment: .leading)
+                    Text(firstLine(s)).font(.caption12).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                }
+            }
+        }
+    }
+
+    private var statusText: String {
+        switch run.status {
+        case .succeeded: "已完成"
+        case .cancelled: "已停止"
+        case .failed: "没有完成"
+        case .interrupted: "被中断"
+        default: run.status.rawValue
+        }
+    }
+
+    private func firstLine(_ s: AutoStep) -> String {
+        if s.tool == "note_review" || s.tool == "local_audio_check" || s.tool == "bar_evidence" {
+            return s.arguments.replacingOccurrences(of: "\"", with: "").prefix(160).description
+        }
+        return s.summary.split(separator: "\n").first.map(String.init) ?? ""
+    }
+}
+
+struct AutoResult: View {
+    @Environment(AppModel.self) private var model
+    var item: AnalysisItem
+    var harmony: HarmonyRevision
+    var auto: AutoHarmony
+    var timing: TimingConfirmation
+    var run: AutoRun?
+
+    private var grid: BeatGrid {
+        var g = timing.grid
+        if g.barAnchorUs == nil { g.barAnchorUs = harmony.barAnchorUs }
+        return g
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !auto.summary.isEmpty { Text(auto.summary).font(.system(size: 14, weight: .medium)) }
+            if let k = auto.key, !k.agreesWithCurrent, let key = k.key {
+                KeyCorrectionCard(title: "模型判断的调：\(k.modeName.isEmpty ? key.display : k.modeName)", reason: k.reason,
+                                  apply: { model.applyKey(item.id, key) }, applyTitle: "改为 \(key.display)", dismiss: nil)
+            }
+            Legend()
+            BarProgressionView(item: item, harmony: harmony, auto: auto, grid: grid)
+            if !auto.toConfirm.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("待确认（\(auto.toConfirm.count)）").font(.system(size: 13, weight: .semibold))
+                    ForEach(Array(auto.toConfirm.enumerated()), id: \.offset) { _, c in
+                        let p = BarEvidence.position(c.startUs, grid: grid)
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "questionmark.circle").foregroundStyle(Theme.warning)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("第 \(p.bar) 小节第 \(beatText(p.beat)) 拍").font(.system(size: 12, weight: .semibold))
+                                Text(c.question).font(.caption12).foregroundStyle(Theme.textSecondary)
+                            }
+                            Spacer()
+                            Button("听原曲") { model.audition(item.id, startUs: max(0, c.startUs - Int64(grid.beatUs)), endUs: c.startUs + Int64(grid.beatUs * 2), original: true) }
+                                .buttonStyle(SecondaryButtonStyle(compact: true))
+                            Button("听分轨") { model.audition(item.id, startUs: max(0, c.startUs - Int64(grid.beatUs)), endUs: c.startUs + Int64(grid.beatUs * 2), original: false) }
+                                .buttonStyle(SecondaryButtonStyle(compact: true))
+                        }
+                    }
+                }
+            }
+            HStack(spacing: 12) {
+                if let run, !run.reviews.isEmpty {
+                    DisclosureGroup("复核记录（\(run.reviews.count)）") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(run.reviews.enumerated()), id: \.offset) { _, r in
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text("问：" + r.question).font(.caption12)
+                                    if !r.observedEvidence.isEmpty { Text("证据：" + r.observedEvidence).font(.caption12).foregroundStyle(Theme.textSecondary) }
+                                    if !r.decision.isEmpty { Text("决定：" + r.decision).font(.caption12).foregroundStyle(Theme.accent) }
+                                    if !r.stopReason.isEmpty { Text("停止：" + r.stopReason).font(.caption12).foregroundStyle(Theme.textSecondary) }
+                                }
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }.font(.caption12)
+                }
+            }
+            HStack {
+                Text("证据来源：" + auto.sources.joined(separator: "、") + " · 和声版本 r\(harmony.revision)")
+                    .font(.caption12).foregroundStyle(Theme.textSecondary)
+                Spacer()
+                if model.store.all(HarmonyRevision.self, owner: item.id).count >= 2 {
+                    Button("恢复上一版和声") { model.restorePreviousHarmony(item.id) }.buttonStyle(.borderless).font(.caption12)
+                        .help("把上一个和声版本重新设为当前（作为新版本保存，什么都不删）")
+                }
+            }
+        }
+    }
+
+    func beatText(_ b: Double) -> String { b == b.rounded() ? String(Int(b)) : String(format: "%.1f", b) }
+}
+
+struct Legend: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            chip("主干", fill: true)
+            chip("经过 / 连接", fill: false)
+            HStack(spacing: 4) { Image(systemName: "questionmark.circle.fill").foregroundStyle(Theme.warning); Text("待确认") }
+            Text("点和弦听实际按法；点小节号听原曲").foregroundStyle(Theme.textSecondary)
+        }
+        .font(.system(size: 11))
+    }
+    private func chip(_ t: String, fill: Bool) -> some View {
+        Text(t).padding(.horizontal, 6).padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 4).fill(fill ? Theme.noteFill : .clear))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.noteFill, style: StrokeStyle(lineWidth: 1, dash: fill ? [] : [3, 2])))
+            .foregroundStyle(fill ? Theme.onNote : Theme.textPrimary)
+    }
+}
+
+/// Bars in rows of four; each chord is placed at its beat and sized by its length.
+struct BarProgressionView: View {
+    @Environment(AppModel.self) private var model
+    var item: AnalysisItem
+    var harmony: HarmonyRevision
+    var auto: AutoHarmony
+    var grid: BeatGrid
+
+    var body: some View {
+        let bars = BarEvidence.barCount(grid: grid, durationUs: item.durationUs)
+        let rows = stride(from: 1, through: bars, by: 4).map { Array($0...min(bars, $0 + 3)) }
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(rows, id: \.self) { row in
+                HStack(spacing: 4) {
+                    ForEach(row, id: \.self) { bar in barCell(bar) }
+                    if row.count < 4 { ForEach(0..<(4 - row.count), id: \.self) { _ in Color.clear.frame(maxWidth: .infinity) } }
+                }
+            }
+        }
+    }
+
+    private func barCell(_ bar: Int) -> some View {
+        let s = BarEvidence.barStartUs(bar, grid: grid), e = BarEvidence.barStartUs(bar + 1, grid: grid)
+        let span = Double(e - s)
+        let events = harmony.events.filter { $0.startUs < e && $0.endUs > s }
+        return VStack(alignment: .leading, spacing: 3) {
+            Button { model.audition(item.id, startUs: max(0, s), endUs: min(item.durationUs, e), original: true) } label: {
+                HStack(spacing: 3) { Text("\(bar)").font(.system(size: 11, weight: .semibold)); Image(systemName: "speaker.wave.2").font(.system(size: 9)) }
+            }.buttonStyle(.borderless).foregroundStyle(Theme.textSecondary).help("听原曲第 \(bar) 小节")
+            GeometryReader { geo in
+                ZStack(alignment: .topLeading) {
+                    // Beat ticks
+                    ForEach(1..<Int(grid.meter.quarterBeatsPerBar.rounded()), id: \.self) { b in
+                        Rectangle().fill(Theme.borderSubtle).frame(width: 1, height: 6)
+                            .offset(x: geo.size.width * CGFloat(Double(b) / grid.meter.quarterBeatsPerBar), y: geo.size.height - 6)
+                    }
+                    ForEach(events) { ev in
+                        let x0 = max(0, Double(ev.startUs - s) / span), x1 = min(1, Double(ev.endUs - s) / span)
+                        let w = max(14, geo.size.width * CGFloat(x1 - x0) - 2)
+                        chordChip(ev, continued: ev.startUs < s - 20_000, roomy: w > 70)
+                            .frame(width: w, height: geo.size.height - 8)
+                            .offset(x: geo.size.width * CGFloat(x0))
+                    }
+                }
+            }
+            .frame(height: 50)
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.background))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.borderSubtle))
+    }
+
+    private func chordChip(_ ev: ChordEvent, continued: Bool, roomy: Bool) -> some View {
+        let info = auto.chordInfo[ev.id]
+        let strong = info?.role == "backbone" || info?.role == nil
+        let confirm = auto.toConfirm.contains { $0.eventId == ev.id }
+        return Button { play(ev) } label: {
+            HStack(spacing: 2) {
+                Text(continued ? "↳" : Self.breakable(ev.symbol ?? "?")).font(.system(size: strong ? 13 : 11, weight: strong ? .semibold : .medium))
+                    .lineLimit(2).minimumScaleFactor(0.7).fixedSize(horizontal: false, vertical: true)
+                if confirm && !continued && roomy { Image(systemName: "questionmark.circle.fill").font(.system(size: 9)).foregroundStyle(Theme.warning) }
+            }
+            .padding(.horizontal, roomy ? 4 : 2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 5).fill(strong ? Theme.noteFill.opacity(continued ? 0.45 : 1) : Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(confirm ? Theme.warning : Theme.noteFill,
+                                                             style: StrokeStyle(lineWidth: confirm ? 1.5 : 1, dash: strong ? [] : [3, 2])))
+            .foregroundStyle(strong ? Theme.onNote : Theme.textPrimary)
+        }
+        .buttonStyle(.plain)
+        .help("\(ev.symbol ?? "?")（\(info?.roleDisplay ?? "")）：\(info?.reason ?? "")")
+    }
+
+    /// Lets a narrow chip wrap a long name before its extension or bass ("Fm" / "(add9)", "A♭maj7" / "/B♭").
+    static func breakable(_ symbol: String) -> String {
+        symbol.replacingOccurrences(of: "(", with: "\u{200B}(").replacingOccurrences(of: "/", with: "\u{200B}/")
+    }
+
+    /// Plays the chord as the user's corrected MIDI has it; the standard voicing if there are no notes.
+    private func play(_ ev: ChordEvent) {
+        let notes = (model.confirmedMidi(item)?.notes ?? []).filter { ev.noteIds.contains($0.id) }
+        if notes.isEmpty, let p = ev.symbol.flatMap(StandardVoicing.pitches(symbol:)) { AudioEngine.shared.playChord(p); return }
+        AudioEngine.shared.playNotes(notes.map { n in
+            let st = max(n.startUs, ev.startUs)
+            return (pitch: n.pitch, start: Double(st - ev.startUs) / 1e6, duration: Double(min(n.endUs, ev.endUs) - st) / 1e6, velocity: n.velocity)
+        })
+    }
+}

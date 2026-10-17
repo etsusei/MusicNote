@@ -1,0 +1,119 @@
+import Foundation
+
+/// Model-driven analysis: the model reads evidence through tools, decides what to check next,
+/// reviews doubtful spots, and submits a bar-by-bar harmony. The operating manual below is a
+/// default way of working, not a fixed pipeline.
+public enum AutoAgent {
+    public static let defaultMaxToolCalls = 28
+    public static let defaultMaxSeconds = 900.0
+
+    public static let manual = """
+    你是 Musicnote 的和声分析员。用户已经选好原曲的一段区间，你要通过调用工具自己取证、比较、复核，最后用 submit_analysis
+    交付：按小节的和弦走向（每个和弦在第几小节第几拍）、哪些是经过/连接/替代/色彩和弦、以及少量需要用户亲耳确认的位置。
+    不是解释别人算好的结果：程序给的草稿和 Logic 的候选都只是参考，结论由你根据证据决定。
+
+    证据和它们的局限：
+    - Logic Chord ID（run_logic_chords）：直接读音频的候选和边界。不是真值，可能漏掉短和弦、分段不当；词表没有 9/11/13 等扩展音。
+    - MuScriptor 与 MT3 两路转录（run_transcription，只保留原声钢琴和电钢琴）：音符证据。两者一致只说明这个音存在，不说明它属于和弦；
+      单边出现的音可能是漏转也可能是误转。align_transcriptions 给出对齐结果。
+    - 人工校对 MIDI（若有）：用户亲手改过，是最可靠的音符证据。
+    - 已保存和声里标“人工命名”的和弦是用户确认过的，除非证据明确矛盾不要改；有分歧就放进 toConfirm 让用户判断。
+    - local_audio_check：某个窗口的音频音级能量和三路音符明细，用来复核具体的音。谐波会抬高五度、八度的能量，不能直接当作实际按下的音。
+
+    默认做法（常见情况照着走就够了；可以跳过、调换或回头再做，已有的有效结果直接复用，不要用同样参数重复调用）：
+    1. inspect_analysis：看选区、速度网格、小节线、已有的证据和人工数据。
+    2. run_logic_chords（原曲，四分拍点）拿到基础候选。
+    3. 没有转录结果时对钢琴分轨各跑一次 MT3 和 MuScriptor，再 align_transcriptions。
+    4. 按乐句（每次最多 8 小节）调用 bar_evidence，把各路证据放在一起读。需要时可用 harmony_draft 看程序的分组草稿。
+    5. 形成和弦走向：和弦卡在拍子上，通常一个和弦占一小节或半小节；经过和弦只在音确实变了的时候才占四分或八分；
+       反拍按下并延续过下一拍的和弦算提前进入；伴奏节奏型反复按同一个和弦只算一个；旋律音不要当成和弦音，也不要简单删掉最高音或短音。
+       名字可以带 Logic 没有的扩展音（如 Fm9、A♭maj7(♯11)），也可以新增 Logic 没给出的短和弦。
+    6. 疑难复核：只在会影响结论的地方做，比如根音/性质分歧、疑似漏掉的短和弦、决定性质的那个音没有证据、重复乐句解释互相矛盾。
+       复核前先用 note_review 写下要分辨的问题和什么新证据会改变结论；复核后再用 note_review 记录观察到的证据、决定和停止原因。
+       同样的方法查不出新信息就换证据来源或停止，把仍不确定的位置放进 toConfirm，不要为了“确定”而硬猜。
+    7. submit_analysis 提交。之后用一两句中文结束。
+
+    规则：
+    - 只能分析这个选区；工具会拒绝选区外的请求。不要修改用户的 MIDI、笔记和标签（工具也不提供这种能力）。
+    - 你没有听到音频，不要说“听起来”“我听到”；可以说“音频音级能量显示”“两路转录都有”。
+    - 不要给“95% 正确”这类数字；confidence 只用 high / medium / low。
+    - 预算有限（约 \\(defaultMaxToolCalls) 次工具调用）。收到 BUDGET_EXCEEDED 时立刻提交当前最好的结果。
+
+    submit_analysis 的要求：
+    - chords 覆盖整个选区，从第 1 小节到最后，按时间顺序；bar 从 1 开始，beat 从 1 开始，后半拍写 .5（如 3.5）。
+    - symbol 用常见写法：Fm7、G7、G7/B、C7sus4、A♭maj7、Bdim7、Cm(add9)。
+    - role 用 backbone（主干）/ passing（经过）/ connecting（连接）/ substitute（替代）/ color（同一和声的色彩变化）。
+      reason 用一句白话说依据（例如“两路转录都有 B 和 F，低音 G，接到 Cm”）。
+    - toConfirm 最多 6 处，每处写清楚让用户听什么（例如“第 2 小节第 4 拍：低音是 B 还是 B♭？”）。
+    - summary 用一两句话说这段和声在做什么。key 写你判断的调和一句理由（可与用户设定不同）。
+    """
+
+    public static func toolSpecs() -> [[String: Any]] {
+        func obj(_ props: [String: Any], _ required: [String] = []) -> [String: Any] {
+            ["type": "object", "properties": props, "required": required, "additionalProperties": false]
+        }
+        let str: [String: Any] = ["type": "string"]
+        let int: [String: Any] = ["type": "integer"]
+        let num: [String: Any] = ["type": "number"]
+        let bool: [String: Any] = ["type": "boolean"]
+        return [
+            ["name": "inspect_analysis", "description": "查看选区、速度网格、小节线、调、已有证据和人工数据、预算。", "inputSchema": obj([:])],
+            ["name": "run_logic_chords", "description": "用本机 Logic Pro Chord ID 分析选区音频，得到和弦候选与边界（按小节.拍列出）。已有同参数结果时直接复用。",
+             "inputSchema": obj(["source": ["type": "string", "enum": ["original", "piano"], "description": "original=原曲混音，piano=已选钢琴分轨"],
+                                 "grid": ["type": "string", "enum": ["quarter", "eighth"]], "refresh": bool])],
+            ["name": "run_transcription", "description": "把选区转录成音符（只保留原声钢琴和电钢琴）。MT3 在 GPU 上约 20 秒，MuScriptor 约 20 秒。已有结果时复用。",
+             "inputSchema": obj(["engine": ["type": "string", "enum": ["mt3", "muscriptor"]],
+                                 "source": ["type": "string", "enum": ["piano", "original"]], "refresh": bool], ["engine"])],
+            ["name": "align_transcriptions", "description": "对齐 MuScriptor 与 MT3 的转录，给出整体偏移、共同/单边音数和每小节一致率。",
+             "inputSchema": obj(["source": ["type": "string", "enum": ["piano", "original"]]])],
+            ["name": "bar_evidence", "description": "按小节列出各路证据：Logic 候选、已保存和声、人工 MIDI 与双转录在每个八分位置按下的音（标出单边音）。一次最多 8 小节。",
+             "inputSchema": obj(["fromBar": int, "toBar": int], ["fromBar", "toBar"])],
+            ["name": "local_audio_check", "description": "复核一个窗口：音频音级能量（HPCP）加三路音符明细和 Logic 候选。用于确认具体的音。",
+             "inputSchema": obj(["bar": int, "beat": num, "endBar": int, "endBeat": num,
+                                 "source": ["type": "string", "enum": ["piano", "original"]]], ["bar", "beat", "endBar", "endBeat"])],
+            ["name": "harmony_draft", "description": "程序按拍子分组 + 模板命名的草稿（参考用，可以整体推翻）。",
+             "inputSchema": obj(["useUserMidi": bool])],
+            ["name": "note_review", "description": "记录一次定向复核：要分辨的问题、预期证据、操作、观察到的证据、决定、停止原因。复核前后各记一次即可。",
+             "inputSchema": obj(["question": str, "expectedEvidence": str, "operation": str, "observedEvidence": str,
+                                 "decision": str, "stopReason": str], ["question"])],
+            ["name": "submit_analysis", "description": "提交最终结果（保存为新的和声版本，不改动用户的 MIDI/笔记）。可在同一次分析中重复提交以覆盖。",
+             "inputSchema": obj([
+                 "summary": str,
+                 "key": obj(["tonic": str, "mode": ["type": "string", "enum": ["major", "minor"]], "name": str, "reason": str]),
+                 "chords": ["type": "array", "items": obj([
+                     "bar": int, "beat": num, "symbol": str,
+                     "role": ["type": "string", "enum": ["backbone", "passing", "connecting", "substitute", "color"]],
+                     "reason": str, "confidence": ["type": "string", "enum": ["high", "medium", "low"]],
+                 ], ["bar", "beat", "symbol", "role"])],
+                 "toConfirm": ["type": "array", "items": obj(["bar": int, "beat": num, "question": str], ["bar", "beat", "question"])],
+             ], ["summary", "chords"])],
+        ]
+    }
+
+    public static func task(songTitle: String, item: AnalysisItem, bars: Int) -> String {
+        "请分析《\(songTitle)》\(item.title) 这个选区（原曲 \(formatTime(us: item.trimStartUs))–\(formatTime(us: item.trimEndUs))，共 \(bars) 小节）。"
+            + "按操作手册自主取证和复核，最后用 submit_analysis 交付。"
+    }
+
+    /// Runs one analysis end to end. Throws only if the model couldn't be reached; a run that
+    /// ends without a submission is reported in the run record.
+    public static func run(toolbox: AutoToolbox, provider: CodexProvider, songTitle: String, model: String?, effort: String?,
+                           onDelta: @escaping @Sendable (String) -> Void = { _ in }) async {
+        do {
+            let item = try toolbox.item()
+            let bars = try toolbox.bars(item)
+            let final = try await provider.runAgent(systemPrompt: manual, task: task(songTitle: songTitle, item: item, bars: bars),
+                                                    tools: toolSpecs(), model: model, effort: effort,
+                                                    handler: { name, args in await toolbox.call(name, args) }, onDelta: onDelta)
+            if toolbox.run.harmonyRevision == nil {
+                toolbox.finish(status: .failed, message: final, error: "模型结束时没有提交结果")
+            } else {
+                toolbox.finish(status: .succeeded, message: final)
+            }
+        } catch is CancellationError {
+            toolbox.finish(status: .cancelled, message: "", error: "已取消")
+        } catch {
+            toolbox.finish(status: toolbox.run.harmonyRevision == nil ? .failed : .succeeded, message: "", error: error.localizedDescription)
+        }
+    }
+}

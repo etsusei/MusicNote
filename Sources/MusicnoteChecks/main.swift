@@ -10,6 +10,9 @@ enum TagTextCheck {
     }
 }
 
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "autoanalyze" {
+    exit(await runAutoAnalyze(Array(CommandLine.arguments.dropFirst())))
+}
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "skeleton" {
     exit(await runSkeleton(Array(CommandLine.arguments.dropFirst())))
 }
@@ -246,6 +249,27 @@ let twoFiveOne = [ev("1", "Dm7", 0, 2), ev("2", "G7", 2, 4), ev("3", "Cmaj7", 4,
 eq(KeyEstimator.candidates(events: twoFiveOne).first.map { "\($0.key.tonic)\($0.key.mode)" }, "0major", "ii-V-I in C")
 eq(Degrees.numberPattern(["F", "G", "Em", "Am"], key: cMajor), "4-5-3-6", "4536 numbering")
 eq(Degrees.numberPattern(["F♯m7", "G", "F♯"], key: KeySignature(tonic: 6, tonicName: "F♯", mode: .minor)), "6-♭7-6", "minor counted from relative major")
+
+// Logic Chord ID labels → app chord symbols (the vocabulary writes the seventh in parentheses).
+eq(["Fm(7)", "Csus4(7)", "G(7)/B", "Ab(maj7)", "Bdim(7)", "C", "Ebm"].map { LogicChordLabel.symbol($0) ?? "nil" },
+   ["Fm7", "C7sus4", "G7/B", "A♭maj7", "Bdim7", "C", "E♭m"], "Logic labels converted")
+check(LogicChordLabel.symbol("N") == nil, "no-chord label rejected")
+
+// Two transcriptions: B runs 30 ms late overall; offset removed, same pitches matched, extras kept as single-sided.
+func en(_ p: Int, _ s: Int64) -> EvidenceNote { EvidenceNote(pitch: p, startUs: s, endUs: s + 400_000, velocity: 80, instrument: "acoustic_piano") }
+let ta = [en(48, 0), en(55, 0), en(60, 500_000), en(64, 1_000_000)]
+let tb = [en(48, 30_000), en(55, 30_000), en(60, 530_000), en(67, 1_030_000)]
+let al = TranscriptionAligner.align(ta, tb, labels: ("muscriptor", "mt3"))
+eq(al.offsetUs, -30_000, "global offset estimated")
+eq([al.matched, al.onlyA, al.onlyB], [3, 1, 1], "matched / single-sided counts")
+eq(al.merged.filter { $0.support == "mt3" }.map(\.startUs), [1_000_000], "single-sided note shifted onto A's timing")
+
+// Bar/beat positions with a pickup: bar line at 0.5 s, 120 BPM 4/4.
+let pkg = BeatGrid(bpm: 120, beatOriginUs: 0, barAnchorUs: 500_000)
+eq([BarEvidence.position(500_000, grid: pkg).bar, BarEvidence.position(2_500_000, grid: pkg).bar], [1, 2], "bars counted from the anchor")
+eq(BarEvidence.position(1_750_000, grid: pkg).beat, 3.5, "off-beat half")
+eq(BarEvidence.usAt(bar: 2, beat: 3.5, grid: pkg), 3_750_000, "bar.beat back to time")
+eq(BarEvidence.barCount(grid: pkg, durationUs: 8_400_000), 4, "partial last bar counted")
 
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

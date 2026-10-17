@@ -187,3 +187,46 @@ func runSkeleton(_ args: [String]) async -> Int32 {
         return 0
     } catch { print("FAILED:", error.localizedDescription); return 1 }
 }
+
+/// `swift run MusicnoteChecks autoanalyze <dataRoot> <analysisId> [model] [effort]`: runs the
+/// model-driven analysis on a library (use a copy) and prints the trail and the result.
+func runAutoAnalyze(_ args: [String]) async -> Int32 {
+    guard args.count >= 3, let id = UUID(uuidString: args[2]) else { print("usage: autoanalyze DATA_ROOT ANALYSIS_ID [model] [effort]"); return 2 }
+    let paths = AppPaths(root: URL(fileURLWithPath: args[1]))
+    guard let store = try? Store(url: paths.database), let item = store.fetch(AnalysisItem.self, id: id) else { print("no item"); return 2 }
+    let root = FileManager.default.currentDirectoryPath
+    let tools = ToolSettings.defaults(projectRoot: root, separatorBinary: root + "/.build/debug/musicnote-separate")
+    let model = args.count > 3 ? args[3] : nil
+    let effort = args.count > 4 ? args[4] : "medium"
+    let run = AutoRun(analysisId: id, trimRevision: item.trimRevision, provider: "codex", model: model ?? "默认",
+                      maxToolCalls: AutoAgent.defaultMaxToolCalls, maxSeconds: AutoAgent.defaultMaxSeconds)
+    let box = AutoToolbox(store: store, paths: paths, tools: tools, item: item, run: run)
+    nonisolated(unsafe) var shown = 0
+    box.onUpdate = { r in
+        while shown < r.steps.count {
+            let s = r.steps[shown]; shown += 1
+            print(String(format: "[%5.1fs] %@ %@ → %@", s.seconds, s.ok ? "✓" : "✗", s.tool, s.arguments))
+            print("        " + s.summary.replacingOccurrences(of: "\n", with: "\n        ").prefix(500))
+        }
+    }
+    let provider = CodexProvider(binary: tools.codexBinary, sandboxDir: paths.chatSandbox, enableCodeMode: true)
+    let t0 = Date()
+    let song = store.fetch(Song.self, id: item.songId)?.title ?? ""
+    await AutoAgent.run(toolbox: box, provider: provider, songTitle: song, model: model, effort: effort)
+    let r = box.run
+    print("== status", r.status.rawValue, "tool calls", r.toolCalls, String(format: "%.0fs", Date().timeIntervalSince(t0)), r.error ?? "")
+    for rv in r.reviews { print("复核：", rv.question, "|", rv.observedEvidence, "|", rv.decision, "|", rv.stopReason) }
+    if let n = r.harmonyRevision, let h = store.all(HarmonyRevision.self, owner: id).first(where: { $0.revision == n }), let t = item.timing {
+        var g = t.grid; if g.barAnchorUs == nil { g.barAnchorUs = h.barAnchorUs }
+        print("summary:", h.auto?.summary ?? "")
+        if let k = h.auto?.key { print("key:", k.tonic, k.mode, k.modeName, k.reason) }
+        for e in h.events {
+            let p = BarEvidence.position(e.startUs, grid: g)
+            print(String(format: "  %d.%@  %-10@ %@ %@", p.bar, p.beat == p.beat.rounded() ? String(Int(p.beat)) : String(format: "%.1f", p.beat),
+                         e.symbol ?? "?", h.auto?.chordInfo[e.id]?.roleDisplay ?? "", h.auto?.chordInfo[e.id]?.reason ?? ""))
+        }
+        for c in h.auto?.toConfirm ?? [] { let p = BarEvidence.position(c.startUs, grid: g); print("  待确认 \(p.bar).\(p.beat):", c.question) }
+    }
+    print("final:", r.finalMessage)
+    return r.status == .succeeded ? 0 : 1
+}
