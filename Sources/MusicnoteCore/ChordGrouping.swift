@@ -14,6 +14,9 @@ import Foundation
 ///
 /// Parameters are a starting baseline to be tuned against labelled clips.
 public struct ChordGrouper: Sendable {
+    /// Bump when grouping changes so existing analyses can offer a re-run.
+    public static let algorithm = "window-dp-v2"
+
     public struct Params: Sendable {
         public var cellBeats = 1.0
         public var maxSegmentCells = 8
@@ -26,12 +29,14 @@ public struct ChordGrouper: Sendable {
         public var shortOffbeatWeight = 0.45
         public var restThreshold = 0.05
         public var minToneWeight = 0.06
+        public var attackMinNotes = 3
+        public var attackSnapBeats = 0.15
         public init() {}
 
         public var dictionary: [String: String] {
             ["cellBeats": "\(cellBeats)", "maxSegmentCells": "\(maxSegmentCells)", "changePenalty": "\(changePenalty)",
              "anticipationBeats": "\(anticipationBeats)", "bassWeight": "\(bassWeight)", "onsetWeight": "\(onsetWeight)",
-             "shortNoteBeats": "\(shortNoteBeats)", "shortOffbeatWeight": "\(shortOffbeatWeight)", "algorithm": "window-dp-v1"]
+             "shortNoteBeats": "\(shortNoteBeats)", "shortOffbeatWeight": "\(shortOffbeatWeight)", "algorithm": ChordGrouper.algorithm, "attackMinNotes": "\(attackMinNotes)"]
         }
     }
 
@@ -71,7 +76,8 @@ public struct ChordGrouper: Sendable {
                 if cells[c].isRest || total <= 0 { misfit = 0 } else {
                     let p = cells[c].weights.map { $0 / total }
                     let s = TemplateMatcher.score(p: p, bassPc: cells[c].bassPc, root: templates[t].root, quality: templates[t].quality)
-                    misfit = max(0, 1 - s) // a bass bonus can't make a fit better than perfect
+                    // Weighted by length in beats; a bass bonus can't make a fit better than perfect.
+                    misfit = max(0, 1 - s) * cells[c].beats
                 }
                 prefix[c + 1][t] = prefix[c][t] + misfit
             }
@@ -114,6 +120,7 @@ public struct ChordGrouper: Sendable {
         var bassPc: Int?
         var bassPitch: Int?
         var isRest: Bool
+        var beats: Double = 1
     }
 
     func cellBoundaries(notes: [MidiNote], grid: BeatGrid, durationUs: Int64) -> [Int64] {
@@ -142,7 +149,23 @@ public struct ChordGrouper: Sendable {
                 out[idx] = c.time
             }
         }
-        return out
+        // Block attacks (≥3 notes struck together) are boundaries wherever they fall, so
+        // fast passing chords between beats (e.g. chromatic A → A♭ → G planing on eighths)
+        // get their own cells. One near a beat replaces that beat instead of adding a sliver.
+        let snap = Int64(grid.beatUs * params.attackSnapBeats)
+        for c in clusters where c.count >= params.attackMinNotes && c.time > 0 && c.time < durationUs {
+            if let j = out.firstIndex(where: { abs($0 - c.time) <= snap }) {
+                if j > 0 && j < out.count - 1 { out[j] = c.time }
+            } else {
+                out.append(c.time)
+            }
+        }
+        out = Array(Set(out)).sorted()
+        // Drop slivers shorter than the cluster window.
+        var cleaned: [Int64] = []
+        for t in out { if let last = cleaned.last, t - last < params.clusterUs, t != out.last { continue }; cleaned.append(t) }
+        if cleaned.last != durationUs { cleaned[cleaned.count - 1] = durationUs }
+        return cleaned
     }
 
     struct Cluster { var time: Int64; var count: Int; var sustainEnd: Int64 }
@@ -181,7 +204,7 @@ public struct ChordGrouper: Sendable {
         }
         let total = w.reduce(0, +)
         return CellProfile(weights: w, bassPc: bass.map { Pitch.pc($0.pitch) }, bassPitch: bass?.pitch,
-                           isRest: total < params.restThreshold)
+                           isRest: total < params.restThreshold, beats: len / grid.beatUs)
     }
 
     func mergedProfile(_ cells: ArraySlice<CellProfile>) -> CellProfile {

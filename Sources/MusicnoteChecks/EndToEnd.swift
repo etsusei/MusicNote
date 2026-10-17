@@ -112,3 +112,20 @@ func runSeed(_ args: [String]) -> Int32 {
     print(ids.joined(separator: "\n"))
     return 0
 }
+
+/// `swift run MusicnoteChecks regroup <dataRoot>`: prints current vs. new grouping for every
+/// harmonic item, without saving anything.
+func runRegroup(_ args: [String]) -> Int32 {
+    guard args.count >= 2, let store = try? Store(url: AppPaths(root: URL(fileURLWithPath: args[1])).database) else { return 2 }
+    for item in store.all(AnalysisItem.self) where item.isHarmonic {
+        guard let t = item.timing, let r = item.confirmedMidiRevision,
+              let midi = store.all(MidiRevision.self, owner: item.id).first(where: { $0.revision == r }) else { continue }
+        let groups = ChordGrouper().group(notes: midi.notes, grid: t.grid, durationUs: item.durationUs, key: t.key)
+        print("== \(item.title) (\(t.bpm) BPM, \(t.key.display))")
+        for g in groups {
+            print(String(format: "  %7.3f–%7.3f  %5.2f拍  ", g.startUs.seconds, g.endUs.seconds, Double(g.endUs - g.startUs) / t.grid.beatUs),
+                  g.candidates.prefix(3).map(\.symbol).joined(separator: " / "))
+        }
+    }
+    return 0
+}

@@ -10,6 +10,9 @@ enum TagTextCheck {
     }
 }
 
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "regroup" {
+    exit(runRegroup(Array(CommandLine.arguments.dropFirst())))
+}
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "seed" {
     exit(runSeed(Array(CommandLine.arguments.dropFirst())))
 }
@@ -164,6 +167,18 @@ eq(PlaygroundOps.problems(proj).count, 0, "no problems")
 proj.sections[0].blocks.append(blocks[0])
 check(!PlaygroundOps.problems(proj).isEmpty, "overlap reported")
 eq(TagTextCheck.normalize("4–5–3–6"), TagTextCheck.normalize("4-5-3-6"), "tag normalize")
+
+// Fast chromatic planing between beats: A → A♭ → G on eighths at 140 BPM, then G held.
+let bm = KeySignature(tonic: 11, tonicName: "B", mode: .minor)
+let b140 = 60.0 / 140
+var plan: [MidiNote] = []
+func at(_ q: Double, _ len: Double, _ ps: [Int]) { for p in ps { plan.append(n(p, q * b140, (q + len) * b140 - 0.01)) } }
+at(0, 3, [54, 58, 61, 66])          // F♯ for three beats
+at(3.5, 0.5, [57, 61, 64, 73])      // A on the "and" of 4
+at(4, 0.5, [56, 60, 63, 72])        // A♭ (G♯) on beat 1
+at(4.5, 4.5, [55, 59, 62, 71])      // G from the "and" of 1
+let pl = ChordGrouper().group(notes: plan, grid: BeatGrid(bpm: 140, beatOriginUs: 0), durationUs: Int64(9 * b140 * 1e6), key: bm)
+eq(pl.map { $0.candidates.first?.symbol ?? "?" }, ["F♯", "A", "G♯", "G"], "chromatic planing keeps each half-beat chord")
 
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

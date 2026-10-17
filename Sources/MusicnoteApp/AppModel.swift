@@ -514,6 +514,7 @@ final class AppModel {
     func harmonyStale(_ item: AnalysisItem) -> [String] {
         guard let h = latestHarmony(item.id) else { return [] }
         var out = h.needsReview
+        if h.params["algorithm"] != ChordGrouper.algorithm { out.append("和弦分组算法已更新（能识别拍子之间的快速经过和弦），可重新分析") }
         if let r = item.confirmedMidiRevision, h.midiRevision != r { out.append("音符已修改，和弦与级数是旧版本") }
         if h.timingRevision != item.timingRevision { out.append("速度/拍点/拍号已修改，和弦分组待核对") }
         if let t = item.timing, t.key != h.key { out.append("调性已修改，级数需重算") }
