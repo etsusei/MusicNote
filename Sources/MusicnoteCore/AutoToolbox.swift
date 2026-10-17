@@ -435,8 +435,7 @@ public final class AutoToolbox: @unchecked Sendable {
 
         let midi = confirmedMidi(i)
         let pitched = (midi?.notes ?? []).filter { $0.instrument != "drums" && $0.instrument != "voice" }
-        let previous = latestHarmony()
-        let revNo = (run.harmonyRevision ?? ((previous?.revision ?? 0) + 1))
+        let revNo = 0 // assigned when the user adopts it
         var events: [ChordEvent] = []
         var infos: [String: AutoChordInfo] = [:]
         for (n, c) in sorted.enumerated() {
@@ -472,20 +471,15 @@ public final class AutoToolbox: @unchecked Sendable {
                                   params: ["algorithm": "agent", "source": "auto", "runId": run.id.uuidString,
                                            "barAnchorUs": String(g.barAnchorUs ?? 0), "barAnchorEstimated": i.timing?.barAnchorUs == nil ? "1" : "0"],
                                   namerVersion: "model \(run.provider) \(run.model)")
-        if let existing = store.all(HarmonyRevision.self, owner: analysisId).first(where: { $0.revision == revNo }) { rev.id = existing.id }
         rev.auto = AutoHarmony(runId: run.id, summary: a["summary"] as? String ?? "", chordInfo: infos, toConfirm: confirms, key: keyS, sources: sources.sorted())
-        try store.save(rev)
-        var cur = try item()
-        cur.harmonyRevision = revNo
-        cur.updatedAt = Date()
-        try store.save(cur)
-        run.harmonyRevision = revNo
+        // Kept with the run; the current harmony changes only when the user adopts it.
+        run.proposal = rev
         save()
         let lines = events.map { e -> String in
             let p = BarEvidence.position(e.startUs, grid: g)
             return "\(p.bar).\(BarEvidence.beatText(p.beat)) \(e.symbol ?? "?")（\(infos[e.id]?.roleDisplay ?? "")）"
         }
-        return "SAVED 和声版本 r\(revNo)：\(events.count) 个和弦，\(confirms.count) 处待确认。\n" + lines.joined(separator: "\n")
-            + "\n如果还要修改，可以再次调用 submit_analysis 覆盖本次版本；否则用一两句话结束。"
+        return "SAVED（待用户采用）：\(events.count) 个和弦，\(confirms.count) 处待确认。用户点“采用”后才会替换当前和声。\n" + lines.joined(separator: "\n")
+            + "\n如果还要修改，可以再次调用 submit_analysis 覆盖本次结果；否则用一两句话结束。"
     }
 }

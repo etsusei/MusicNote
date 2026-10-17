@@ -35,6 +35,12 @@ struct NotesStage: View {
     var item: AnalysisItem
     @AppStorage("cardStandard") private var standardAll = false
     @ViewState private var playgroundSend: PlaygroundSendRequest?
+    @ViewState private var confirmRegroup = false
+
+    /// Re-grouping replaces an adopted model result as the current harmony, so ask first.
+    private func regroup() {
+        if model.latestHarmony(item.id)?.params["algorithm"] == "agent" { confirmRegroup = true } else { model.runHarmony(item.id) }
+    }
 
     var body: some View {
         let _ = model.dataVersion
@@ -49,7 +55,7 @@ struct NotesStage: View {
                             ForEach(stale, id: \.self) { Label($0, systemImage: "exclamationmark.triangle").font(.caption12).foregroundStyle(Theme.warning) }
                             HStack {
                                 if item.isHarmonic {
-                                    Button("重新分析和声") { model.runHarmony(item.id) }.buttonStyle(SecondaryButtonStyle(compact: true))
+                                    Button("重新分析和声") { regroup() }.buttonStyle(SecondaryButtonStyle(compact: true))
                                     Button("只重算级数") { model.recomputeDegrees(item.id) }.buttonStyle(SecondaryButtonStyle(compact: true))
                                 }
                                 Text("重算只替换派生结果，不会改你的笔记和手动标签。").font(.caption12).foregroundStyle(Theme.textSecondary)
@@ -81,6 +87,12 @@ struct NotesStage: View {
         }
         .defaultScrollAnchor(.top)
         .sheet(item: $playgroundSend) { req in PlaygroundSendSheet(request: req).environment(model) }
+        .confirmationDialog("当前和弦用的是模型分析的结果", isPresented: $confirmRegroup) {
+            Button("用程序重新分组") { model.runHarmony(item.id) }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("程序会重新分组并替换下面的完整进行。模型的结果不会丢，在上面的“模型自主分析”里随时可以再采用。")
+        }
     }
 
     /// Key the chords themselves point to, when it differs clearly from the one set.

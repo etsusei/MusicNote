@@ -31,7 +31,7 @@ public enum AutoAgent {
     6. 疑难复核：只在会影响结论的地方做，比如根音/性质分歧、疑似漏掉的短和弦、决定性质的那个音没有证据、重复乐句解释互相矛盾。
        复核前先用 note_review 写下要分辨的问题和什么新证据会改变结论；复核后再用 note_review 记录观察到的证据、决定和停止原因。
        同样的方法查不出新信息就换证据来源或停止，把仍不确定的位置放进 toConfirm，不要为了“确定”而硬猜。
-    7. submit_analysis 提交。之后用一两句中文结束。
+    7. submit_analysis 提交（结果先等用户采用，再替换当前和声）。之后用一两句中文结束，不要提版本号。
 
     规则：
     - 只能分析这个选区；工具会拒绝选区外的请求。不要修改用户的 MIDI、笔记和标签（工具也不提供这种能力）。
@@ -76,7 +76,7 @@ public enum AutoAgent {
             ["name": "note_review", "description": "记录一次定向复核：要分辨的问题、预期证据、操作、观察到的证据、决定、停止原因。复核前后各记一次即可。",
              "inputSchema": obj(["question": str, "expectedEvidence": str, "operation": str, "observedEvidence": str,
                                  "decision": str, "stopReason": str], ["question"])],
-            ["name": "submit_analysis", "description": "提交最终结果（保存为新的和声版本，不改动用户的 MIDI/笔记）。可在同一次分析中重复提交以覆盖。",
+            ["name": "submit_analysis", "description": "提交最终结果（保存为待用户采用的结果；用户采用后才替换当前和声，不改动用户的 MIDI/笔记）。可在同一次分析中重复提交以覆盖。",
              "inputSchema": obj([
                  "summary": str,
                  "key": obj(["tonic": str, "mode": ["type": "string", "enum": ["major", "minor"]], "name": str, "reason": str]),
@@ -106,7 +106,7 @@ public enum AutoAgent {
             let final = try await provider.runAgent(systemPrompt: manual, task: task(songTitle: songTitle, item: item, bars: bars),
                                                     tools: toolSpecs(), model: model, effort: effort, scratchDir: scratch,
                                                     handler: { name, args in await toolbox.call(name, args) }, onDelta: onDelta)
-            if toolbox.run.harmonyRevision == nil {
+            if !toolbox.run.submitted {
                 toolbox.finish(status: .failed, message: final, error: "模型结束时没有提交结果")
             } else {
                 toolbox.finish(status: .succeeded, message: final)
@@ -114,7 +114,7 @@ public enum AutoAgent {
         } catch is CancellationError {
             toolbox.finish(status: .cancelled, message: "", error: "已取消")
         } catch {
-            toolbox.finish(status: toolbox.run.harmonyRevision == nil ? .failed : .succeeded, message: "", error: error.localizedDescription)
+            toolbox.finish(status: toolbox.run.submitted ? .succeeded : .failed, message: "", error: error.localizedDescription)
         }
     }
 }

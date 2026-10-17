@@ -220,7 +220,7 @@ func runAutoAnalyze(_ rawArgs: [String]) async -> Int32 {
     let r = box.run
     print("== status", r.status.rawValue, "tool calls", r.toolCalls, String(format: "%.0fs", Date().timeIntervalSince(t0)), r.error ?? "")
     for rv in r.reviews { print("复核：", rv.question, "|", rv.observedEvidence, "|", rv.decision, "|", rv.stopReason) }
-    if let n = r.harmonyRevision, let h = store.all(HarmonyRevision.self, owner: id).first(where: { $0.revision == n }), let t = item.timing {
+    if let h = r.result(in: store), let t = item.timing {
         var g = t.grid; if g.barAnchorUs == nil { g.barAnchorUs = h.barAnchorUs }
         print("summary:", h.auto?.summary ?? "")
         if let k = h.auto?.key { print("key:", k.tonic, k.mode, k.modeName, k.reason) }
@@ -257,4 +257,16 @@ func runVoicings(_ args: [String]) -> Int32 {
     }
     print("\(h.events.count) chords, \(fallback) fall back to standard")
     return 0
+}
+
+/// Adopts the latest model result as the current harmony (same as the app's "采用这个结果").
+func runAdopt(_ args: [String]) -> Int32 {
+    guard args.count >= 3, let store = try? Store(url: AppPaths(root: URL(fileURLWithPath: args[1])).database),
+          let id = UUID(uuidString: args[2]),
+          let run = store.all(AutoRun.self, owner: id).filter(\.submitted).max(by: { $0.startedAt < $1.startedAt }) else { return 2 }
+    do {
+        let h = try AutoAdoption.adopt(run, store: store)
+        print("adopted run \(run.id) as r\(h.revision):", h.events.compactMap(\.symbol).joined(separator: " "))
+        return 0
+    } catch { print(error.localizedDescription); return 1 }
 }

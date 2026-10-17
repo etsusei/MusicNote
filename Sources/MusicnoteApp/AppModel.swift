@@ -521,7 +521,10 @@ final class AppModel {
     func harmonyStale(_ item: AnalysisItem) -> [String] {
         guard let h = latestHarmony(item.id) else { return [] }
         var out = h.needsReview
-        if h.params["algorithm"] != ChordGrouper.algorithm { out.append("和弦分组算法已更新（能识别拍子之间的快速经过和弦），可重新分析") }
+        // An adopted model result isn't the grouping algorithm's output, so a newer algorithm says nothing about it.
+        if h.params["algorithm"] != ChordGrouper.algorithm && h.params["algorithm"] != "agent" {
+            out.append("和弦分组算法已更新（能识别拍子之间的快速经过和弦），可重新分析")
+        }
         if let r = item.confirmedMidiRevision, h.midiRevision != r { out.append("音符已修改，和弦与级数是旧版本") }
         if h.timingRevision != item.timingRevision { out.append("速度/拍点/拍号已修改，和弦分组待核对") }
         if let t = item.timing, t.key != h.key { out.append("调性已修改，级数需重算") }
@@ -537,7 +540,7 @@ final class AppModel {
         store.all(Skeleton.self, owner: itemId).max { $0.createdAt < $1.createdAt }
     }
 
-    private func autoSkeleton(_ itemId: UUID) {
+    func autoSkeleton(_ itemId: UUID) {
         let pid = settings.defaultProvider
         if providerStatus[pid]?.state == .connected { generateSkeleton(itemId) }
     }
@@ -755,16 +758,21 @@ extension AppModel {
 
     func cancelAutoAnalysis(_ itemId: UUID) { autoTasks[itemId]?.cancel() }
 
-    /// Makes the revision before the latest one current again, as a new revision (nothing deleted).
-    func restorePreviousHarmony(_ itemId: UUID) {
-        let revs = store.all(HarmonyRevision.self, owner: itemId).sorted { $0.revision < $1.revision }
-        guard revs.count >= 2, var prev = revs.dropLast().last, var item = item(itemId) else { return }
-        prev.id = UUID()
-        prev.revision = revs.last!.revision + 1
-        prev.createdAt = Date()
-        try? store.save(prev)
-        item.harmonyRevision = prev.revision
-        save(item)
+    /// Latest run that produced a result (a later failed or cancelled run doesn't hide it).
+    func latestAutoResultRun(_ itemId: UUID) -> AutoRun? {
+        store.all(AutoRun.self, owner: itemId).filter(\.submitted).max { $0.startedAt < $1.startedAt }
+    }
+
+    /// Makes the model's result the current harmony: chord cards, playback, chat and the
+    /// skeleton follow it. Saved as a new revision; older ones stay.
+    func adoptAutoResult(_ itemId: UUID, run: AutoRun) {
+        do {
+            try AutoAdoption.adopt(run, store: store)
+            reload()
+            autoSkeleton(itemId)
+        } catch {
+            alert = AppAlert(title: "无法采用", message: error.localizedDescription)
+        }
     }
 
     /// Plays the selection's audio (original mix or the selected stem) for [startUs, endUs).

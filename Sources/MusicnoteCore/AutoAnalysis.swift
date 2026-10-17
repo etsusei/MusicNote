@@ -108,7 +108,11 @@ public struct AutoRun: Record {
     public var toolCalls: Int
     public var maxToolCalls: Int
     public var maxSeconds: Double
+    /// Older runs saved straight into the harmony list; this is that revision number.
     public var harmonyRevision: Int?
+    /// The submitted result, waiting for the user to adopt it. Adopting copies it into a new
+    /// current harmony revision; until then the chords below stay as they were.
+    public var proposal: HarmonyRevision?
     public var finalMessage: String
     public var error: String?
     public init(analysisId: UUID, trimRevision: Int, provider: String, model: String, maxToolCalls: Int, maxSeconds: Double) {
@@ -118,6 +122,46 @@ public struct AutoRun: Record {
     }
     public var ownerId: UUID? { analysisId }
     public var sortKey: Double { startedAt.timeIntervalSince1970 }
+
+    public var submitted: Bool { proposal != nil || harmonyRevision != nil }
+
+    /// The result to show and adopt: the stored proposal, or (older runs) the revision it saved.
+    public func result(in store: Store) -> HarmonyRevision? {
+        if let proposal { return proposal }
+        guard let n = harmonyRevision else { return nil }
+        return store.all(HarmonyRevision.self, owner: analysisId).first { $0.revision == n && $0.auto?.runId == id }
+    }
+}
+
+public enum AutoAdoption {
+    /// Whether the current harmony is this run's result (possibly edited since adopting).
+    public static func isAdopted(_ run: AutoRun, current: HarmonyRevision?) -> Bool { current?.auto?.runId == run.id }
+
+    /// Copies the run's result into a new current harmony revision; nothing else is touched.
+    /// Degrees follow the key set now, in case it changed since the run.
+    @discardableResult
+    public static func adopt(_ run: AutoRun, store: Store) throws -> HarmonyRevision {
+        guard var rev = run.result(in: store), var item = store.fetch(AnalysisItem.self, id: run.analysisId) else {
+            throw WorkerError(code: "SOURCE_MISSING", message: "找不到这次分析的结果")
+        }
+        guard item.trimRevision == run.trimRevision else {
+            throw WorkerError(code: "REVISION_CONFLICT", message: "选区在分析之后改过，这个结果不再对应当前选区", retryable: false)
+        }
+        let latest = store.all(HarmonyRevision.self, owner: run.analysisId).map(\.revision).max() ?? 0
+        rev.id = UUID()
+        rev.revision = latest + 1
+        rev.createdAt = Date()
+        if let key = item.timing?.key {
+            rev.key = key
+            for i in rev.events.indices { rev.events[i].degree = rev.events[i].symbol.flatMap { Degrees.label(symbol: $0, key: key) } }
+        }
+        rev.params["adoptedFrom"] = run.id.uuidString
+        try store.save(rev)
+        item.harmonyRevision = rev.revision
+        item.updatedAt = Date()
+        try store.save(item)
+        return rev
+    }
 }
 
 public struct AutoChordInfo: Codable, Hashable, Sendable {

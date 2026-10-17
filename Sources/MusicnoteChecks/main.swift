@@ -16,6 +16,9 @@ if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "autoanalyze" {
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "skeleton" {
     exit(await runSkeleton(Array(CommandLine.arguments.dropFirst())))
 }
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "adopt" {
+    exit(runAdopt(Array(CommandLine.arguments.dropFirst())))
+}
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "voicings" {
     exit(runVoicings(Array(CommandLine.arguments.dropFirst())))
 }
@@ -313,6 +316,44 @@ do {
     check(badCall?["isError"] as? Bool == true, "wrong token cannot call tools")
     sock.stop()
 } catch { check(false, "socket: \(error)") }
+
+// Adopting a model result: the proposal waits in the run; adopting copies it to a new current
+// revision; a later program regroup un-adopts it without losing it; older runs (saved straight
+// into the harmony list) still resolve.
+do {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-adopt-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let st = try Store(url: dir.appendingPathComponent("t.sqlite"))
+    let src = SourceRef(fileName: "a.wav", pathHint: "/a.wav", bookmark: nil, bytes: 1, durationSec: 10, sampleRate: 44100, frames: 441000, fingerprint: "x")
+    var it = AnalysisItem(songId: UUID(), title: "t", source: src, trimStartUs: 0, trimEndUs: 8_000_000)
+    it.harmonyRevision = 1
+    try st.save(it)
+    func hrev(_ n: Int, _ algo: String) -> HarmonyRevision {
+        HarmonyRevision(analysisId: it.id, revision: n, midiRevision: 1, timingRevision: it.timingRevision, key: cMajor,
+                        events: [ev("a", "C", 0, 2)], params: ["algorithm": algo], namerVersion: "t")
+    }
+    try st.save(hrev(1, "meter"))
+    var run = AutoRun(analysisId: it.id, trimRevision: it.trimRevision, provider: "codex", model: "m", maxToolCalls: 1, maxSeconds: 1)
+    var prop = hrev(0, "agent"); prop.events = [ev("chord-01", "Dm7", 0, 1), ev("chord-02", "G7", 1, 2)]
+    prop.auto = AutoHarmony(runId: run.id, summary: "s", chordInfo: [:], toConfirm: [], key: nil, sources: [])
+    run.proposal = prop
+    try st.save(run)
+    let cur0 = st.all(HarmonyRevision.self, owner: it.id).max { $0.revision < $1.revision }
+    check(!AutoAdoption.isAdopted(run, current: cur0), "submitted result is not current until adopted")
+    let adopted = try AutoAdoption.adopt(run, store: st)
+    eq(adopted.revision, 2, "adopted as the next revision")
+    eq(st.fetch(AnalysisItem.self, id: it.id)?.harmonyRevision, 2, "item points at the adopted revision")
+    eq(adopted.events.compactMap(\.symbol), ["Dm7", "G7"], "chords copied as submitted")
+    check(AutoAdoption.isAdopted(run, current: adopted), "adopted")
+    try st.save(hrev(3, "meter"))
+    let cur3 = st.all(HarmonyRevision.self, owner: it.id).max { $0.revision < $1.revision }
+    check(!AutoAdoption.isAdopted(run, current: cur3) && run.result(in: st) != nil, "regroup un-adopts but the result stays")
+    var legacy = AutoRun(analysisId: it.id, trimRevision: it.trimRevision, provider: "codex", model: "m", maxToolCalls: 1, maxSeconds: 1)
+    var old = hrev(4, "agent"); old.auto = AutoHarmony(runId: legacy.id, summary: "", chordInfo: [:], toConfirm: [], key: nil, sources: [])
+    try st.save(old); legacy.harmonyRevision = 4
+    eq(legacy.result(in: st)?.revision, 4, "older runs resolve to the revision they saved")
+} catch { check(false, "adoption: \(error)") }
 
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

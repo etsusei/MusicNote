@@ -32,11 +32,13 @@ struct AutoAnalysisSection: View {
         let _ = model.dataVersion
         let running = model.autoTasks[item.id] != nil
         let run = model.latestAutoRun(item.id)
-        let harmony = model.latestHarmony(item.id)
+        let resultRun = model.latestAutoResultRun(item.id)
+        let result = resultRun?.result(in: model.store)
+        let current = model.latestHarmony(item.id)
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 SectionHeader(title: "模型自主分析",
-                              subtitle: "模型自己调用 Logic 和弦候选、MT3 + MuScriptor 双转录、局部音频复核，最后交付按小节的和弦走向。你的 MIDI、笔记和标签不会被改动，旧的和声版本都保留。")
+                              subtitle: "模型自己调用 Logic 和弦候选、MT3 + MuScriptor 双转录、局部音频复核，最后交付按小节的和弦走向。结果要你点“采用”才会替换下面的完整进行；你的 MIDI、笔记和标签不会被改动，旧的和声版本都保留。")
                 Spacer()
                 if running {
                     Button("停止") { model.cancelAutoAnalysis(item.id) }.buttonStyle(SecondaryButtonStyle(compact: true))
@@ -48,22 +50,60 @@ struct AutoAnalysisSection: View {
                     }
                     .labelsHidden().frame(width: 150)
                     .help("模型和推理强度沿用设置里给这个客户端选的")
-                    Button(harmony?.auto == nil ? "开始自主分析" : "重新自主分析") { model.startAutoAnalysis(item.id, provider: providerId) }
+                    Button(result == nil ? "开始自主分析" : "重新自主分析") { model.startAutoAnalysis(item.id, provider: providerId) }
                         .buttonStyle(PrimaryButtonStyle())
                         .disabled(!connected)
                         .help(connected ? "使用 \(providerName)（\(model.settings.providerModels[providerId] ?? "默认模型")）" : "需要先连接 \(providerName)")
                 }
             }
-            if let run, running || run.status != .succeeded || harmony?.auto?.runId != run.id {
+            if let run, running || run.id != resultRun?.id {
                 RunProgress(run: run, running: running)
             }
-            if let h = harmony, let auto = h.auto, let timing = item.timing {
-                AutoResult(item: item, harmony: h, auto: auto, timing: timing, run: run?.id == auto.runId ? run : model.store.fetch(AutoRun.self, id: auto.runId))
+            if let resultRun, let h = result, let auto = h.auto, let timing = item.timing {
+                AdoptBar(item: item, run: resultRun, result: h, current: current)
+                AutoResult(item: item, harmony: h, auto: auto, timing: timing, run: resultRun)
             }
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.accent.opacity(0.35)))
+    }
+}
+
+/// Whether the chords below are this result, and the one-click way to make them so.
+struct AdoptBar: View {
+    @Environment(AppModel.self) private var model
+    var item: AnalysisItem
+    var run: AutoRun
+    var result: HarmonyRevision
+    var current: HarmonyRevision?
+
+    var body: some View {
+        let adopted = AutoAdoption.isAdopted(run, current: current)
+        let stale = item.trimRevision != run.trimRevision
+        HStack(spacing: 10) {
+            Image(systemName: adopted ? "checkmark.seal.fill" : "tray.full").foregroundStyle(adopted ? Theme.success : Theme.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(adopted ? "已采用：下面的完整进行、和弦卡、播放、骨架和聊天都用这个结果" : "还没采用：下面的完整进行目前是\(currentText)")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(stale ? "选区在分析之后改过，这个结果不能再采用，请重新自主分析。"
+                     : adopted ? "在下面改和弦名会直接改在这个结果上；想换回程序分组可以点“重新分析和声”，这里的结果随时能再采用。"
+                     : "采用后会存成新的和声版本并重新生成骨架，旧版本都保留。")
+                    .font(.caption12).foregroundStyle(stale ? Theme.warning : Theme.textSecondary)
+            }
+            Spacer()
+            if !adopted && !stale {
+                Button("采用这个结果") { model.adoptAutoResult(item.id, run: run) }.buttonStyle(PrimaryButtonStyle())
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(adopted ? Theme.success.opacity(0.08) : Theme.accent.opacity(0.08)))
+    }
+
+    private var currentText: String {
+        guard let c = current else { return "空的" }
+        if c.params["algorithm"] == "agent" { return "另一次模型分析的结果（r\(c.revision)）" }
+        return "程序分组的结果（r\(c.revision)）"
     }
 }
 
@@ -167,13 +207,9 @@ struct AutoResult: View {
                 }
             }
             HStack {
-                Text("证据来源：" + auto.sources.joined(separator: "、") + " · 和声版本 r\(harmony.revision)")
+                Text("证据来源：" + auto.sources.joined(separator: "、") + " · \(run?.provider == "claude" ? "Claude Code" : "Codex") \(run?.model ?? "")")
                     .font(.caption12).foregroundStyle(Theme.textSecondary)
                 Spacer()
-                if model.store.all(HarmonyRevision.self, owner: item.id).count >= 2 {
-                    Button("恢复上一版和声") { model.restorePreviousHarmony(item.id) }.buttonStyle(.borderless).font(.caption12)
-                        .help("把上一个和声版本重新设为当前（作为新版本保存，什么都不删）")
-                }
             }
         }
     }
