@@ -39,7 +39,7 @@ extension NSAttributedString.Key {
 /// Read-only rich text: chords are underlined, hovering shows the chord card,
 /// clicking plays it. Supports selection-based highlight/bookmark actions.
 final class ChordTextView: NSTextView {
-    var onHoverChord: ((String, String?, NSRect) -> Void)?
+    var onHoverChord: ((String, String?, NSRange, NSRect) -> Void)?
     var onLeaveChord: (() -> Void)?
     var onClickChord: ((String, String?) -> Void)?
     var extraMenu: ((NSRange) -> [NSMenuItem])?
@@ -72,9 +72,14 @@ final class ChordTextView: NSTextView {
             NSCursor.pointingHand.set()
             if hovered != range, let lm = layoutManager, let tc = textContainer {
                 hovered = range
-                var rect = lm.boundingRect(forGlyphRange: lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: tc)
+                // First line only: a name that wraps would otherwise anchor to both lines' union.
+                var rect = NSRect.zero
+                lm.enumerateEnclosingRects(forGlyphRange: lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil),
+                                           withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0), in: tc) { r, stop in
+                    rect = r; stop.pointee = true
+                }
                 rect.origin.x += textContainerOrigin.x; rect.origin.y += textContainerOrigin.y
-                onHoverChord?(sym, ev, rect)
+                onHoverChord?(sym, ev, range, rect)
             }
         } else {
             if hovered != nil { hovered = nil; onLeaveChord?() }
@@ -118,6 +123,22 @@ struct RichTextView: NSViewRepresentable {
         var popover: NSPopover?
         var eventVoicings: ((String) -> ChordPreviewInput?)?
         var app: AppModel?
+        var shownRange: NSRange?
+        var onChord = false
+        var onCard = false
+        private var closeToken = 0
+
+        /// Closes after a short grace period unless the pointer is back on the chord or the card,
+        /// so moving from the name onto the card doesn't dismiss it.
+        func scheduleClose() {
+            closeToken += 1
+            let token = closeToken
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self, token == self.closeToken, !self.onChord, !self.onCard else { return }
+                self.popover?.close(); self.popover = nil; self.shownRange = nil
+            }
+        }
+        func cancelClose() { closeToken += 1 }
     }
 
     func makeNSView(context: Context) -> ChordTextView {
@@ -132,24 +153,51 @@ struct RichTextView: NSViewRepresentable {
         tv.textContainer?.widthTracksTextView = true
         tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let coord = context.coordinator
-        tv.onHoverChord = { [weak tv] sym, ev, rect in
+        tv.onHoverChord = { [weak tv] sym, ev, range, rect in
             guard let tv else { return }
+            coord.onChord = true
+            coord.cancelClose()
+            if coord.shownRange == range, coord.popover?.isShown == true { return }
             coord.popover?.close()
             let p = NSPopover()
             p.behavior = .semitransient
+            p.animates = false
             let input = ev.flatMap { coord.eventVoicings?($0) }
-            p.contentViewController = NSHostingController(rootView: ChordPreviewCard(symbol: sym, original: input?.notes, degree: input?.degree)
+            let host = NSHostingController(rootView: ChordPreviewCard(symbol: sym, original: input?.notes, degree: input?.degree)
+                .onHover { [weak coord] inside in
+                    guard let coord else { return }
+                    coord.onCard = inside
+                    if inside { coord.cancelClose() } else { coord.scheduleClose() }
+                }
                 .environment(coord.app!))
-            p.show(relativeTo: rect, of: tv, preferredEdge: .maxY)
+            // Size the card before showing it: AppKit keeps a popover on screen only for the size it
+            // knows at show time, and SwiftUI content measured later would spill past the edge.
+            let size = host.view.fittingSize
+            host.preferredContentSize = size
+            p.contentViewController = host
+            p.contentSize = size
+            // Anchor to the visible part of the name (it may be half scrolled out).
+            let anchor = rect.intersection(tv.visibleRect).isEmpty ? rect : rect.intersection(tv.visibleRect)
+            // Above the name when the screen has room, otherwise below. Flipped view: minY is the top edge.
+            var above = true
+            if let window = tv.window, let screen = window.screen ?? NSScreen.main {
+                let onScreen = window.convertToScreen(tv.convert(anchor, to: nil))
+                let room = screen.visibleFrame.maxY - onScreen.maxY
+                above = room >= size.height + 16 || room >= onScreen.minY - screen.visibleFrame.minY
+            }
+            let top: NSRectEdge = tv.isFlipped ? .minY : .maxY, bottom: NSRectEdge = tv.isFlipped ? .maxY : .minY
+            p.show(relativeTo: anchor, of: tv, preferredEdge: above ? top : bottom)
             coord.popover = p
+            coord.shownRange = range
         }
         tv.onLeaveChord = { [weak coord] in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { coord?.popover?.close() }
+            coord?.onChord = false
+            coord?.scheduleClose()
         }
         tv.onClickChord = { sym, ev in
-            if let ev, let input = coord.eventVoicings?(ev) {
-                AudioEngine.shared.playNotes(input.notes.map { (pitch: $0.pitch, start: $0.start, duration: $0.duration, velocity: 96) })
-            } else if let p = StandardVoicing.pitches(symbol: sym) { AudioEngine.shared.playChord(p) }
+            let standard = StandardVoicing.pitches(symbol: sym)
+            let played = ev.flatMap { coord.eventVoicings?($0) }.flatMap { PlayedVoicing.pitches(symbol: sym, notes: $0.notes) }
+            if let p = played ?? standard { AudioEngine.shared.playChord(p) }
         }
         return tv
     }
