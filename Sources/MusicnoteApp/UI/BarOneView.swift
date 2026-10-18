@@ -162,7 +162,7 @@ struct BarOneStage: View {
                 Button("先打开 MIDI 看看") { editingMidi = true }.buttonStyle(.borderless).font(.caption12)
                 Spacer()
             }
-            .padding(24)
+            .padding(.horizontal, 28).padding(.vertical, 24)
         }
     }
 }

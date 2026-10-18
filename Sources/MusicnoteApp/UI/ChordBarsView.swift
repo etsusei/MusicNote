@@ -108,7 +108,7 @@ struct BarProgressionView: View {
             .foregroundStyle(Theme.textSecondary.opacity(0.8))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
-            .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.borderSubtle, style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.controlBorder, style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
         }
         .buttonStyle(.plain).help("在最后加一个小节")
     }
@@ -196,8 +196,8 @@ struct BarProgressionView: View {
                     }
                     if let d = drag, d.moved, d.ghost.start < e, d.ghost.end > s {
                         let g0 = max(s, d.ghost.start), g1 = min(e, d.ghost.end)
-                        RoundedRectangle(cornerRadius: 5).fill(Theme.accent.opacity(0.25))
-                            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [4, 2])))
+                        RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.accent.opacity(0.14))
+                            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [4, 2])))
                             .overlay(alignment: .leading) {
                                 if d.ghost.start >= s { Text(harmony.events.first { $0.id == d.id }?.symbol ?? "").font(.system(size: 12, weight: .semibold)).padding(.leading, 4) }
                             }
@@ -212,8 +212,8 @@ struct BarProgressionView: View {
         }
         .padding(6)
         .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.background))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.borderSubtle))
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Theme.borderSubtle))
         // The name popover points at this bar's edge, under where the "+" or the chord was.
         .popover(isPresented: Binding(get: { popoverAt?.bar == bar && (renaming != nil || pendingAdd != nil) },
                                       set: { if !$0 { renaming = nil; pendingAdd = nil; popoverAt = nil } }),
@@ -265,12 +265,12 @@ struct BarProgressionView: View {
         }
         .padding(.horizontal, roomy ? 4 : 2)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 5).fill(isPlaying ? Theme.accent : (strong ? Theme.noteFill.opacity(continued ? 0.45 : 1) : Theme.surface)))
-        .shadow(color: isPlaying ? Theme.accent.opacity(0.5) : .clear, radius: 6)
-        .overlay(RoundedRectangle(cornerRadius: 5).stroke(isSelected ? Theme.accent : (isHovered ? Theme.accent.opacity(0.6) : (confirm ? Theme.warning : Theme.noteFill)),
-                                                         style: StrokeStyle(lineWidth: isSelected ? 2.5 : (isHovered ? 1.5 : (confirm ? 1.5 : 1)),
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(isPlaying ? Theme.accent : (strong ? Theme.chipFill.opacity(continued ? 0.5 : 1) : Theme.surface)))
+        .shadow(color: isPlaying ? Theme.accent.opacity(0.35) : .clear, radius: 6, y: 2)
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(isPlaying ? .clear : (isSelected ? Theme.accent : (isHovered ? Theme.accent.opacity(0.5) : (confirm ? Theme.warning : Theme.chipLine))),
+                                                         style: StrokeStyle(lineWidth: isSelected ? 2 : (isHovered || confirm ? 1.5 : 1),
                                                                             dash: strong || isSelected || isHovered ? [] : [3, 2])))
-        .foregroundStyle(isPlaying ? Theme.onAccent : (strong ? Theme.onNote : Theme.textPrimary))
+        .foregroundStyle(isPlaying ? Theme.onAccent : Theme.chipText.opacity(continued ? 0.6 : 1))
         .animation(.easeOut(duration: 0.12), value: isPlaying)
         .help("\(ev.symbol ?? "?")（\(info?.roleDisplay ?? "")）：\(info?.reason ?? "")" + (pushed ? "\n提前一个八分音符按下（按它进入的拍子显示）" : ""))
         if editable {

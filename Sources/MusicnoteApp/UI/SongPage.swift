@@ -10,15 +10,20 @@ struct SongPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                HStack(alignment: .top, spacing: 16) {
-                    CoverView(song: song, size: 120)
+                HStack(alignment: .center, spacing: 20) {
+                    CoverView(song: song, size: 112)
+                        .shadow(color: .black.opacity(0.10), radius: 10, y: 4)
                         .onTapGesture { pickCover() }
                         .help("点击从图片导入封面")
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 6) {
                         TextField("歌名", text: $song.title).font(.pageTitle).textFieldStyle(.plain)
-                        TextField("歌手", text: $song.artist).textFieldStyle(.roundedBorder).frame(maxWidth: 320)
-                        TextField("专辑", text: $song.album).textFieldStyle(.roundedBorder).frame(maxWidth: 320)
-                        TagEditor(tags: $song.tags, placeholder: "添加歌曲标签")
+                        HStack(spacing: 6) {
+                            TextField("歌手", text: $song.artist).textFieldStyle(.plain).fixedSize()
+                            Text("·").foregroundStyle(Theme.textSecondary)
+                            TextField("专辑", text: $song.album).textFieldStyle(.plain).fixedSize()
+                        }
+                        .font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
+                        TagEditor(tags: $song.tags, placeholder: "＋ 添加标签").padding(.top, 4)
                     }
                 }
                 .onChange(of: song) { _, s in model.save(s) }
@@ -58,7 +63,7 @@ struct SongPage: View {
                     }.buttonStyle(.plain)
                 }
             }
-            .padding(24)
+            .padding(28)
         }
     }
 

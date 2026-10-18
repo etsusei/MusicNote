@@ -137,9 +137,9 @@ struct Legend: View {
     }
     private func chip(_ t: String, fill: Bool) -> some View {
         Text(t).padding(.horizontal, 6).padding(.vertical, 2)
-            .background(RoundedRectangle(cornerRadius: 4).fill(fill ? Theme.noteFill : .clear))
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.noteFill, style: StrokeStyle(lineWidth: 1, dash: fill ? [] : [3, 2])))
-            .foregroundStyle(fill ? Theme.onNote : Theme.textPrimary)
+            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(fill ? Theme.chipFill : .clear))
+            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(Theme.chipLine, style: StrokeStyle(lineWidth: 1, dash: fill ? [] : [3, 2])))
+            .foregroundStyle(fill ? Theme.chipText : Theme.textPrimary)
     }
 }
 

@@ -10,8 +10,17 @@ struct SidebarView: View {
         @Bindable var model = model
         VStack(spacing: 0) {
             VStack(spacing: 8) {
-                HStack {
-                    TextField("搜索歌名、歌手、笔记、标签", text: $model.search).textFieldStyle(.roundedBorder)
+                HStack(spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                        TextField("搜索歌名、歌手、笔记、标签", text: $model.search).textFieldStyle(.plain).font(.control13)
+                        if !model.search.isEmpty {
+                            Button { model.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textSecondary) }.buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 8).frame(height: 28)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Theme.borderSubtle))
                     Menu {
                         Picker("排序", selection: $model.sortMode) { ForEach(SortMode.allCases, id: \.self) { Text($0.rawValue) } }
                     } label: { Image(systemName: "arrow.up.arrow.down") }.menuStyle(.borderlessButton).frame(width: 24).help("排序")
@@ -31,7 +40,7 @@ struct SidebarView: View {
                     }
                 }
             }
-            .padding(12)
+            .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 4)
 
             List {
                 Section("歌曲") {
@@ -71,7 +80,7 @@ struct SidebarView: View {
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
         }
-        .background(Theme.surface)
+        .background(Theme.sidebar)
     }
 }
 
@@ -102,10 +111,10 @@ struct SongRow: View {
         HStack(spacing: 8) {
             Button(action: toggle) { Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 10)) }
                 .buttonStyle(.borderless).frame(width: 12)
-            CoverView(song: song, size: 32)
+            CoverView(song: song, size: 30)
             VStack(alignment: .leading, spacing: 1) {
                 Text(song.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text(song.artist.isEmpty ? "\(model.items(of: song.id).count) 个片段" : song.artist).font(.caption12)
+                Text(song.artist.isEmpty ? "\(model.items(of: song.id).count) 个片段" : song.artist).font(.system(size: 11))
                     .foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
         }
@@ -138,10 +147,31 @@ struct CoverView: View {
             if let f = song.coverFile, let img = NSImage(contentsOf: model.paths.covers.appendingPathComponent(f)) {
                 Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
             } else {
-                ZStack { Theme.selectionFill; Image(systemName: "music.note").foregroundStyle(Theme.accent) }
+                GeneratedCover(seed: song.title, size: size)
             }
         }
-        .frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: 4))
+        .frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+    }
+}
+
+/// A quiet two-tone tile for songs without artwork: hue from the title, initial on top.
+struct GeneratedCover: View {
+    @Environment(\.colorScheme) private var scheme
+    var seed: String
+    var size: CGFloat
+    var body: some View {
+        // FNV-1a, so similar titles still land on different hues.
+        let hash = seed.unicodeScalars.reduce(UInt32(2_166_136_261)) { ($0 ^ $1.value) &* 16_777_619 }
+        let h = Double(hash % 360) / 360
+        let dark = scheme == .dark
+        let a = Color(hue: h, saturation: dark ? 0.35 : 0.22, brightness: dark ? 0.32 : 0.94)
+        let b = Color(hue: (h + 0.08).truncatingRemainder(dividingBy: 1), saturation: dark ? 0.45 : 0.32, brightness: dark ? 0.24 : 0.86)
+        let initial = seed.trimmingCharacters(in: .whitespaces).first.map { String($0).uppercased() } ?? "♪"
+        ZStack {
+            LinearGradient(colors: [a, b], startPoint: .topLeading, endPoint: .bottomTrailing)
+            Text(initial).font(.system(size: size * 0.42, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color(hue: h, saturation: dark ? 0.3 : 0.55, brightness: dark ? 0.9 : 0.42))
+        }
     }
 }
 
@@ -175,7 +205,7 @@ private struct RouteRow: ViewModifier {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture { model.route = route }
-            .listRowBackground(RoundedRectangle(cornerRadius: 6).fill(model.route == route ? Theme.selectionFill : Color.clear).padding(.horizontal, 6))
+            .listRowBackground(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(model.route == route ? Theme.selectionFill : Color.clear).padding(.horizontal, 8))
     }
 }
 

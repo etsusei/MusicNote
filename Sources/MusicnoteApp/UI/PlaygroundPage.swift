@@ -343,15 +343,15 @@ struct SectionLane: View {
     private func block(_ b: ChordBlock, conflict: Bool) -> some View {
         let selected = selectedBlock == b.id
         return ZStack(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 6).fill(selected ? Theme.accent : Theme.noteFill)
+            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(selected ? Theme.accent : Theme.chipFill)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(conflict ? Theme.error : .clear, lineWidth: 2))
             VStack(alignment: .leading, spacing: 1) {
                 Text(b.symbol).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Text(b.voicingMode == .original ? "原曲" : "标准").font(.system(size: 9))
                 if b.simplified { Text("简化").font(.system(size: 9)) }
             }
-            .foregroundStyle(selected ? Theme.onAccent : Theme.onNote).padding(.horizontal, 6)
-            HStack { Spacer(); Rectangle().fill(Color.white.opacity(0.35)).frame(width: 6)
+            .foregroundStyle(selected ? Theme.onAccent : Theme.chipText).padding(.horizontal, 6)
+            HStack { Spacer(); Rectangle().fill(Theme.chipLine).frame(width: 4)
                 .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
                 .gesture(DragGesture().onChanged { v in resize(b, v.translation.width) }.onEnded { _ in dragStart[b.id] = nil })
             }

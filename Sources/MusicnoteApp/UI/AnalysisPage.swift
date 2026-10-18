@@ -41,7 +41,7 @@ struct AnalysisPage: View {
         if let item = model.item(itemId) {
             VStack(spacing: 0) {
                 AnalysisHeader(item: item)
-                Divider()
+                if item.state != .ready { Divider().opacity(0.6) }
                 Group {
                     switch item.state {
                     case .draft, .detecting:
@@ -86,16 +86,21 @@ struct AnalysisHeader: View {
     @ViewState private var title = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                TextField("片段标题", text: $title).font(.pageTitle).textFieldStyle(.plain)
-                    .onSubmit { var i = item; i.title = title; model.save(i) }
-                    .onAppear { title = item.title }
-                Spacer()
-                if let song = model.song(item.songId) {
-                    Button(song.title) { model.route = .song(song.id) }.buttonStyle(.borderless).font(.control13)
+        VStack(alignment: .leading, spacing: 6) {
+            if let song = model.song(item.songId) {
+                Button { model.route = .song(song.id) } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left").font(.system(size: 9, weight: .semibold))
+                        Text(song.title).lineLimit(1)
+                    }
+                    .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain).help("回到这首歌")
             }
+            TextField("片段标题", text: $title).font(.pageTitle).textFieldStyle(.plain)
+                .onSubmit { var i = item; i.title = title; model.save(i) }
+                .onAppear { title = item.title }
             HStack(spacing: 10) {
                 Text("\(item.source.fileName) · \(formatTime(us: item.trimStartUs))–\(formatTime(us: item.trimEndUs))（\(String(format: "%.3f", item.durationUs.seconds)) 秒）")
                     .font(.caption12).foregroundStyle(Theme.textSecondary)
@@ -104,7 +109,9 @@ struct AnalysisHeader: View {
                     Button("重新选择原曲…") { model.relinkSource(item.id) }.buttonStyle(.borderless).font(.caption12)
                 }
                 Spacer()
-                StepIndicator(step: item.state.step, harmonic: item.selectedStem.map(\.isHarmonic) ?? true)
+                if item.state != .ready {
+                    StepIndicator(step: item.state.step, harmonic: item.selectedStem.map(\.isHarmonic) ?? true)
+                }
             }
             if let job = model.jobs[item.id] {
                 HStack(spacing: 8) {
@@ -123,7 +130,7 @@ struct AnalysisHeader: View {
                 }
             }
         }
-        .padding(.horizontal, 24).padding(.vertical, 14)
+        .padding(.horizontal, 28).padding(.top, 18).padding(.bottom, 14)
     }
 
     private func retry(_ job: Job) {
@@ -254,7 +261,7 @@ struct SelectionStage: View {
             }
             Spacer()
         }
-        .padding(24)
+        .padding(.horizontal, 28).padding(.vertical, 24)
         .onAppear { setup(); model.detectSongGrid(item.id) }
         .onChange(of: source.buffer != nil) { _, _ in setup() }
         .onChange(of: clickOn) { _, _ in updateClick() }
@@ -486,7 +493,7 @@ struct StemStage: View {
             }
             Spacer()
         }
-        .padding(24)
+        .padding(.horizontal, 28).padding(.vertical, 24)
         .onAppear { chosen = Set(item.selectedStems); load() }
         .onReceive(NotificationCenter.default.publisher(for: .togglePlayback)) { _ in toggle() }
     }

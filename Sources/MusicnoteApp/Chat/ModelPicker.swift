@@ -83,8 +83,8 @@ struct ModelEffortPicker: View {
                 }
                 Divider()
                 Button("刷新模型列表") { Task { await model.refreshProviders() } }
-            } label: { Text(current?.name ?? "选择模型").lineLimit(1) }
-                .menuStyle(.borderlessButton).fixedSize()
+            } label: { Text(current?.name ?? "选择模型").lineLimit(1).truncationMode(.tail) }
+                .menuStyle(.borderlessButton).frame(maxWidth: 150, alignment: .leading)
             if let efforts = current?.efforts, !efforts.isEmpty {
                 Menu {
                     Button { effort = nil } label: {

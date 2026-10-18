@@ -71,7 +71,7 @@ struct InspirationButton: View {
                     .foregroundStyle(Theme.onAccent)
                     .frame(width: 44, height: 44)
                     .background(Circle().fill(Theme.accent))
-                    .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+                    .shadow(color: Theme.accent.opacity(0.35), radius: 10, y: 4)
                 if n > 0 {
                     Text("\(n)").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.accent)
                         .padding(.horizontal, 5).padding(.vertical, 1)
@@ -82,6 +82,8 @@ struct InspirationButton: View {
         .buttonStyle(.plain)
         .help("灵感进行：把听到喜欢的和弦拖进来拼成进行")
         .padding(18)
+        // Playground has its own bottom bar; sit above it.
+        .padding(.bottom, { if case .playground = model.route { return 52 } else { return 0 } }())
     }
 }
 
@@ -294,8 +296,8 @@ struct InspirationBarsView: View {
         }
         .padding(5)
         .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.borderSubtle))
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Theme.borderSubtle))
         .popover(isPresented: Binding(get: { naming?.bar == bar }, set: { if !$0 { naming = nil } }),
                  attachmentAnchor: .point(UnitPoint(x: naming?.bar == bar ? naming!.x : 0.5, y: 1)), arrowEdge: .bottom) { namePopover }
     }
@@ -304,8 +306,8 @@ struct InspirationBarsView: View {
         let g: (Double, Double)? = dropGhost.map { ($0.start, $0.start + $0.length) } ?? (drag?.moved == true ? drag?.ghost : nil)
         if let g, g.0 < e, g.1 > s {
             let a = max(s, g.0), b = min(e, g.1)
-            RoundedRectangle(cornerRadius: 5).fill(Theme.accent.opacity(0.25))
-                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [4, 2])))
+            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.accent.opacity(0.14))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [4, 2])))
                 .frame(width: max(6, x(b) - x(a) - 2), height: height)
                 .offset(x: x(a))
                 .allowsHitTesting(false)
@@ -339,10 +341,10 @@ struct InspirationBarsView: View {
             .font(.system(size: compact ? 11 : 12, weight: .semibold)).lineLimit(2).minimumScaleFactor(0.7)
             .padding(.horizontal, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 5).fill(isSounding ? Theme.accent : Theme.noteFill.opacity(continued ? 0.45 : 1)))
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(isSelected ? Theme.accent : (isHovered ? Theme.accent.opacity(0.6) : Theme.noteFill), lineWidth: isSelected ? 2.5 : (isHovered ? 1.5 : 1)))
-            .shadow(color: isSounding ? Theme.accent.opacity(0.5) : .clear, radius: 6)
-            .foregroundStyle(isSounding ? Theme.onAccent : Theme.onNote)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(isSounding ? Theme.accent : Theme.chipFill.opacity(continued ? 0.5 : 1)))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(isSounding ? .clear : (isSelected ? Theme.accent : (isHovered ? Theme.accent.opacity(0.5) : Theme.chipLine)), lineWidth: isSelected ? 2 : (isHovered ? 1.5 : 1)))
+            .shadow(color: isSounding ? Theme.accent.opacity(0.35) : .clear, radius: 6, y: 2)
+            .foregroundStyle(isSounding ? Theme.onAccent : Theme.chipText.opacity(continued ? 0.6 : 1))
             .help((tooltip?(c) ?? displayName?(c) ?? c.symbol) + (c.sourceLabel.map { "\n来自 \($0)" } ?? ""))
         if editable {
             label.contentShape(Rectangle())

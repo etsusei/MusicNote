@@ -33,14 +33,15 @@ struct ChatPanel: View {
                         Image(systemName: "list.bullet")
                         Text(chat.current?.title ?? "全局聊天").font(.system(size: 13, weight: .semibold)).lineLimit(1)
                     }
-                }.buttonStyle(.borderless).help("会话列表")
+                    .foregroundStyle(Theme.textPrimary).contentShape(Rectangle())
+                }.buttonStyle(.plain).help("会话列表")
                 Spacer()
                 Button { chat.newConversation(); showList = false } label: { Image(systemName: "square.and.pencil") }
                     .buttonStyle(.borderless).help("新会话")
             }
             statusRow
         }
-        .padding(10)
+        .padding(.horizontal, 14).padding(.vertical, 12)
     }
 
     /// Provider used by the current conversation, or the default for the next one.
@@ -129,7 +130,7 @@ struct ChatPanel: View {
     private var messagesView: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                LazyVStack(alignment: .leading, spacing: 18) {
                     if chat.messages.isEmpty {
                         Text("全局会话不绑定歌曲。输入 @ 引用歌曲、具体片段分析或另一整段会话，可以同时比较多个对象。")
                             .font(.caption12).foregroundStyle(Theme.textSecondary).padding(.top, 20)
@@ -139,7 +140,7 @@ struct ChatPanel: View {
                             .id(m.id)
                     }
                 }
-                .padding(12)
+                .padding(.horizontal, 14).padding(.vertical, 16)
             }
             .onChange(of: chat.messages.count) { _, _ in if let last = chat.messages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } } }
             .onChange(of: chat.scrollTarget) { _, t in if let t { withAnimation { proxy.scrollTo(t, anchor: .center) }; chat.scrollTarget = nil } }
@@ -164,40 +165,53 @@ struct ChatPanel: View {
                     }
                 }
             }
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $chat.draft)
-                    .font(.body14).frame(minHeight: 60, maxHeight: 140)
-                    .scrollContentBackground(.hidden)
-                    .onChange(of: chat.draft) { _, t in
-                        showMentions = mentionQuery(t) != nil
-                        showInspirations = !showMentions && inspirationQuery(t) != nil
+            VStack(alignment: .leading, spacing: 4) {
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $chat.draft)
+                        .font(.body14).frame(height: 64)
+                        .scrollContentBackground(.hidden)
+                        .onChange(of: chat.draft) { _, t in
+                            showMentions = mentionQuery(t) != nil
+                            showInspirations = !showMentions && inspirationQuery(t) != nil
+                        }
+                    if chat.draft.isEmpty {
+                        Text("问问老师…  @ 引用 · # 灵感进行 · ⌘↩ 发送").font(.body14).foregroundStyle(Theme.textSecondary.opacity(0.8))
+                            .padding(.leading, 5).allowsHitTesting(false)
                     }
-                if chat.draft.isEmpty {
-                    Text("问问老师…（@ 引用，# 灵感进行，⌘↩ 发送）").font(.body14).foregroundStyle(Theme.textSecondary).padding(.leading, 5).allowsHitTesting(false)
+                }
+                HStack(spacing: 2) {
+                    Button { showMentions = true; if !chat.draft.hasSuffix("@") { chat.draft += "@" } } label: {
+                        Image(systemName: "at").frame(width: 24, height: 24).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).help("引用")
+                    Button {
+                        if !(chat.draft.isEmpty || chat.draft.hasSuffix(" ") || chat.draft.hasSuffix("\n")) { chat.draft += " " }
+                        chat.draft += "#"; showInspirations = true
+                    } label: { Image(systemName: "number").frame(width: 24, height: 24).contentShape(Rectangle()) }
+                        .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).help("引用灵感集合里的进行")
+                    Spacer(minLength: 4)
+                    if chat.sending {
+                        Button { chat.cancel() } label: {
+                            Image(systemName: "stop.fill").font(.system(size: 10, weight: .bold))
+                                .frame(width: 28, height: 28).background(Circle().fill(Theme.textPrimary)).foregroundStyle(Theme.surface)
+                        }.buttonStyle(.plain).help("停止")
+                    } else {
+                        let empty = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        Button { chat.send() } label: {
+                            Image(systemName: "arrow.up").font(.system(size: 13, weight: .bold))
+                                .frame(width: 28, height: 28).background(Circle().fill(empty ? Theme.controlBorder : Theme.accent))
+                                .foregroundStyle(Theme.onAccent)
+                        }
+                        .buttonStyle(.plain).keyboardShortcut(.return, modifiers: .command).disabled(empty).help("发送（⌘↩）")
+                    }
                 }
             }
-            .padding(6)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.background))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.controlBorder.opacity(0.5)))
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.background))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.borderSubtle))
             .popover(isPresented: $showMentions, arrowEdge: .top) { mentionPicker }
             .popover(isPresented: $showInspirations, arrowEdge: .top) { inspirationPicker }
-            HStack(spacing: 6) {
-                Button { showMentions = true; if !chat.draft.hasSuffix("@") { chat.draft += "@" } } label: { Image(systemName: "at") }
-                    .buttonStyle(.borderless).help("引用")
-                Button {
-                    if !(chat.draft.isEmpty || chat.draft.hasSuffix(" ") || chat.draft.hasSuffix("\n")) { chat.draft += " " }
-                    chat.draft += "#"; showInspirations = true
-                } label: { Image(systemName: "number") }
-                    .buttonStyle(.borderless).help("引用灵感集合里的进行")
-                modelChoice
-                Spacer(minLength: 4)
-                if chat.sending {
-                    Button("停止") { chat.cancel() }.buttonStyle(SecondaryButtonStyle(compact: true))
-                } else {
-                    Button("发送") { chat.send() }.buttonStyle(PrimaryButtonStyle()).keyboardShortcut(.return, modifiers: .command)
-                        .disabled(chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
+            modelChoice.foregroundStyle(Theme.textSecondary).padding(.horizontal, 4)
         }
         .padding(10)
     }
@@ -310,8 +324,8 @@ struct MessageView: View {
                 }
             }
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(message.role == .user ? Theme.background : Color.clear))
+        .padding(message.role == .user ? 12 : 4)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(message.role == .user ? Theme.background : Color.clear))
     }
 
     private var highlightRanges: [(NSRange, Bool)] {

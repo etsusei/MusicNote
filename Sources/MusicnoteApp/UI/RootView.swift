@@ -34,7 +34,7 @@ struct RootView: View {
                     }
                 if showRight {
                     ResizeHandle(width: $rightWidth, range: 300...480, inverted: true)
-                    ChatPanel().frame(width: rightWidth)
+                    ChatPanel().frame(width: rightWidth).clipped()
                         .transition(.move(edge: .trailing))
                 }
             }

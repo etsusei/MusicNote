@@ -16,8 +16,8 @@ struct InspirationCollectionPage: View {
         let list = model.inspirationList
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    SectionHeader(title: "灵感集合", subtitle: "在“灵感进行”窗口里拼好、保存的进行。每条可以单独调速度和调号。")
+                HStack(alignment: .bottom) {
+                    PageHeader(title: "灵感集合", subtitle: "在“灵感进行”窗口里拼好、保存的进行。每条可以单独调速度和调号。")
                     Spacer()
                     Button { InspirationWindow.shared.show(model) } label: { Label("打开灵感进行", systemImage: "lightbulb.max") }
                         .buttonStyle(SecondaryButtonStyle())
@@ -27,7 +27,7 @@ struct InspirationCollectionPage: View {
                 }
                 ForEach(list) { p in card(p) }
             }
-            .padding(24)
+            .padding(.horizontal, 28).padding(.vertical, 24)
         }
         .onAppear { transport.sampleRate = AppModel.inspirationRate }
         .onDisappear { if model.playingInspiration != nil { model.stopInspiration() }; transport.stop() }

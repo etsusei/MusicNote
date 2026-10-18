@@ -10,13 +10,12 @@ struct ReadyStage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $tab) {
-                Text(item.isHarmonic ? "笔记与和弦" : "笔记").tag(0)
-                Text("MIDI 校对").tag(1)
-                Text("速度网格").tag(2)
+            HStack {
+                PillTabs(titles: [item.isHarmonic ? "笔记与和弦" : "笔记", "MIDI 校对", "速度网格"], selection: $tab)
+                Spacer()
             }
-            .pickerStyle(.segmented).frame(width: 340).padding(.vertical, 8)
-            Divider()
+            .padding(.horizontal, 28).padding(.bottom, 12)
+            Divider().opacity(0.6)
             switch tab {
             case 1: MidiStage(item: item, transport: transport, embedded: true)
             case 2: TimingEditor(item: item)
@@ -64,8 +63,7 @@ struct NotesStage: View {
                         Spacer()
                         Button("重新拆轨") { model.confirmAndSeparate(item.id, timing: t) }.buttonStyle(SecondaryButtonStyle(compact: true))
                     }
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+                    .noticeBox()
                 }
                 if item.trimStartUs == 0, let stem = item.selectedStem, let midi = model.confirmedMidi(item),
                    midi.transcriber["startContext"] == nil, midi.transcriber["tool"] == "MuScriptor" {
@@ -79,8 +77,7 @@ struct NotesStage: View {
                         Spacer()
                         Button("重新转录") { model.transcribe(item.id, stem: stem) }.buttonStyle(SecondaryButtonStyle(compact: true))
                     }
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+                    .noticeBox()
                 }
                 if item.isHarmonic { AutoAnalysisSection(item: item) }
                 let stale = draft == nil ? model.harmonyStale(item) : []
@@ -122,7 +119,7 @@ struct NotesStage: View {
                 NotesEditor(item: item)
                 actions
             }
-            .padding(24)
+            .padding(.horizontal, 28).padding(.vertical, 24)
         }
         .defaultScrollAnchor(.top)
         .sheet(item: $playgroundSend) { req in PlaygroundSendSheet(request: req).environment(model) }
@@ -583,7 +580,7 @@ struct TimingEditor: View {
                     Text("保存后，和弦分组标为待核对、级数需重算；可在笔记页重新分析。").font(.caption12).foregroundStyle(Theme.textSecondary)
                 }
             }
-            .padding(24)
+            .padding(.horizontal, 28).padding(.vertical, 24)
         }
         .onAppear(perform: load)
     }

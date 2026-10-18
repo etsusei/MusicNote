@@ -70,7 +70,7 @@ struct ConfirmStage: View {
                         .help("保存 BPM、调性和节拍起点后，只对选区运行 Logic 模型拆轨")
                 }
             }
-            .padding(24)
+            .padding(.horizontal, 28).padding(.vertical, 24)
         }
         .onAppear(perform: setup)
         .onChange(of: source.buffer != nil) { _, _ in setupAudio() }

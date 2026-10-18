@@ -140,7 +140,7 @@ struct SettingsPage: View {
                     }
                 }
             }
-            .padding(24)
+            .padding(.horizontal, 28).padding(.vertical, 24)
         }
     }
 
@@ -197,7 +197,7 @@ struct BookmarksPage: View {
                     }
                 }
             }
-            .padding(24)
+            .padding(.horizontal, 28).padding(.vertical, 24)
         }
     }
 }

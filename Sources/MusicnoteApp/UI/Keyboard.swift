@@ -27,20 +27,21 @@ struct KeyboardView: View {
             for (i, p) in whites.enumerated() {
                 let rect = CGRect(x: CGFloat(i) * ww, y: 0, width: ww, height: size.height)
                 xFor[p] = rect.minX
-                ctx.fill(Path(rect), with: .color(set.contains(p) ? Theme.keyActive : .white))
-                ctx.stroke(Path(rect), with: .color(Color.gray.opacity(0.5)), lineWidth: 0.5)
+                let key = Path(roundedRect: rect.insetBy(dx: 0.5, dy: 0), cornerSize: CGSize(width: 2.5, height: 2.5))
+                ctx.fill(key, with: .color(set.contains(p) ? Theme.keyActive : Theme.keyWhite))
+                ctx.stroke(key, with: .color(Theme.keyLine), lineWidth: 0.5)
                 if set.contains(p) {
                     ctx.fill(Path(ellipseIn: CGRect(x: rect.midX - 3, y: size.height - 12, width: 6, height: 6)), with: .color(Theme.accent))
                 }
                 if p % 12 == 0 {
-                    ctx.draw(Text("C\(p / 12 - 1)").font(.system(size: 7)).foregroundColor(.gray), at: CGPoint(x: rect.midX, y: size.height - 22))
+                    ctx.draw(Text("C\(p / 12 - 1)").font(.system(size: 7)).foregroundColor(Theme.textSecondary), at: CGPoint(x: rect.midX, y: size.height - 22))
                 }
             }
             for p in r where Self.isBlack(p) {
                 guard let left = xFor[p - 1] else { continue }
                 let bw = ww * 0.6
                 let rect = CGRect(x: left + ww - bw / 2, y: 0, width: bw, height: size.height * 0.6)
-                ctx.fill(Path(rect), with: .color(set.contains(p) ? Theme.accent : Color(white: 0.15)))
+                ctx.fill(Path(roundedRect: rect, cornerSize: CGSize(width: 2, height: 2)), with: .color(set.contains(p) ? Theme.accent : Theme.keyBlack))
                 if set.contains(p) {
                     ctx.fill(Path(ellipseIn: CGRect(x: rect.midX - 2.5, y: rect.maxY - 9, width: 5, height: 5)), with: .color(.white))
                 }

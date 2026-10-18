@@ -73,7 +73,8 @@ enum DebugSnapshot {
         let fr = window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
         try? fr.write(to: url.deletingPathExtension().appendingPathExtension("responder.txt"), atomically: true, encoding: .utf8)
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
-        view.cacheDisplay(in: view.bounds, to: rep)
+        // Resolve dynamic colors under the window's appearance, not the process default.
+        window.effectiveAppearance.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: rep) }
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
 }
