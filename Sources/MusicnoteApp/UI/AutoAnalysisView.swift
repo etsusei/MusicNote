@@ -23,8 +23,6 @@ struct AutoAnalysisSection: View {
     @Environment(AppModel.self) private var model
     var item: AnalysisItem
     @AppStorage("autoProvider") private var providerId = "codex"
-    /// After saving the section folds away; "修改" opens the editor again.
-    @ViewState private var reopened = false
 
     private static let providers = [("codex", "Codex"), ("claude", "Claude Code")]
     private var connected: Bool { model.providerStatus[providerId]?.state == .connected }
@@ -62,23 +60,16 @@ struct AutoAnalysisSection: View {
                 RunProgress(run: run, running: running)
             }
             if let resultRun, let h = result, let auto = h.auto, let timing = item.timing {
-                let saved = AutoAdoption.isSaved(resultRun, current: current)
-                AdoptBar(item: item, run: resultRun, result: h, current: current,
-                         reopen: saved && !reopened ? { reopened = true } : nil)
-                if !saved || reopened {
-                    // Before the first save: everything needed to check the result. Once it has
-                    // been saved, only the editor (the checking material is done with).
-                    AutoResult(item: item, harmony: h, auto: auto, timing: timing, run: resultRun,
-                               reviewing: !AutoAdoption.isAdopted(resultRun, current: current))
-                } else if !auto.summary.isEmpty {
-                    Text(auto.summary).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                }
+                AdoptBar(item: item, run: resultRun, result: h, current: current)
+                // The bars always stay (and stay editable). Before the first save the result also
+                // shows what's needed to check it; after that the checking material is gone.
+                AutoResult(item: item, harmony: h, auto: auto, timing: timing, run: resultRun,
+                           reviewing: !AutoAdoption.isAdopted(resultRun, current: current))
             }
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.accent.opacity(0.35)))
-        .onChange(of: model.latestHarmony(item.id)?.id) { _, _ in reopened = false } // folds again after a save
     }
 }
 
@@ -89,7 +80,6 @@ struct AdoptBar: View {
     var run: AutoRun
     var result: HarmonyRevision
     var current: HarmonyRevision?
-    var reopen: (() -> Void)? = nil
 
     var body: some View {
         let saved = AutoAdoption.isSaved(run, current: current)
@@ -109,7 +99,6 @@ struct AdoptBar: View {
                 }
             }
             Spacer()
-            if let reopen { Button("修改") { reopen() }.buttonStyle(SecondaryButtonStyle(compact: true)) }
             if !saved && !stale {
                 Button(adopted ? "保存修改" : "保存") { model.adoptAutoResult(item.id, run: run) }.buttonStyle(PrimaryButtonStyle())
                     .help("存成新的和声版本（旧版本保留），更新完整进行并重新生成骨架")
