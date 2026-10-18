@@ -182,6 +182,8 @@ struct InspirationBarsView: View {
     var playingQ: Double?
     /// Names to show (transposed in 灵感集合).
     var displayName: ((InspirationChord) -> String)? = nil
+    /// Hover text (the chord name, when the chip shows a degree).
+    var tooltip: ((InspirationChord) -> String)? = nil
     /// Notes a click sounds (transposed in 灵感集合, the same as its playback).
     var soundPitches: ((InspirationChord) -> [Int])? = nil
     var compact = false
@@ -320,7 +322,7 @@ struct InspirationBarsView: View {
             .overlay(RoundedRectangle(cornerRadius: 5).stroke(isSelected ? Theme.accent : (isHovered ? Theme.accent.opacity(0.6) : Theme.noteFill), lineWidth: isSelected ? 2.5 : (isHovered ? 1.5 : 1)))
             .shadow(color: isSounding ? Theme.accent.opacity(0.5) : .clear, radius: 6)
             .foregroundStyle(isSounding ? Theme.onAccent : Theme.onNote)
-            .help((displayName?(c) ?? c.symbol) + (c.sourceLabel.map { "\n来自 \($0)" } ?? ""))
+            .help((tooltip?(c) ?? displayName?(c) ?? c.symbol) + (c.sourceLabel.map { "\n来自 \($0)" } ?? ""))
         if editable {
             label.contentShape(Rectangle())
                 .onContinuousHover(coordinateSpace: .local) { phase in

@@ -82,7 +82,12 @@ struct InspirationCollectionPage: View {
                 Spacer()
             }
             InspirationBarsView(progression: p, editable: false, playingQ: playing ? q : nil,
-                                displayName: { c in InspirationTranspose.symbol(c, by: n, key: p.targetKey) },
+                                // Degrees in the key shown (picked, else detected); the name stays in the tooltip.
+                                displayName: { c in
+                                    let sym = InspirationTranspose.symbol(c, by: n, key: p.targetKey)
+                                    return (p.targetKey ?? detected).flatMap { Degrees.label(symbol: sym, key: $0)?.display } ?? sym
+                                },
+                                tooltip: { c in InspirationTranspose.symbol(c, by: n, key: p.targetKey) },
                                 soundPitches: { c in InspirationTranspose.pitches(c, by: n, smart: p.targetKey != nil && p.smartTranspose) },
                                 compact: true)
             if !p.sourceLabels.isEmpty {
