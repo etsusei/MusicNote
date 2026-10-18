@@ -167,29 +167,17 @@ struct NotesStage: View {
         }
     }
 
+    /// The progression in use, plainly.
     private func progression(_ h: HarmonyRevision) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                SectionHeader(title: "完整进行", subtitle: "按时间顺序，重复和弦保留为独立实例。级数以主音大调为参照；仅基于\(item.selectedStem?.displayName ?? "所选")分轨。")
-                StatusPill(text: "\(h.auto == nil ? "程序分组" : "已采用模型结果") · r\(h.revision)")
+                Text("完整进行").font(.system(size: 15, weight: .semibold))
                 Spacer()
-                BarNudge(itemId: item.id).help("小节线整体挪动，音符时间不变；程序分组会按新小节线重新分析")
                 Toggle("全部显示标准按法", isOn: $standardAll).toggleStyle(.checkbox).font(.caption12)
             }
             Text(h.events.map { ($0.symbol ?? "未确定") }.joined(separator: "  →  ")).font(.system(size: 15, weight: .medium)).textSelection(.enabled)
-            Text(h.events.map { $0.degree?.display ?? "?" }.joined(separator: "  →  ")).font(.control13).foregroundStyle(Theme.textSecondary)
-            if h.barAnchorEstimated, let a = h.barAnchorUs {
-                HStack(spacing: 8) {
-                    Label("小节线是自动估计的：第 1 小节从 \(formatTime(us: a)) 开始（和弦大多落在这里或提前半拍）", systemImage: "metronome")
-                        .font(.caption12).foregroundStyle(Theme.warning)
-                    Button("采用") { model.adoptBarAnchor(item.id, a) }.buttonStyle(SecondaryButtonStyle(compact: true))
-                        .help("写入速度网格；之后可在「速度网格」里修改")
-                }
-            }
-            Text("命名：\(h.namerVersion) · 分组：\(h.params["algorithm"] ?? "")（八分音符检测点，换和弦优先落在小节线和强拍）").font(.caption12).foregroundStyle(Theme.textSecondary)
         }
     }
-
 
     private func chordCards(_ h: HarmonyRevision) -> some View {
         let notes = model.confirmedMidi(item)?.notes ?? []

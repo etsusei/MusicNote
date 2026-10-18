@@ -23,6 +23,8 @@ struct AutoAnalysisSection: View {
     @Environment(AppModel.self) private var model
     var item: AnalysisItem
     @AppStorage("autoProvider") private var providerId = "codex"
+    /// After saving the section folds away; "修改" opens the editor again.
+    @ViewState private var reopened = false
 
     private static let providers = [("codex", "Codex"), ("claude", "Claude Code")]
     private var connected: Bool { model.providerStatus[providerId]?.state == .connected }
@@ -60,13 +62,23 @@ struct AutoAnalysisSection: View {
                 RunProgress(run: run, running: running)
             }
             if let resultRun, let h = result, let auto = h.auto, let timing = item.timing {
-                AdoptBar(item: item, run: resultRun, result: h, current: current)
-                AutoResult(item: item, harmony: h, auto: auto, timing: timing, run: resultRun)
+                let saved = AutoAdoption.isSaved(resultRun, current: current)
+                AdoptBar(item: item, run: resultRun, result: h, current: current,
+                         reopen: saved && !reopened ? { reopened = true } : nil)
+                if !saved || reopened {
+                    // Before the first save: everything needed to check the result. Once it has
+                    // been saved, only the editor (the checking material is done with).
+                    AutoResult(item: item, harmony: h, auto: auto, timing: timing, run: resultRun,
+                               reviewing: !AutoAdoption.isAdopted(resultRun, current: current))
+                } else if !auto.summary.isEmpty {
+                    Text(auto.summary).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                }
             }
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.accent.opacity(0.35)))
+        .onChange(of: model.latestHarmony(item.id)?.id) { _, _ in reopened = false } // folds again after a save
     }
 }
 
@@ -77,6 +89,7 @@ struct AdoptBar: View {
     var run: AutoRun
     var result: HarmonyRevision
     var current: HarmonyRevision?
+    var reopen: (() -> Void)? = nil
 
     var body: some View {
         let saved = AutoAdoption.isSaved(run, current: current)
@@ -85,16 +98,18 @@ struct AdoptBar: View {
         HStack(spacing: 10) {
             Image(systemName: saved ? "checkmark.seal.fill" : "square.and.pencil").foregroundStyle(saved ? Theme.success : Theme.accent)
             VStack(alignment: .leading, spacing: 2) {
-                Text(saved ? "已保存：完整进行、和弦卡、播放、骨架和聊天都用这个结果"
+                Text(saved ? "已保存"
                      : adopted ? "有未保存的修改" : "检查并修改下面的和弦走向，没问题就保存")
                     .font(.system(size: 13, weight: .semibold))
-                Text(stale ? "选区在分析之后改过，这个结果不能再保存，请重新自主分析。"
-                     : saved ? "还能接着在下面改，改完再保存一次。完整进行目前是\(currentText)。"
-                     : "点和弦选中，双击改名，可插入、删除、按八分音符挪起止，能撤销。保存前不会动你的和声、MIDI 和骨架；保存后更新完整进行并重新生成骨架。完整进行目前是\(currentText)。")
-                    .font(.caption12).foregroundStyle(stale ? Theme.warning : Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if !saved || stale {
+                    Text(stale ? "选区在分析之后改过，这个结果不能再保存，请重新自主分析。"
+                         : "拖和弦移动、拖边缘改长度、空白处点 ＋ 添加、双击改名，能撤销。保存前不会动你的和声、MIDI 和骨架；保存后更新完整进行并重新生成骨架。")
+                        .font(.caption12).foregroundStyle(stale ? Theme.warning : Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
+            if let reopen { Button("修改") { reopen() }.buttonStyle(SecondaryButtonStyle(compact: true)) }
             if !saved && !stale {
                 Button(adopted ? "保存修改" : "保存") { model.adoptAutoResult(item.id, run: run) }.buttonStyle(PrimaryButtonStyle())
                     .help("存成新的和声版本（旧版本保留），更新完整进行并重新生成骨架")
@@ -159,6 +174,9 @@ struct AutoResult: View {
     var auto: AutoHarmony
     var timing: TimingConfirmation
     var run: AutoRun?
+    /// First check before saving: key check, bar-line advice, points to confirm, review trail and
+    /// sources. After a save, editing again shows only the summary and the editor.
+    var reviewing = true
 
     private var grid: BeatGrid {
         var g = timing.grid
@@ -169,10 +187,10 @@ struct AutoResult: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !auto.summary.isEmpty { Text(auto.summary).font(.system(size: 14, weight: .medium)) }
-            if let k = auto.key, let key = k.key, key != item.timing?.key {
+            if reviewing, let k = auto.key, let key = k.key, key != item.timing?.key {
                 KeyCorrectionCard(title: "调性检查：模型判断是 \(k.modeName.isEmpty ? key.display : k.modeName)，和你设定的 \(item.timing?.key.display ?? "") 不同", reason: k.reason,
                                   apply: { model.applyKey(item.id, key) }, applyTitle: "改为 \(key.display)", dismiss: nil)
-            } else if let k = auto.key {
+            } else if reviewing, let k = auto.key {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: "checkmark.circle").foregroundStyle(Theme.success)
                     Text("调性检查：\(k.modeName.isEmpty ? (k.key?.display ?? "") : k.modeName)，与设定一致").font(.system(size: 12, weight: .semibold))
@@ -180,7 +198,7 @@ struct AutoResult: View {
                 }
             }
             // Only while the grid is still the one the model analysed in (moving it hides the card).
-            if let sh = auto.barShiftBeats, sh != 0, harmony.params["barAnchorUs"] == String(grid.barAnchorUs ?? 0) {
+            if reviewing, let sh = auto.barShiftBeats, sh != 0, harmony.params["barAnchorUs"] == String(grid.barAnchorUs ?? 0) {
                 BarShiftCard(text: "模型核对小节线后认为要整体挪动：" + (auto.barReason ?? "") + "（和弦时间不变，只是换个格子读。）",
                              shift: sh, apply: { model.shiftBarLine(item.id, beats: sh) }, dismiss: nil)
             }
@@ -192,7 +210,7 @@ struct AutoResult: View {
             } else {
                 BarProgressionView(item: item, harmony: harmony, auto: auto, grid: grid)
             }
-            if !auto.toConfirm.isEmpty {
+            if reviewing && !auto.toConfirm.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("待确认（\(auto.toConfirm.count)）").font(.system(size: 13, weight: .semibold))
                     ForEach(Array(auto.toConfirm.enumerated()), id: \.offset) { _, c in
@@ -212,6 +230,7 @@ struct AutoResult: View {
                     }
                 }
             }
+            if reviewing {
             HStack(spacing: 12) {
                 if let run, !run.reviews.isEmpty {
                     DisclosureGroup("复核记录（\(run.reviews.count)）") {
@@ -232,6 +251,7 @@ struct AutoResult: View {
                 Text("证据来源：" + auto.sources.joined(separator: "、") + " · \(run?.provider == "claude" ? "Claude Code" : "Codex") \(run?.model ?? "")")
                     .font(.caption12).foregroundStyle(Theme.textSecondary)
                 Spacer()
+            }
             }
         }
     }
