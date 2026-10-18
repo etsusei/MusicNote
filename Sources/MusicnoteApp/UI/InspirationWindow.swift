@@ -228,7 +228,7 @@ struct InspirationBarsView: View {
         let start = payload.wholeBar ? InspirationEdit.snapBar(q) : InspirationEdit.snap(q)
         model.updateInspiration { p in
             if p.chords.isEmpty, let bpm = payload.bpm { p.bpm = bpm.rounded() }
-            InspirationEdit.drop(&p, payload.chords, at: start)
+            InspirationEdit.drop(&p, payload.placed, at: start)
         }
         geo.dropGhost = nil
     }
@@ -417,7 +417,7 @@ private struct ChordDropDelegate: DropDelegate {
         let payload = view.model.currentChordDrag
         if let q = view.q(at: info.location) {
             let start = payload?.wholeBar == true ? InspirationEdit.snapBar(q) : InspirationEdit.snap(q)
-            view.setDropGhost((start, payload?.lengthQ ?? 4))
+            view.setDropGhost((start, payload?.lengthQ ?? 1))
         }
         return DropProposal(operation: .copy)
     }

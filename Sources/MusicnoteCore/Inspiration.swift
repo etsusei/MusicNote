@@ -206,5 +206,10 @@ public struct ChordDragPayload: Codable, Sendable {
         guard s.hasPrefix(prefix) else { return nil }
         return try? JSONDecoder().decode(ChordDragPayload.self, from: Data(s.dropFirst(prefix.count).utf8))
     }
-    public var lengthQ: Double { chords.map(\.endQ).max() ?? 4 }
+    /// What lands in the progression: a single chord as one quarter note; a whole bar as it was.
+    public var placed: [InspirationChord] {
+        wholeBar ? chords : chords.map { var c = $0; c.startQ = 0; c.lengthQ = 1; return c }
+    }
+
+    public var lengthQ: Double { placed.map(\.endQ).max() ?? 1 }
 }

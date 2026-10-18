@@ -528,6 +528,9 @@ do {
     eq(InspirationTranspose.symbol(InspirationChord(symbol: "B♭maj7", startQ: 0, lengthQ: 4, pitches: []), by: 1, key: KeySignature(tonic: 11, tonicName: "B", mode: .major)), "Bmaj7", "respelled in the target key")
     let payload = ChordDragPayload(chords: bar, wholeBar: true, bpm: 120)
     eq(ChordDragPayload.decode(payload.encoded)?.chords.map(\.symbol), ["Dm7", "G7"], "drag payload round trip")
+    let single = ChordDragPayload(chords: [InspirationChord(symbol: "Cmaj9", startQ: 0, lengthQ: 3.5, pitches: [48])], wholeBar: false, bpm: nil)
+    eq(single.placed.map(\.lengthQ), [1], "a single chord lands as a quarter note")
+    eq(payload.placed.map(\.lengthQ), [2, 2], "a whole bar keeps its lengths")
 }
 
 print("\(passes) passed, \(failures) failed")
