@@ -182,6 +182,8 @@ struct InspirationBarsView: View {
     var playingQ: Double?
     /// Names to show (transposed in 灵感集合).
     var displayName: ((InspirationChord) -> String)? = nil
+    /// Notes a click sounds (transposed in 灵感集合, the same as its playback).
+    var soundPitches: ((InspirationChord) -> [Int])? = nil
     var compact = false
 
     @ViewState private var geo = InspirationBarsGeometry()
@@ -342,7 +344,7 @@ struct InspirationBarsView: View {
                     Button("删除", role: .destructive) { model.updateInspiration { InspirationEdit.delete(&$0, id: c.id) } }
                 }
         } else {
-            label.onTapGesture { AudioEngine.shared.playChord(c.pitches, duration: 1.4) }
+            label.onTapGesture { AudioEngine.shared.playChord(soundPitches?(c) ?? c.pitches, duration: 1.4) }
         }
     }
 

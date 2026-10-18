@@ -82,7 +82,9 @@ struct InspirationCollectionPage: View {
                 Spacer()
             }
             InspirationBarsView(progression: p, editable: false, playingQ: playing ? q : nil,
-                                displayName: { c in InspirationTranspose.symbol(c, by: n, key: p.targetKey) }, compact: true)
+                                displayName: { c in InspirationTranspose.symbol(c, by: n, key: p.targetKey) },
+                                soundPitches: { c in InspirationTranspose.pitches(c, by: n, smart: p.targetKey != nil && p.smartTranspose) },
+                                compact: true)
             if !p.sourceLabels.isEmpty {
                 Text("来自：" + p.sourceLabels.joined(separator: "、")).font(.caption12).foregroundStyle(Theme.textSecondary).lineLimit(2)
             }
