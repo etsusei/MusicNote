@@ -493,12 +493,14 @@ do {
     let added = try HarmonyEdit.add(&inside, start: 2_500_000, end: 3_000_000, symbol: "G", key: cMajor, grid: g, writeVoicing: false)
     eq(inside.harmony.events.map(\.symbol), ["C", "F", "G", "F"], "added inside a chord splits it around")
     _ = added
-    // Edges: a touching neighbour follows when shrinking; stretching across the bar line takes time.
+    // Edges: only the chord under the pointer changes; a neighbour gives up time but keeps an eighth.
     var rz = HarmonyEdit.State(harmony: h, notes: ns)
     try HarmonyEdit.resize(&rz, id: "a", leftEdge: false, to: 1_500_000, grid: g)
-    eq(rz.harmony.events.map { $0.startUs / 1000 }, [0, 1500], "neighbour follows a shrinking edge")
+    eq(rz.harmony.events.map { "\($0.startUs / 1000)-\($0.endUs / 1000)" }, ["0-1500", "2000-4000"], "shrinking leaves a gap; the neighbour stays")
     try HarmonyEdit.resize(&rz, id: "a", leftEdge: false, to: 2_750_000, grid: g)
     eq(rz.harmony.events.map { "\($0.symbol ?? "")@\($0.startUs / 1000)" }, ["C@0", "F@2750"], "stretching over the next bar takes its time")
+    try HarmonyEdit.resize(&rz, id: "a", leftEdge: false, to: 6_000_000, grid: g)
+    eq(rz.harmony.events.map { "\($0.symbol ?? "")@\($0.startUs / 1000)-\($0.endUs / 1000)" }, ["C@0-3750", "F@3750-4000"], "the neighbour keeps an eighth")
     check((try? HarmonyEdit.rename(&st, id: "a", symbol: "Hello", key: cMajor, writeVoicing: true)) == nil, "bad chord name refused")
 } catch { check(false, "harmony edit: \(error)") }
 
@@ -573,6 +575,19 @@ do {
     eq(on.map(\.us), [40_000, 180_000, 700_000], "onsets grouped within 60 ms, window respected")
     eq(on[1].pitches, [48, 55], "chord tones of one onset")
     eq(BarOne.nearest(on, to: 150_000)?.us, 180_000, "preselect the onset nearest the current bar 1")
+}
+
+// 灵感进行 edges: same rule; MIDI export plays as heard in the collection.
+do {
+    var ip = InspirationProgression(bars: 2, bpm: 100)
+    ip.chords = [InspirationChord(id: "a", symbol: "C", startQ: 0, lengthQ: 2, pitches: [48, 52, 55]),
+                 InspirationChord(id: "b", symbol: "F", startQ: 2, lengthQ: 2, pitches: [53, 57, 60])]
+    InspirationEdit.resize(&ip, id: "a", leftEdge: false, to: 1)
+    eq(ip.chords.map { "\($0.startQ)-\($0.endQ)" }, ["0.0-1.0", "2.0-4.0"], "shrink leaves a gap")
+    InspirationEdit.resize(&ip, id: "b", leftEdge: true, to: 0)
+    eq(ip.chords.map { "\($0.symbol)@\($0.startQ)-\($0.endQ)" }, ["C@0.0-0.5", "F@0.5-4.0"], "stretch leaves the neighbour an eighth")
+    let mid = InspirationExport.midi(ip)
+    check(mid.prefix(4) == Data("MThd".utf8) && mid.count > 60, "MIDI file written")
 }
 
 print("\(passes) passed, \(failures) failed")

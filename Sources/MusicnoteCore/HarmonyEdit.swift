@@ -101,21 +101,31 @@ public enum HarmonyEdit {
         try place(&s, id: id, start: t, end: t + (ev.endUs - ev.startUs), grid: g)
     }
 
-    /// Drags one edge. A neighbour touching that edge follows it (it grows when this one
-    /// shrinks); stretching over others takes their time as in `place`.
+    /// Drags one edge of the chord under the pointer; only that chord changes length. Shrinking
+    /// leaves a gap. Stretching over the neighbour takes its time but always leaves it an eighth
+    /// (it never disappears).
     public static func resize(_ s: inout State, id: String, leftEdge: Bool, to t: Int64, grid g: BeatGrid) throws {
         guard let ev = s.harmony.events.first(where: { $0.id == id }) else { throw EditError.notFound }
-        let x = max(0, snapEighth(t, grid: g))
-        let neighbour = (leftEdge
-            ? s.harmony.events.first { $0.id != id && abs($0.endUs - ev.startUs) <= 2_000 }
-            : s.harmony.events.first { $0.id != id && abs($0.startUs - ev.endUs) <= 2_000 })?.id
-        let shrinking = leftEdge ? x > ev.startUs : x < ev.endUs
-        try place(&s, id: id, start: leftEdge ? x : ev.startUs, end: leftEdge ? ev.endUs : x, grid: g)
-        if shrinking, let nid = neighbour, let k = s.harmony.events.firstIndex(where: { $0.id == nid }),
-           let me = s.harmony.events.first(where: { $0.id == id }) {
-            if leftEdge { s.harmony.events[k].endUs = me.startUs } else { s.harmony.events[k].startUs = me.endUs }
-            refreshMembers(&s, k, g)
+        let e = eighthUs(g)
+        var x = max(0, snapEighth(t, grid: g))
+        if leftEdge {
+            if let prev = s.harmony.events.filter({ $0.id != id && $0.endUs <= ev.startUs + 2_000 }).max(by: { $0.endUs < $1.endUs }),
+               x < prev.endUs {
+                var floor = snapEighth(prev.startUs + e, grid: g)
+                if floor < prev.startUs + e - 2_000 { floor += e }
+                x = max(x, floor)
+            }
+            x = min(x, ev.endUs - e)
+        } else {
+            if let next = s.harmony.events.filter({ $0.id != id && $0.startUs >= ev.endUs - 2_000 }).min(by: { $0.startUs < $1.startUs }),
+               x > next.startUs {
+                var ceiling = snapEighth(next.endUs - e, grid: g)
+                if ceiling > next.endUs - e + 2_000 { ceiling -= e }
+                x = min(x, ceiling)
+            }
+            x = max(x, ev.startUs + e)
         }
+        try place(&s, id: id, start: leftEdge ? x : ev.startUs, end: leftEdge ? ev.endUs : x, grid: g)
     }
 
     /// Adds a chord in empty time.

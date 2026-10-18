@@ -102,19 +102,23 @@ public enum InspirationEdit {
         place(&p, id: id, start: a, end: a + c.lengthQ)
     }
 
-    /// Drags one edge; a neighbour touching it follows when this one shrinks.
+    /// Drags one edge of the chord under the pointer; only that chord changes. Shrinking leaves a
+    /// gap; stretching over the neighbour leaves it at least an eighth.
     public static func resize(_ p: inout InspirationProgression, id: String, leftEdge: Bool, to q: Double) {
         guard let c = p.chords.first(where: { $0.id == id }) else { return }
-        let x = snap(q)
-        let neighbour = (leftEdge ? p.chords.first { $0.id != id && abs($0.endQ - c.startQ) < 1e-6 }
-                                  : p.chords.first { $0.id != id && abs($0.startQ - c.endQ) < 1e-6 })?.id
-        let shrinking = leftEdge ? x > c.startQ : x < c.endQ
-        place(&p, id: id, start: leftEdge ? x : c.startQ, end: leftEdge ? c.endQ : x)
-        if shrinking, let nid = neighbour, let k = p.chords.firstIndex(where: { $0.id == nid }), let me = p.chords.first(where: { $0.id == id }) {
-            if leftEdge { p.chords[k].lengthQ = me.startQ - p.chords[k].startQ } else {
-                let end = p.chords[k].endQ; p.chords[k].startQ = me.endQ; p.chords[k].lengthQ = end - me.endQ
+        var x = snap(q)
+        if leftEdge {
+            if let prev = p.chords.filter({ $0.id != id && $0.endQ <= c.startQ + 1e-6 }).max(by: { $0.endQ < $1.endQ }), x < prev.endQ {
+                x = max(x, prev.startQ + minLen)
             }
+            x = min(x, c.endQ - minLen)
+        } else {
+            if let next = p.chords.filter({ $0.id != id && $0.startQ >= c.endQ - 1e-6 }).min(by: { $0.startQ < $1.startQ }), x > next.startQ {
+                x = min(x, next.endQ - minLen)
+            }
+            x = max(x, c.startQ + minLen)
         }
+        place(&p, id: id, start: leftEdge ? x : c.startQ, end: leftEdge ? c.endQ : x)
     }
 
     public static func delete(_ p: inout InspirationProgression, id: String) { p.chords.removeAll { $0.id == id } }
@@ -242,5 +246,24 @@ public enum InspirationSnapshot {
         if let d = detected { out["detectedKey"] = d.display }
         if let t = p.targetKey { out["playKey"] = t.display + (n != 0 ? "（从原调移了 \(n > 0 ? "+" : "")\(n) 半音\(smart ? "，智能移调" : "")）" : "") }
         return out
+    }
+}
+
+// MARK: - MIDI export
+
+public enum InspirationExport {
+    /// The progression as it plays in 灵感集合 (its key and smart transposition), at its tempo, 4/4.
+    public static func midi(_ p: InspirationProgression) -> Data {
+        let n = InspirationTranspose.semitones(p)
+        let smart = p.targetKey != nil && p.smartTranspose
+        var notes: [MidiFileWriter.Note] = []
+        for c in p.chords.sorted(by: { $0.startQ < $1.startQ }) {
+            let a = MidiTicks.ticks(q: c.startQ), b = MidiTicks.ticks(q: c.endQ)
+            for pitch in InspirationTranspose.pitches(c, by: n, smart: smart) where (0...127).contains(pitch) {
+                notes.append(.init(pitch: pitch, velocity: 84, startTick: a, durationTicks: max(1, b - a)))
+            }
+        }
+        let key = p.targetKey ?? InspirationTranspose.detectedKey(p) ?? KeySignature(tonic: 0, tonicName: "C", mode: .major)
+        return MidiFileWriter(bpm: p.bpm, meter: .fourFour, key: key).data(notes: notes)
     }
 }

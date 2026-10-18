@@ -1,5 +1,7 @@
+import AppKit
 import MusicnoteCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 灵感集合: every saved 灵感进行 with its bars; each plays or loops at its own speed and key
 /// (smart transposition keeps the sound in range and respells the names).
@@ -54,6 +56,7 @@ struct InspirationCollectionPage: View {
                 })) { Label("循环", systemImage: "repeat") }.toggleStyle(.button)
                 Menu {
                     Button("在灵感进行里编辑") { model.editInspiration(p.id) }
+                    Button("导出 MIDI…") { exportMidi(p) }
                     Button("删除…", role: .destructive) { deleting = p }
                 } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton).frame(width: 28)
             }
@@ -97,6 +100,16 @@ struct InspirationCollectionPage: View {
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(playing ? Theme.accent.opacity(0.6) : Theme.borderSubtle))
+    }
+
+    /// Saves the progression as it plays here (key, smart transposition, tempo) as a .mid file.
+    private func exportMidi(_ p: InspirationProgression) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "mid") ?? .data]
+        let key = p.targetKey.map { " (\($0.display))" } ?? ""
+        panel.nameFieldStringValue = (p.displayTitle + key).replacingOccurrences(of: "/", with: "-") + ".mid"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try InspirationExport.midi(p).write(to: url) } catch { model.report(error) }
     }
 
     /// The 24 keys, spelled the usual way.

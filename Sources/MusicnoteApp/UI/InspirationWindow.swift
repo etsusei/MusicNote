@@ -385,8 +385,11 @@ struct InspirationBarsView: View {
         if d.moved, let t = q(at: shared(v.location)) {
             switch kind {
             case 0: let a = InspirationEdit.snap(t - grab); d.ghost = (a, a + c.lengthQ)
-            case 1: d.ghost = (min(InspirationEdit.snap(t), c.endQ - 0.5), c.endQ)
-            default: d.ghost = (c.startQ, max(InspirationEdit.snap(t), c.startQ + 0.5))
+            default:
+                // A dry run of the resize, so the ghost stops where the neighbour keeps its eighth.
+                var trial = progression
+                InspirationEdit.resize(&trial, id: c.id, leftEdge: kind == 1, to: t)
+                if let r = trial.chords.first(where: { $0.id == c.id }) { d.ghost = (r.startQ, r.endQ) }
             }
         }
         return d

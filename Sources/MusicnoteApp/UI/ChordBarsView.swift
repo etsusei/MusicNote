@@ -322,8 +322,11 @@ struct BarProgressionView: View {
             case .move:
                 let st = snap(t - grab)
                 d.ghost = (st, st + (ev.endUs - ev.startUs))
-            case .left: d.ghost = (min(snap(t), ev.endUs - eighthUs), ev.endUs)
-            case .right: d.ghost = (ev.startUs, max(snap(t), ev.startUs + eighthUs))
+            case .left, .right:
+                // A dry run of the resize, so the ghost stops where the neighbour keeps its eighth.
+                var trial = HarmonyEdit.State(harmony: harmony, notes: [])
+                if (try? HarmonyEdit.resize(&trial, id: ev.id, leftEdge: kind == .left, to: t, grid: grid)) != nil,
+                   let r = trial.harmony.events.first(where: { $0.id == ev.id }) { d.ghost = (r.startUs, r.endUs) }
             }
         }
         return d
