@@ -44,8 +44,13 @@ struct HarmonyRefreshChecks {
             model.latestHarmony(item.id)
         } onChange: { adopted.fired = true }
         precondition(before?.events.first?.symbol == "D♭11")
-        model.adoptAutoResult(item.id, run: run)
-        precondition(model.alert == nil, "Adoption must succeed")
+        // A finished run goes into checking; nothing changes until it is confirmed.
+        model.reviewRun(item.id, run: run)
+        precondition(model.harmonyDraft(item.id)?.fromModel == true, "A model result opens a draft")
+        precondition(model.latestHarmony(item.id)?.events.first?.symbol == "D♭11", "Checking leaves the confirmed harmony alone")
+        model.confirmDraft(item.id)
+        precondition(model.alert == nil, "Confirming must succeed")
+        precondition(model.harmonyDraft(item.id) == nil, "Confirming removes the draft")
         precondition(adopted.fired, "A current-harmony reader must be invalidated when a result is adopted")
         var current = model.latestHarmony(item.id)!
         precondition(current.revision == 2 && current.events.first?.symbol == "Bmaj9")
@@ -67,8 +72,8 @@ struct HarmonyRefreshChecks {
         precondition(regrouped.fired, "Reloading program grouping must invalidate harmony readers")
         precondition(model.latestHarmony(item.id)?.events.first?.symbol == "Cmaj7")
         precondition(run.result(in: model.store)?.events.first?.symbol == "Bmaj9", "The saved proposal must remain intact")
-        // Editing the model result is a draft: a voicing rewrite waits in the run and becomes a
-        // MIDI revision only on 保存; saving makes the edited result the current harmony.
+        // 修改 on the confirmed harmony: edits stay in the draft (voicing rewrites included) until
+        // 确定; 放弃 leaves everything as it was.
         var it2 = model.item(item.id)!
         let midi = MidiRevision(analysisId: item.id, revision: 1, status: .confirmed, parentRevision: nil, stem: .piano,
                                 transcriber: [:], notes: [MidiNote(pitch: 60, startUs: 0, endUs: 2_000_000)])
@@ -77,19 +82,23 @@ struct HarmonyRefreshChecks {
         it2.timing = TimingConfirmation(trimRevision: it2.trimRevision, bpm: 120, beatOriginUs: 0, meter: .fourFour, meterConfirmed: true,
                                         barAnchorUs: 0, key: key)
         try model.store.save(it2)
-        model.editProposal(run.id) { st, _, k in try HarmonyEdit.rename(&st, id: "chord-01", symbol: "Am7", key: k, writeVoicing: true) }
-        let draft = model.store.fetch(AutoRun.self, id: run.id)!
-        precondition(draft.edited == true && draft.draftNotes != nil, "Edits stay in the run as a draft")
-        precondition(model.confirmedMidi(model.item(item.id)!)?.revision == 1, "MIDI is untouched before saving")
-        precondition(model.latestHarmony(item.id)?.events.first?.symbol == "Cmaj7", "The progression is untouched before saving")
-        precondition(model.proposalUndoCount(run.id) == 1)
-        model.adoptAutoResult(item.id, run: draft)
-        precondition(model.alert == nil, "Saving must succeed")
-        let after = model.item(item.id)!
-        precondition(after.confirmedMidiRevision == 2, "Saving turns the voicing rewrite into a MIDI revision")
-        precondition(model.latestHarmony(item.id)?.events.first?.symbol == "Am7", "Saving updates the progression")
-        let savedRun = model.store.fetch(AutoRun.self, id: run.id)!
-        precondition(AutoAdoption.isSaved(savedRun, current: model.latestHarmony(item.id)), "Saved state after saving")
-        print("Harmony refresh checks passed (adoption, reused event IDs, edits, regrouping, saved proposal, draft edit and save).")
+        model.beginEditing(item.id)
+        model.editDraft(item.id) { st, _, k in try HarmonyEdit.rename(&st, id: "chord-01", symbol: "Am7", key: k, writeVoicing: true) }
+        precondition(model.harmonyDraft(item.id)?.draftNotes != nil, "Voicing rewrite waits in the draft")
+        precondition(model.confirmedMidi(model.item(item.id)!)?.revision == 1, "MIDI untouched while checking")
+        precondition(model.latestHarmony(item.id)?.events.first?.symbol == "Cmaj7", "Confirmed harmony untouched while checking")
+        precondition(model.draftUndoCount(item.id) == 1)
+        model.undoDraft(item.id)
+        precondition(model.harmonyDraft(item.id)?.harmony.events.first?.symbol == "Cmaj7", "Undo inside the draft")
+        model.editDraft(item.id) { st, _, k in try HarmonyEdit.rename(&st, id: "chord-01", symbol: "Am7", key: k, writeVoicing: true) }
+        model.discardDraft(item.id)
+        precondition(model.harmonyDraft(item.id) == nil && model.latestHarmony(item.id)?.events.first?.symbol == "Cmaj7", "Discard leaves it as it was")
+        model.beginEditing(item.id)
+        model.editDraft(item.id) { st, _, k in try HarmonyEdit.rename(&st, id: "chord-01", symbol: "Am7", key: k, writeVoicing: true) }
+        model.confirmDraft(item.id)
+        precondition(model.alert == nil, "Confirming must succeed")
+        precondition(model.item(item.id)!.confirmedMidiRevision == 2, "Confirming turns the voicing rewrite into a MIDI revision")
+        precondition(model.latestHarmony(item.id)?.events.first?.symbol == "Am7", "Confirming updates the progression")
+        print("Harmony refresh checks passed (adoption, reused event IDs, edits, regrouping, saved proposal, check / edit / undo / discard / confirm).")
     }
 }

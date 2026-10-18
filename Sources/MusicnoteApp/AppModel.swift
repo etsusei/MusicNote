@@ -62,7 +62,9 @@ final class AppModel {
     @ObservationIgnored var _autoProvider: CodexProvider?
     @ObservationIgnored var _autoClaude: ClaudeAgentProvider?
     var songGridRunning: Set<UUID> = []
-    var proposalUndo: [UUID: [ProposalUndo]] = [:]
+    var draftUndo: [UUID: [DraftUndo]] = [:]
+    /// The clip whose original + chords is playing (for highlighting the sounding chord).
+    var playAlongItem: UUID?
     var songGridError: [UUID: String] = [:]
     @ObservationIgnored var auditionCache: [String: AVAudioPCMBuffer] = [:]
     @ObservationIgnored var auditionStop: Task<Void, Never>?
@@ -751,6 +753,8 @@ extension AppModel {
             self.autoRuns[itemId] = nil
             self.autoTasks[itemId] = nil
             self.reload()
+            // A finished result goes straight into checking.
+            if box.run.status == .succeeded { self.reviewRun(itemId, run: box.run) }
             if box.run.status == .failed { self.alert = AppAlert(title: "自主分析没有完成", message: box.run.error ?? box.run.finalMessage) }
         }
     }
@@ -798,40 +802,10 @@ extension AppModel {
         store.all(AutoRun.self, owner: itemId).filter(\.submitted).max { $0.startedAt < $1.startedAt }
     }
 
-    /// Makes the model's result the current harmony: chord cards, playback, chat and the
-    /// skeleton follow it. Saved as a new revision; older ones stay.
-    func adoptAutoResult(_ itemId: UUID, run: AutoRun) {
-        do {
-            var run = store.fetch(AutoRun.self, id: run.id) ?? run
-            // Voicing rewrites made while editing become a confirmed MIDI revision now.
-            if let notes = run.draftNotes, var item = item(itemId), let midi = confirmedMidi(item) {
-                let next = (midiRevisions(itemId).map(\.revision).max() ?? 0) + 1
-                var m = MidiRevision(analysisId: itemId, revision: next, status: .confirmed, parentRevision: midi.revision, stem: midi.stem,
-                                     transcriber: midi.transcriber.merging(["edit": "改和弦名后用标准按法改写"]) { $1 }, notes: notes)
-                m.confirmedAt = Date()
-                try store.save(m)
-                item.confirmedMidiRevision = next
-                try store.save(item)
-                run.proposal?.midiRevision = next
-            }
-            run.draftNotes = nil
-            run.edited = false
-            if run.proposal == nil { run.proposal = run.result(in: store) }
-            try store.save(run)
-            proposalUndo[run.id] = nil
-            try AutoAdoption.adopt(run, store: store)
-            reload()
-            // The skeleton follows with the client that did the analysis (it is known to work right
-            // now; the default one may be out of quota), else the default.
-            if providerStatus[run.provider]?.state == .connected { generateSkeleton(itemId, providerId: run.provider) } else { autoSkeleton(itemId) }
-        } catch {
-            alert = AppAlert(title: "无法采用", message: error.localizedDescription)
-        }
-    }
-
     /// Plays the selection's audio (original mix or the selected stem) for [startUs, endUs).
     func audition(_ itemId: UUID, startUs: Int64, endUs: Int64, original: Bool) {
         guard let item = item(itemId) else { return }
+        playAlongItem = nil
         let url: URL?
         var offset: Int64 = 0
         if original { url = Pipeline.resolve(item.source); offset = item.trimStartUs }

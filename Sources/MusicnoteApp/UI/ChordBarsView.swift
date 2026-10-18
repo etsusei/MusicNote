@@ -23,6 +23,10 @@ struct BarProgressionView: View {
     var undoCount = 0
     /// Notes to play chords from (the draft's, when edits rewrote voicings).
     var notes: [MidiNote]? = nil
+    /// The chord sounding while the original + chords play (lit up).
+    var playingId: String? = nil
+    /// Clicking a bar number: play from that bar (default: audition the original bar).
+    var onBarTap: ((Int) -> Void)? = nil
 
     @AppStorage("foldPushes") private var foldPushes = true
     @ViewState private var selected: String?
@@ -149,9 +153,12 @@ struct BarProgressionView: View {
         let segs = reading.filter { $0.s < e && $0.e > s }
         return VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 0) {
-                Button { model.audition(item.id, startUs: max(0, s), endUs: min(item.durationUs, e), original: true) } label: {
-                    HStack(spacing: 3) { Text("\(bar)").font(.system(size: 11, weight: .semibold)); Image(systemName: "speaker.wave.2").font(.system(size: 9)) }
-                }.buttonStyle(.borderless).foregroundStyle(Theme.textSecondary).help("听原曲第 \(bar) 小节")
+                Button {
+                    if let onBarTap { onBarTap(bar) } else { model.audition(item.id, startUs: max(0, s), endUs: min(item.durationUs, e), original: true) }
+                } label: {
+                    HStack(spacing: 3) { Text("\(bar)").font(.system(size: 11, weight: .semibold)); Image(systemName: onBarTap == nil ? "speaker.wave.2" : "play").font(.system(size: 9)) }
+                }.buttonStyle(.borderless).foregroundStyle(Theme.textSecondary)
+                    .help(onBarTap == nil ? "听原曲第 \(bar) 小节" : "从第 \(bar) 小节起播放原曲和和弦")
                 Spacer()
                 if editable && bar == barCount && bar > chordBars {
                     // An empty bar added at the end (or left over): remove it.
@@ -241,9 +248,11 @@ struct BarProgressionView: View {
                                    anchor: (bar: Int, x: CGFloat)) -> some View {
         let info = auto?.chordInfo[ev.id]
         let strong = info?.role == "backbone" || info?.role == nil
-        let confirm = auto?.toConfirm.contains { $0.eventId == ev.id } ?? false
+        // Points to confirm belong to checking; a confirmed harmony shows none.
+        let confirm = editable && (auto?.toConfirm.contains { $0.eventId == ev.id } ?? false)
         let isSelected = editable && selected == ev.id
         let isHovered = editable && hovered == ev.id
+        let isPlaying = playingId == ev.id
         let label = HStack(spacing: 2) {
             Text(continued ? "↳" : Self.breakable(ev.symbol ?? "?")).font(.system(size: strong ? 13 : 11, weight: strong ? .semibold : .medium))
                 .lineLimit(2).minimumScaleFactor(0.7).fixedSize(horizontal: false, vertical: true)
@@ -253,11 +262,13 @@ struct BarProgressionView: View {
         }
         .padding(.horizontal, roomy ? 4 : 2)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 5).fill(strong ? Theme.noteFill.opacity(continued ? 0.45 : 1) : Theme.surface))
+        .background(RoundedRectangle(cornerRadius: 5).fill(isPlaying ? Theme.accent : (strong ? Theme.noteFill.opacity(continued ? 0.45 : 1) : Theme.surface)))
+        .shadow(color: isPlaying ? Theme.accent.opacity(0.5) : .clear, radius: 6)
         .overlay(RoundedRectangle(cornerRadius: 5).stroke(isSelected ? Theme.accent : (isHovered ? Theme.accent.opacity(0.6) : (confirm ? Theme.warning : Theme.noteFill)),
                                                          style: StrokeStyle(lineWidth: isSelected ? 2.5 : (isHovered ? 1.5 : (confirm ? 1.5 : 1)),
                                                                             dash: strong || isSelected || isHovered ? [] : [3, 2])))
-        .foregroundStyle(strong ? Theme.onNote : Theme.textPrimary)
+        .foregroundStyle(isPlaying ? Theme.onAccent : (strong ? Theme.onNote : Theme.textPrimary))
+        .animation(.easeOut(duration: 0.12), value: isPlaying)
         .help("\(ev.symbol ?? "?")（\(info?.roleDisplay ?? "")）：\(info?.reason ?? "")" + (pushed ? "\n提前一个八分音符按下（按它进入的拍子显示）" : ""))
         if editable {
             label

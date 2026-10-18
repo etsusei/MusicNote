@@ -47,6 +47,7 @@ struct NotesStage: View {
         // Capture the current value before building ScrollView's content. A database
         // change alone doesn't change the captured model reference in that closure.
         let harmony = model.latestHarmony(item.id)
+        let draft = model.harmonyDraft(item.id)
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 summary
@@ -79,9 +80,8 @@ struct NotesStage: View {
                     .padding(12)
                     .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
                 }
-                if item.isHarmonic { BarLineHint(item: item) }
                 if item.isHarmonic { AutoAnalysisSection(item: item) }
-                let stale = model.harmonyStale(item)
+                let stale = draft == nil ? model.harmonyStale(item) : []
                 if !stale.isEmpty {
                     Card {
                         VStack(alignment: .leading, spacing: 6) {
@@ -97,12 +97,14 @@ struct NotesStage: View {
                     }
                 }
                 if item.isHarmonic {
-                    if let h = harmony, !h.events.isEmpty {
-                        progression(h)
-                        // Event IDs (chord-01, ...) are reused across revisions.
-                        // Reset card state when adopting a different harmony.
-                        chordCards(h).id(h.id)
-                        SkeletonSection(item: item, harmony: h, send: { playgroundSend = $0 })
+                    if draft != nil || (harmony.map { !$0.events.isEmpty } ?? false) {
+                        // 核对中: only the checking panel. 已确定: the progression, then learning material.
+                        HarmonySection(item: item, harmony: harmony, draft: draft)
+                        if draft == nil, let h = harmony {
+                            // Event IDs (chord-01, ...) are reused across revisions; reset card state per revision.
+                            chordCards(h).id(h.id)
+                            SkeletonSection(item: item, harmony: h, send: { playgroundSend = $0 })
+                        }
                     } else if model.jobs[item.id] == nil {
                         Card {
                             HStack {
@@ -167,24 +169,19 @@ struct NotesStage: View {
         }
     }
 
-    /// The progression in use, plainly.
-    private func progression(_ h: HarmonyRevision) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func chordCards(_ h: HarmonyRevision) -> some View {
+        let notes = model.confirmedMidi(item)?.notes ?? []
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("完整进行").font(.system(size: 15, weight: .semibold))
+                Text("和弦与按法").font(.system(size: 15, weight: .semibold))
                 Spacer()
                 Toggle("全部显示标准按法", isOn: $standardAll).toggleStyle(.checkbox).font(.caption12)
             }
-            Text(h.events.map { ($0.symbol ?? "未确定") }.joined(separator: "  →  ")).font(.system(size: 15, weight: .medium)).textSelection(.enabled)
-        }
-    }
-
-    private func chordCards(_ h: HarmonyRevision) -> some View {
-        let notes = model.confirmedMidi(item)?.notes ?? []
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 250, maximum: 340), spacing: 12)], spacing: 12) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 250, maximum: 340), spacing: 12)], spacing: 12) {
             ForEach(h.events) { ev in
                 ChordEventCard(item: item, harmony: h, event: ev, notes: notes, forceStandard: standardAll,
                                send: { playgroundSend = $0 })
+            }
             }
         }
     }
@@ -238,9 +235,6 @@ struct ChordEventCard: View {
     var send: (PlaygroundSendRequest) -> Void
     @ViewState private var standard = false
     @ViewState private var block = false
-    @ViewState private var editingName = false
-    @ViewState private var nameText = ""
-    @ViewState private var showNotes = false
 
     private var members: [MidiNote] { notes.filter { event.noteIds.contains($0.id) }.sorted { ($0.startUs, $0.pitch) < ($1.startUs, $1.pitch) } }
     private var relative: [PlayedVoicing.Note] {
@@ -258,14 +252,8 @@ struct ChordEventCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                if editingName {
-                    TextField("和弦名", text: $nameText).textFieldStyle(.roundedBorder).frame(width: 120)
-                        .onSubmit { rename(nameText) }
-                } else {
-                    Text(event.symbol ?? "未确定").font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(event.symbol == nil ? Theme.warning : Theme.textPrimary)
-                        .onTapGesture(count: 2) { nameText = event.symbol ?? ""; editingName = true }
-                }
+                Text(event.symbol ?? "未确定").font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(event.symbol == nil ? Theme.warning : Theme.textPrimary)
                 Text(event.degree?.display ?? "").font(.control13).foregroundStyle(Theme.textSecondary)
                 Spacer()
                 if let info = harmony.auto?.chordInfo[event.id] {
@@ -288,19 +276,8 @@ struct ChordEventCard: View {
                     Toggle("原时序", isOn: $block).toggleStyle(.checkbox).font(.caption12).help("按原曲的时序回放这个和弦的和弦音（不含旋律和经过音）")
                 }
                 Spacer()
+                // Looking and listening only; the harmony is changed in 完整进行 → 修改.
                 Menu {
-                    Section("候选名称") {
-                        ForEach(event.candidates, id: \.symbol) { c in
-                            Button("\(c.symbol)（\(c.source == .musicpy ? "Musicpy" : "模板")）") { rename(c.symbol) }
-                        }
-                    }
-                    Button("手动改名…") { nameText = event.symbol ?? ""; editingName = true }
-                    if event.manualOverride { Button("恢复自动命名") { restoreAuto() } }
-                    Divider()
-                    Button("查看/排除参与命名的音…") { showNotes = true }
-                    Button("与下一个合并") { model.mergeEvent(item.id, eventId: event.id) }
-                    Button("从中间拆分") { model.splitEvent(item.id, eventId: event.id) }
-                    Divider()
                     Button("加入学习收藏") { collect() }
                     Button("送入 Playground…") { send(PlaygroundSendRequest(itemId: item.id, kind: .chord(event.id))) }
                 } label: { Image(systemName: "ellipsis.circle") }
@@ -312,7 +289,6 @@ struct ChordEventCard: View {
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.borderSubtle))
-        .popover(isPresented: $showNotes) { notesPopover }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(event.symbol ?? "未确定") \(event.degree?.display ?? "")，音符 \(shownPitches.map { Pitch.noteName($0) }.joined(separator: " "))")
     }
@@ -332,25 +308,6 @@ struct ChordEventCard: View {
         return Double(event.durationUs) / g.beatUs
     }
 
-    private var notesPopover: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("参与命名的音（排除只影响命名，不删除 MIDI）").font(.caption12).foregroundStyle(Theme.textSecondary)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(members) { n in
-                        Toggle(isOn: Binding(get: { !event.excludedNoteIds.contains(n.id) }, set: { on in toggleExclude(n.id, include: on) })) {
-                            HStack {
-                                Text(Pitch.noteName(n.pitch)).font(.mono13).frame(width: 44, alignment: .leading)
-                                Text(formatTime(us: n.startUs)).font(.caption12)
-                                if let r = event.noteRoles[n.id] { Text(r.display).font(.caption12).foregroundStyle(r == .chordTone ? Theme.textSecondary : Theme.accent) }
-                            }
-                        }.toggleStyle(.checkbox)
-                    }
-                }
-            }.frame(maxHeight: 280)
-        }
-        .padding(12).frame(width: 260)
-    }
 
     private func play() {
         if useStandard { AudioEngine.shared.playChord(shownPitches); return }
@@ -359,32 +316,6 @@ struct ChordEventCard: View {
             return
         }
         AudioEngine.shared.playChord(shownPitches, duration: min(2.5, max(0.8, Double(event.durationUs) / 1e6)))
-    }
-
-    private func rename(_ s: String) {
-        editingName = false
-        let t = s.trimmingCharacters(in: .whitespaces)
-        model.updateEvent(item.id, eventId: event.id) { ev, key in
-            ev.symbol = t.isEmpty ? nil : t
-            ev.manualOverride = true
-            ev.namingSource = .user
-            ev.degree = ev.symbol.flatMap { Degrees.label(symbol: $0, key: key) }
-        }
-    }
-
-    private func restoreAuto() {
-        model.updateEvent(item.id, eventId: event.id) { ev, key in
-            ev.manualOverride = false
-            ev.symbol = ev.candidates.first?.symbol
-            ev.namingSource = ev.candidates.first?.source
-            ev.degree = ev.symbol.flatMap { Degrees.label(symbol: $0, key: key) }
-        }
-    }
-
-    private func toggleExclude(_ id: UUID, include: Bool) {
-        model.updateEvent(item.id, eventId: event.id, rename: true) { ev, _ in
-            if include { ev.excludedNoteIds.removeAll { $0 == id } } else if !ev.excludedNoteIds.contains(id) { ev.excludedNoteIds.append(id) }
-        }
     }
 
     private func collect() {
