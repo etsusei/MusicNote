@@ -770,6 +770,17 @@ struct VoicingList: View {
                             Text(v.description).font(.caption12).foregroundStyle(Theme.textSecondary)
                         }
                     }
+                    .contentShape(Rectangle())
+                    .onDrag {   // into 灵感进行: the same notes ▶ plays
+                        let beats = (item.timing?.grid.beatUs).map { Double(e.durationUs) / $0 } ?? 4
+                        let p = ChordDragPayload(chords: [InspirationChord(symbol: e.symbol ?? "?", startQ: 0, lengthQ: max(0.5, (beats * 2).rounded() / 2),
+                                                                           pitches: pitches, sourceLabel: "\(model.song(item.songId)?.title ?? item.title) \(item.timing.map { harmony.position(of: e.startUs, grid: $0.grid) } ?? "")",
+                                                                           sourceAnalysisId: item.id)],
+                                                 wholeBar: false, bpm: item.timing?.bpm)
+                        model.beginChordDrag(p)
+                        return NSItemProvider(object: p.encoded as NSString)
+                    }
+                    .help("拖进灵感进行")
                 }
             }
         }
