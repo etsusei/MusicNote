@@ -280,9 +280,14 @@ public final class Pipeline: @unchecked Sendable {
     /// notes held into the selection have their onsets. Returns the lead-in length to subtract.
     public func stemForTranscription(_ asset: StemAsset, leadInUs: Int64?, workDir: URL) async throws -> (path: String, leadInUs: Int64) {
         let stemPath = paths.url(relative: asset.relativePath).path
-        guard let lead = asset.leadInPath, let us = leadInUs, us > 0,
-              FileManager.default.fileExists(atPath: paths.url(relative: lead).path) else { return (stemPath, 0) }
         try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+        guard let lead = asset.leadInPath, let us = leadInUs, us > 0,
+              FileManager.default.fileExists(atPath: paths.url(relative: lead).path) else {
+            // No audio before the selection (it starts at the top of the song, or an older
+            // separation): pad with silence instead, so a chord struck at 0 still has an onset.
+            let out = workDir.appendingPathComponent("\(asset.kind.rawValue)-padded.wav")
+            return try await padWithSilence(stemPath, to: out) ? (out.path, Self.silencePadUs) : (stemPath, 0)
+        }
         let out = workDir.appendingPathComponent("\(asset.kind.rawValue)-with-leadin.wav")
         let fmt = "aformat=sample_fmts=flt:sample_rates=44100:channel_layouts=stereo"
         let w = WorkerProcess(tools.ffmpeg, ["-v", "error", "-nostdin", "-y", "-i", paths.url(relative: lead).path, "-i", stemPath,
@@ -291,6 +296,21 @@ public final class Pipeline: @unchecked Sendable {
         let r = try await w.run()
         guard r.status == 0 else { return (stemPath, 0) } // fall back to the plain stem
         return (out.path, us)
+    }
+
+    /// Transcribers miss notes struck right at the start of a file: with no audio before the
+    /// attack there is no onset to see (MuScriptor dropped Puppet's first chord at 0.03 s and
+    /// found it with a second of silence in front). Callers subtract this with trimLeadIn.
+    public static let silencePadUs: Int64 = 1_000_000
+
+    public func padWithSilence(_ input: String, to out: URL) async throws -> Bool {
+        let fmt = "aformat=sample_fmts=flt:sample_rates=44100:channel_layouts=stereo"
+        let w = WorkerProcess(tools.ffmpeg, ["-v", "error", "-nostdin", "-y",
+                                             "-f", "lavfi", "-t", String(Double(Self.silencePadUs) / 1e6), "-i", "anullsrc=r=44100:cl=stereo",
+                                             "-i", input,
+                                             "-filter_complex", "[0:a]\(fmt)[a0];[1:a]\(fmt)[a1];[a0][a1]concat=n=2:v=0:a=1[a]",
+                                             "-map", "[a]", "-c:a", "pcm_f32le", out.path])
+        return try await w.run().status == 0
     }
 
     /// Back to selection time: notes struck in the lead-in and held into the selection start at 0.
@@ -347,6 +367,7 @@ public final class Pipeline: @unchecked Sendable {
                                           "device": tools.muscriptorDevice, "stem": stem.rawValue,
                                           "inputSha": Self.fingerprint(url: URL(fileURLWithPath: stemPath), bytes: asset.bytes),
                                           "leadIn": String(format: "%.2fs", Double(input.leadInUs) / 1e6),
+                                          "startContext": item.separation?.leadInUs ?? 0 > 0 && input.leadInUs != Self.silencePadUs ? "lead-in" : (input.leadInUs > 0 ? "silence" : "none"),
                                           "seconds": String(format: "%.1f", seconds), "velocity": "default 100"],
                             notes: notes)
     }

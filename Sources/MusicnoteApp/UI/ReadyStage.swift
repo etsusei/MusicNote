@@ -64,6 +64,21 @@ struct NotesStage: View {
                     .padding(12)
                     .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
                 }
+                if item.trimStartUs == 0, let stem = item.selectedStem, let midi = model.confirmedMidi(item),
+                   midi.transcriber["startContext"] == nil, midi.transcriber["tool"] == "MuScriptor" {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "waveform.badge.plus").foregroundStyle(Theme.accent)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("从歌曲开头截的：第一个和弦可能没转到").font(.system(size: 13, weight: .semibold))
+                            Text("转录模型看不到文件最开头的起音，开头的和弦会被漏掉。现在转录前会在前面垫一秒静音，重新转录就能补上。会生成新的 MIDI 和和声版本，笔记、标签和旧版本都保留。")
+                                .font(.caption12).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                        Button("重新转录") { model.transcribe(item.id, stem: stem) }.buttonStyle(SecondaryButtonStyle(compact: true))
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+                }
                 if item.isHarmonic { BarLineHint(item: item) }
                 if item.isHarmonic { AutoAnalysisSection(item: item) }
                 let stale = model.harmonyStale(item)

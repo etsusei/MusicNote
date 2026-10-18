@@ -272,6 +272,11 @@ public final class AutoToolbox: @unchecked Sendable {
                 try await pipeline.extractClip(wider, to: clip)
             }
             path = clip.path; offset = 0
+            if pre == 0 {
+                // The selection starts at the top of the song: silence in front instead of a pre-roll.
+                let padded = dir.appendingPathComponent("original-padded.wav")
+                if try await pipeline.padWithSilence(clip.path, to: padded) { path = padded.path; pre = Pipeline.silencePadUs }
+            }
         }
         nonisolated(unsafe) var notes: [EvidenceNote] = []
         nonisolated(unsafe) var dropped: [String: Int] = [:]
