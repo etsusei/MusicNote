@@ -35,6 +35,8 @@ struct BarProgressionView: View {
     @ViewState private var renaming: String?
     @ViewState private var pendingAdd: (start: Int64, end: Int64)?
     @ViewState private var nameText = ""
+    /// Where the name popover points: the bar and the position across it.
+    @ViewState private var popoverAt: (bar: Int, x: CGFloat)?
 
     struct DragState {
         enum Kind { case move, left, right }
@@ -89,8 +91,6 @@ struct BarProgressionView: View {
         .coordinateSpace(name: "bars")
         .onPreferenceChange(CellFramesKey.self) { frames = $0 }
         .onChange(of: chordBars) { _, n in if n >= minBars { minBars = 0 } }
-        .popover(isPresented: Binding(get: { renaming != nil || pendingAdd != nil },
-                                      set: { if !$0 { renaming = nil; pendingAdd = nil } })) { namePopover }
     }
 
     private var addBarButton: some View {
@@ -148,9 +148,17 @@ struct BarProgressionView: View {
         let span = Double(e - s)
         let segs = reading.filter { $0.s < e && $0.e > s }
         return VStack(alignment: .leading, spacing: 3) {
-            Button { model.audition(item.id, startUs: max(0, s), endUs: min(item.durationUs, e), original: true) } label: {
-                HStack(spacing: 3) { Text("\(bar)").font(.system(size: 11, weight: .semibold)); Image(systemName: "speaker.wave.2").font(.system(size: 9)) }
-            }.buttonStyle(.borderless).foregroundStyle(Theme.textSecondary).help("听原曲第 \(bar) 小节")
+            HStack(spacing: 0) {
+                Button { model.audition(item.id, startUs: max(0, s), endUs: min(item.durationUs, e), original: true) } label: {
+                    HStack(spacing: 3) { Text("\(bar)").font(.system(size: 11, weight: .semibold)); Image(systemName: "speaker.wave.2").font(.system(size: 9)) }
+                }.buttonStyle(.borderless).foregroundStyle(Theme.textSecondary).help("听原曲第 \(bar) 小节")
+                Spacer()
+                if editable && bar == barCount && bar > chordBars {
+                    // An empty bar added at the end (or left over): remove it.
+                    Button { minBars = barCount - 1 <= chordBars ? 0 : barCount - 1 } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
+                        .buttonStyle(.borderless).foregroundStyle(Theme.textSecondary).help("删除这个空小节")
+                }
+            }
             GeometryReader { geo in
                 let w = geo.size.width
                 let x = { (us: Int64) -> CGFloat in w * CGFloat(Double(us - s) / span) }
@@ -170,7 +178,8 @@ struct BarProgressionView: View {
                         let cw = max(14, x(x1) - x(x0) - 2)
                         let origin = CGPoint(x: (frames[bar]?.minX ?? 0) + x(x0), y: frames[bar]?.minY ?? 0)
                         chip(r.ev, continued: r.s < s - 20_000, endsHere: r.e <= e + 20_000, roomy: cw > 70,
-                             pushed: r.pushed && r.s >= s - 20_000, width: cw, origin: origin)
+                             pushed: r.pushed && r.s >= s - 20_000, width: cw, origin: origin,
+                             anchor: (bar, (x(x0) + cw / 2) / max(1, w)))
                             .frame(width: cw, height: geo.size.height - 8)
                             .offset(x: x(x0))
                             .opacity(drag?.id == r.ev.id && drag?.moved == true ? 0.35 : 1)
@@ -195,6 +204,10 @@ struct BarProgressionView: View {
         .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 6).fill(Theme.background))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.borderSubtle))
+        // The name popover points at this bar's edge, under where the "+" or the chord was.
+        .popover(isPresented: Binding(get: { popoverAt?.bar == bar && (renaming != nil || pendingAdd != nil) },
+                                      set: { if !$0 { renaming = nil; pendingAdd = nil; popoverAt = nil } }),
+                 attachmentAnchor: .point(UnitPoint(x: popoverAt?.bar == bar ? popoverAt!.x : 0.5, y: 1)), arrowEdge: .bottom) { namePopover }
     }
 
     /// Empty time: a faint "+" follows the pointer (snapped); clicking adds a chord there that
@@ -216,6 +229,7 @@ struct BarProgressionView: View {
                 let end = min(next, e)
                 guard end - t >= eighthUs - 2_000 else { return }
                 renaming = nil; nameText = ""; pendingAdd = (t, end)
+                popoverAt = (bar, min(1, max(0, p.x / max(1, width))))
             }
     }
 
@@ -223,7 +237,8 @@ struct BarProgressionView: View {
 
     /// `origin`: this segment's top-left in the shared "bars" space, to turn chip-local pointer
     /// positions into times anywhere in the grid (drags can cross bars).
-    @ViewBuilder private func chip(_ ev: ChordEvent, continued: Bool, endsHere: Bool, roomy: Bool, pushed: Bool, width: CGFloat, origin: CGPoint) -> some View {
+    @ViewBuilder private func chip(_ ev: ChordEvent, continued: Bool, endsHere: Bool, roomy: Bool, pushed: Bool, width: CGFloat, origin: CGPoint,
+                                   anchor: (bar: Int, x: CGFloat)) -> some View {
         let info = auto?.chordInfo[ev.id]
         let strong = info?.role == "backbone" || info?.role == nil
         let confirm = auto?.toConfirm.contains { $0.eventId == ev.id } ?? false
@@ -256,9 +271,9 @@ struct BarProgressionView: View {
                 }
                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .local)
                     .onChanged { v in pointerChanged(ev, v, continued: continued, endsHere: endsHere, width: width, origin: origin) }
-                    .onEnded { v in pointerEnded(ev, v) })
+                    .onEnded { v in pointerEnded(ev, v, anchor: anchor) })
                 .contextMenu {
-                    Button("改名…") { selected = ev.id; startRename(ev) }
+                    Button("改名…") { selected = ev.id; startRename(ev, at: anchor) }
                     Button("删除", role: .destructive) {
                         let id = ev.id; selected = nil
                         edit? { st, g, _ in try HarmonyEdit.delete(&st, id: id, grid: g) }
@@ -296,7 +311,7 @@ struct BarProgressionView: View {
         drag = d
     }
 
-    private func pointerEnded(_ ev: ChordEvent, _ v: DragGesture.Value) {
+    private func pointerEnded(_ ev: ChordEvent, _ v: DragGesture.Value, anchor: (bar: Int, x: CGFloat)) {
         defer { drag = nil }
         guard let d = drag else { return }
         if d.moved {
@@ -312,7 +327,7 @@ struct BarProgressionView: View {
         // A click: two on the same chord within 0.35 s rename it.
         if let c = lastClick, c.id == ev.id, Date().timeIntervalSince(c.at) < 0.35 {
             lastClick = nil
-            startRename(ev)
+            startRename(ev, at: anchor)
         } else {
             lastClick = (ev.id, Date())
         }
@@ -320,32 +335,40 @@ struct BarProgressionView: View {
 
     // MARK: Naming
 
-    private func startRename(_ ev: ChordEvent) { nameText = ev.symbol ?? ""; pendingAdd = nil; renaming = ev.id }
+    private func startRename(_ ev: ChordEvent, at anchor: (bar: Int, x: CGFloat)? = nil) {
+        nameText = ev.symbol ?? ""; pendingAdd = nil; renaming = ev.id
+        if let anchor { popoverAt = anchor; return }
+        // From the toolbar: the bar where the chord starts.
+        let bar = max(1, barOf(ev.startUs)), s = BarEvidence.barStartUs(bar, grid: grid)
+        popoverAt = (bar, CGFloat(min(1, max(0, Double(ev.startUs - s) / perBarUs + 0.1))))
+    }
 
     private var namePopover: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(pendingAdd.map { "添加和弦（\(harmony.position(of: $0.start, grid: grid))）" } ?? "改和弦名")
                 .font(.system(size: 13, weight: .semibold))
-            TextField("如 Am7、G7/B、Fmaj9", text: $nameText).textFieldStyle(.roundedBorder).frame(width: 220)
+            TextField("如 am7、g7/b、fmaj9（不分大小写）", text: $nameText).textFieldStyle(.roundedBorder).frame(width: 240)
                 .onSubmit(commitName)
-            if !nameText.isEmpty && ChordSymbol.parse(nameText) == nil {
+            let normalized = ChordSymbol.normalizeInput(nameText)
+            if !nameText.isEmpty && normalized == nil {
                 Text("看不懂这个和弦名").font(.caption12).foregroundStyle(Theme.warning)
-            } else if let p = StandardVoicing.pitches(symbol: nameText) {
-                Text("按标准按法写入：" + p.map { Pitch.noteName($0) }.joined(separator: " ")).font(.caption12).foregroundStyle(Theme.textSecondary)
+            } else if let n = normalized, let p = StandardVoicing.pitches(symbol: n) {
+                Text((n != nameText.trimmingCharacters(in: .whitespaces) ? "写成 \(n) · " : "") + "按标准按法写入：" + p.map { Pitch.noteName($0) }.joined(separator: " "))
+                    .font(.caption12).foregroundStyle(Theme.textSecondary)
             }
             HStack {
                 Spacer()
-                Button("取消") { renaming = nil; pendingAdd = nil }
-                Button("确定") { commitName() }.buttonStyle(PrimaryButtonStyle()).disabled(ChordSymbol.parse(nameText) == nil)
+                Button("取消") { renaming = nil; pendingAdd = nil; popoverAt = nil }
+                Button("确定") { commitName() }.buttonStyle(PrimaryButtonStyle()).disabled(ChordSymbol.normalizeInput(nameText) == nil)
             }
         }
         .padding(14)
     }
 
     private func commitName() {
-        guard ChordSymbol.parse(nameText) != nil else { return }
+        guard let name = ChordSymbol.normalizeInput(nameText) else { return }
         // A renamed or added chord sounds as its standard voicing (the MIDI follows the name).
-        let name = nameText, voicing = true
+        let voicing = true
         if let r = pendingAdd {
             edit? { st, g, key in
                 let id = try HarmonyEdit.add(&st, start: r.start, end: r.end, symbol: name, key: key, grid: g, writeVoicing: voicing)
@@ -354,7 +377,7 @@ struct BarProgressionView: View {
         } else if let id = renaming {
             edit? { st, _, key in try HarmonyEdit.rename(&st, id: id, symbol: name, key: key, writeVoicing: voicing) }
         }
-        renaming = nil; pendingAdd = nil
+        renaming = nil; pendingAdd = nil; popoverAt = nil
     }
 
     /// Lets a narrow chip wrap a long name before its extension or bass ("Fm" / "(add9)", "A♭maj7" / "/B♭").

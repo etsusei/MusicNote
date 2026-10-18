@@ -144,6 +144,36 @@ public struct ChordSpec: Hashable, Sendable {
 }
 
 public enum ChordSymbol {
+    /// Typed input to a chord symbol, case-insensitively: "am7" → "Am7", "f#m7/c#" → "F♯m7/C♯",
+    /// "ebmaj7" → "E♭maj7", "CMAJ7" → "Cmaj7". Root and bass letters are capitalised and their
+    /// accidentals written ♯/♭; the quality is tried as typed (so "CM7" stays a major seventh),
+    /// then lower-cased. Nil when it still isn't a chord.
+    public static func normalizeInput(_ raw: String) -> String? {
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        guard let f = t.first, "abcdefgABCDEFG".contains(f) else { return nil }
+        func note(_ s: Substring) -> (String, Substring) {
+            var out = s.prefix(1).uppercased()
+            var rest = s.dropFirst()
+            if let a = rest.first, "#♯".contains(a) { out += "♯"; rest = rest.dropFirst() }
+            else if let a = rest.first, "b♭".contains(a) { out += "♭"; rest = rest.dropFirst() }
+            return (out, rest)
+        }
+        let parts = t.split(separator: "/", maxSplits: 1)
+        let (root, quality) = note(parts[0])
+        var bass = ""
+        if parts.count > 1 {
+            guard let b = parts[1].first, "abcdefgABCDEFG".contains(b) else { return nil }
+            let (bn, extra) = note(parts[1])
+            guard extra.isEmpty else { return nil }
+            bass = "/" + bn
+        }
+        for q in [String(quality), quality.lowercased()] {
+            let candidate = root + q + bass
+            if parse(candidate) != nil { return candidate }
+        }
+        return nil
+    }
+
     /// Parses chord symbols like "Dm7", "G7♯9", "C/E", "B♭maj7(♯11)", "F♯ø", "E♭7(b9,#11)".
     /// Returns nil for anything that isn't confidently a chord (plain words stay text).
     public static func parse(_ raw: String) -> ChordSpec? {

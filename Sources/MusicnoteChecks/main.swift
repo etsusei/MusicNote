@@ -496,5 +496,10 @@ do {
     check((try? HarmonyEdit.rename(&st, id: "a", symbol: "Hello", key: cMajor, writeVoicing: true)) == nil, "bad chord name refused")
 } catch { check(false, "harmony edit: \(error)") }
 
+// Typed chord names are case-insensitive and come out in the app's spelling.
+eq(["am7", "f#m7/c#", "ebmaj7", "CMAJ7", "g7/b", "bb", "Bbm9", "cm7", "C7(b9)"].map { ChordSymbol.normalizeInput($0) ?? "nil" },
+   ["Am7", "F♯m7/C♯", "E♭maj7", "Cmaj7", "G7/B", "B♭", "B♭m9", "Cm7", "C7(b9)"], "chord input normalised")
+check(ChordSymbol.normalizeInput("hello") == nil && ChordSymbol.normalizeInput("") == nil, "non-chords rejected")
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
