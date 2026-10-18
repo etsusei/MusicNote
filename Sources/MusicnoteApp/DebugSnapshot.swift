@@ -124,7 +124,9 @@ enum DebugFlow {
             note("stems \(model.item(id)!.separation!.stems.map { "\($0.kind.rawValue):\($0.level.rawValue)" })")
             await shot("3-stems")
             model.transcribe(id, stem: .piano)
-            // No proofreading stop: transcription is confirmed and harmony starts on its own.
+            // One stop: bar 1 is confirmed (kept as is here), then harmony runs.
+            guard await wait("transcription", { model.item(id)?.state == .editingMidi }) else { NSApp.terminate(nil); return }
+            model.confirmBarOne(id, atUs: nil)
             guard await wait("harmony", { model.item(id)?.state == .ready && model.jobs[id] == nil }) else { NSApp.terminate(nil); return }
             let item = model.item(id)!
             let h = model.latestHarmony(id)

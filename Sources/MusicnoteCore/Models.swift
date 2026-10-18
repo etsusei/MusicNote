@@ -178,7 +178,7 @@ public enum AnalysisState: String, Codable, Sendable {
         case .separating: "拆轨中"
         case .awaitingStem: "待选分轨"
         case .transcribing: "转录中"
-        case .editingMidi: "转录完成"
+        case .editingMidi: "确认第 1 小节"
         case .harmonizing: "和声分析中"
         case .ready: "完成"
         }

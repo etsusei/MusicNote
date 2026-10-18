@@ -53,7 +53,7 @@ struct AnalysisPage: View {
                     case .awaitingStem:
                         StemStage(item: item, transport: transport)
                     case .editingMidi:
-                        TranscribedStage(item: item, transport: transport)
+                        BarOneStage(item: item, transport: transport)
                     case .ready:
                         ReadyStage(item: item, transport: transport)
                     }
@@ -558,30 +558,5 @@ struct StemStage: View {
 
     private func toggle() {
         if AudioEngine.shared.isPlaying { AudioEngine.shared.pause() } else { AudioEngine.shared.play() }
-    }
-}
-
-/// Clips left waiting at the old proofreading step: continue with the transcription as is,
-/// or open the MIDI editor first if wanted.
-struct TranscribedStage: View {
-    @Environment(AppModel.self) private var model
-    var item: AnalysisItem
-    var transport: TransportModel
-    @ViewState private var editing = false
-
-    var body: some View {
-        if editing {
-            MidiStage(item: item, transport: transport)
-        } else {
-            VStack(spacing: 14) {
-                Text("转录完成").font(.system(size: 16, weight: .semibold))
-                Text("不再需要逐个校对 MIDI：直接用转录结果分析和声，之后在结果页的 MIDI 标签里仍可修改。").font(.caption12).foregroundStyle(Theme.textSecondary)
-                HStack {
-                    Button("继续分析和声") { model.confirmMidi(item.id) }.buttonStyle(PrimaryButtonStyle())
-                    Button("先打开 MIDI") { editing = true }.buttonStyle(SecondaryButtonStyle())
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
     }
 }

@@ -519,9 +519,9 @@ final class AppModel {
             guard var cur = self.item(itemId) else { return }
             cur.state = .editingMidi
             self.save(cur)
-            // No proofreading stop: the transcription is taken as is and harmony starts right away.
-            // The MIDI tab on the result page still allows fixes later.
-            self.confirmMidi(itemId)
+            // One stop before harmony: the user picks the note bar 1 starts on (BarOneStage), then
+            // harmony runs. Stems without harmony go straight on.
+            if !cur.isHarmonic { self.confirmMidi(itemId) }
         }, onError: { [weak self] error in
             guard let self, var cur = self.item(itemId) else { return }
             cur.state = .awaitingStem
@@ -811,6 +811,39 @@ extension AppModel {
     }
 
     func cancelAutoAnalysis(_ itemId: UUID) { autoTasks[itemId]?.cancel() }
+
+    /// Bar 1 and the beat phase start at a note the user picked; the tempo stays.
+    func setBarOne(_ itemId: UUID, atUs us: Int64) {
+        guard var item = item(itemId), var t = item.timing else { return }
+        t.barAnchorUs = us
+        t.beatOriginUs = us
+        item.timing = t
+        item.timingRevision += 1
+        save(item)
+    }
+
+    /// After transcription: bar 1 picked (or kept), then harmony.
+    func confirmBarOne(_ itemId: UUID, atUs us: Int64?) {
+        if let us { setBarOne(itemId, atUs: us) }
+        confirmMidi(itemId)
+    }
+
+    /// Later, from the notes page: a model harmony is re-read in the new grid, a program one regrouped.
+    func changeBarOne(_ itemId: UUID, atUs us: Int64) {
+        setBarOne(itemId, atUs: us)
+        harmonyFollowsTiming(itemId)
+    }
+
+    private func harmonyFollowsTiming(_ itemId: UUID) {
+        guard let item = item(itemId) else { return }
+        if var h = latestHarmony(itemId), h.params["algorithm"] == "agent" {
+            h.timingRevision = item.timingRevision
+            h.params["barAnchorUs"] = String(item.timing?.barAnchorUs ?? 0)
+            saveHarmony(h)
+        } else if item.isHarmonic, confirmedMidi(item) != nil {
+            runHarmony(itemId)
+        }
+    }
 
     /// Moves the bar lines by whole or half beats; note times stay. A half beat also moves the
     /// beat phase. An adopted model result only needs re-reading in the new grid; a program

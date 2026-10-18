@@ -37,6 +37,7 @@ struct NotesStage: View {
     @ViewState private var playgroundSend: PlaygroundSendRequest?
     @ViewState private var confirmRegroup = false
     @ViewState private var confirmResplit = false
+    @ViewState private var pickingBarOne = false
 
     /// Re-grouping replaces an adopted model result as the current harmony, so ask first.
     private func regroup() {
@@ -211,10 +212,20 @@ struct NotesStage: View {
                     .buttonStyle(SecondaryButtonStyle())
             }
             Spacer()
+            if item.timing != nil, model.confirmedMidi(item) != nil {
+                Button("重新选择第 1 小节…") { pickingBarOne = true }.buttonStyle(.borderless).font(.caption12)
+                    .help("对着 MIDI 指认第 1 小节从哪个音开始")
+            }
             if item.timing != nil {
                 Button("重新拆轨选轨…") { confirmResplit = true }.buttonStyle(.borderless).font(.caption12)
                     .help("重新拆出六条分轨，回到选轨（可以多选合并）")
             }
+        }
+        .sheet(isPresented: $pickingBarOne) {
+            BarOneView(item: item, confirmTitle: "就从这里开始",
+                       onConfirm: { us in model.changeBarOne(item.id, atUs: us); pickingBarOne = false },
+                       onKeep: { pickingBarOne = false })
+                .padding(20).frame(width: 760).environment(model)
         }
         .confirmationDialog("重新拆轨并选轨？", isPresented: $confirmResplit) {
             Button("重新拆轨") { if let t = item.timing { model.confirmAndSeparate(item.id, timing: t) } }

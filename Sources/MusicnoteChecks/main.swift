@@ -564,5 +564,16 @@ do {
     check(!(0..<8).contains { nudged.isDownbeat(q: nudged.q(atUs: 180_000) + Double($0)) }, "(the unanchored grid had none: Logic's empty-grid error)")
 }
 
+// Bar 1 picking: notes struck together are one onset; the current bar 1 preselects the nearest.
+do {
+    let ns = [MidiNote(pitch: 48, startUs: 180_000, endUs: 900_000), MidiNote(pitch: 55, startUs: 200_000, endUs: 900_000),
+              MidiNote(pitch: 72, startUs: 40_000, endUs: 160_000), MidiNote(pitch: 50, startUs: 700_000, endUs: 1_200_000),
+              MidiNote(pitch: 52, startUs: 9_000_000, endUs: 9_500_000)]
+    let on = BarOne.onsets(ns, untilUs: 8_000_000)
+    eq(on.map(\.us), [40_000, 180_000, 700_000], "onsets grouped within 60 ms, window respected")
+    eq(on[1].pitches, [48, 55], "chord tones of one onset")
+    eq(BarOne.nearest(on, to: 150_000)?.us, 180_000, "preselect the onset nearest the current bar 1")
+}
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
