@@ -11,7 +11,10 @@ struct MusicnoteApp: App {
                 .environment(model)
                 .frame(minWidth: 900, minHeight: 600)
                 .tint(Theme.accent)
-                .onAppear { NSApp.activate(ignoringOtherApps: true); model.applyTheme(); DebugSnapshot.runIfRequested(model) }
+                .onAppear {
+                    NSApp.activate(ignoringOtherApps: true); model.applyTheme(); DebugSnapshot.runIfRequested(model)
+                    if ProcessInfo.processInfo.environment["MUSICNOTE_SNAPSHOT_DIR"] == nil { InspirationWindow.shared.restore(model) }
+                }
         }
         .defaultSize(width: 1440, height: 900)
         .commands {

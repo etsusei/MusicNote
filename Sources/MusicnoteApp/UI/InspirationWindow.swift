@@ -9,9 +9,22 @@ import UniformTypeIdentifiers
 final class InspirationWindow: NSObject, NSWindowDelegate {
     static let shared = InspirationWindow()
     private var panel: NSPanel?
+
+    override init() {
+        super.init()
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { InspirationWindow.shared.isTerminating = true }
+        }
+    }
     var isVisible: Bool { panel?.isVisible ?? false }
 
-    func toggle(_ model: AppModel) { isVisible ? panel?.orderOut(nil) : show(model) }
+    func toggle(_ model: AppModel) {
+        if isVisible { panel?.orderOut(nil); UserDefaults.standard.set(false, forKey: Self.openKey) } else { show(model) }
+    }
+
+    /// Reopened at launch if it was open when the app quit.
+    static let openKey = "inspirationWindowOpen"
+    func restore(_ model: AppModel) { if UserDefaults.standard.bool(forKey: Self.openKey) { show(model) } }
 
     func show(_ model: AppModel) {
         if panel == nil {
@@ -34,10 +47,16 @@ final class InspirationWindow: NSObject, NSWindowDelegate {
             panel = p
         }
         panel?.orderFront(nil)
+        UserDefaults.standard.set(true, forKey: Self.openKey)
         model.dataVersion += 1
     }
 
-    func windowWillClose(_ notification: Notification) {}
+    func windowWillClose(_ notification: Notification) {
+        // Closed by the user (not by quitting the app).
+        if !isTerminating { UserDefaults.standard.set(false, forKey: Self.openKey) }
+    }
+
+    var isTerminating = false
 }
 
 /// Bottom-right of the main area: opens / closes the 灵感进行 window.
@@ -129,6 +148,23 @@ struct InspirationPanelView: View {
 
 // MARK: - Bars
 
+/// Cell frames and the drop ghost, shared by the view and its drop delegate (which holds a copy
+/// of the view: a reference keeps both on the same state, so the ghost always clears).
+@Observable final class InspirationBarsGeometry {
+    var frames: [Int: CGRect] = [:]
+    var dropGhost: (start: Double, length: Double)?
+}
+
+/// A chord drag in progress (transient: resets by itself when the gesture ends or is cancelled).
+struct InspirationDrag: Equatable {
+    var id: String
+    var kind: Int // 0 move, 1 left edge, 2 right edge
+    var grab: Double
+    var ghost: (Double, Double)
+    var moved: Bool
+    static func == (a: Self, b: Self) -> Bool { a.id == b.id && a.kind == b.kind && a.ghost == b.ghost && a.moved == b.moved }
+}
+
 private struct InspirationFramesKey: PreferenceKey {
     static let defaultValue: [Int: CGRect] = [:]
     static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) { value.merge(nextValue()) { $1 } }
@@ -148,12 +184,13 @@ struct InspirationBarsView: View {
     var displayName: ((InspirationChord) -> String)? = nil
     var compact = false
 
-    @ViewState private var frames: [Int: CGRect] = [:]
+    @ViewState private var geo = InspirationBarsGeometry()
     @ViewState private var selected: String?
     @ViewState private var hovered: String?
     @ViewState private var plus: (bar: Int, q: Double)?
-    @ViewState private var drag: (id: String, kind: Int, grab: Double, ghost: (Double, Double), moved: Bool)? // kind 0 move, 1 left, 2 right
-    @ViewState private var dropGhost: (start: Double, length: Double)?
+    @GestureState private var drag: InspirationDrag?
+    private var frames: [Int: CGRect] { geo.frames }
+    private var dropGhost: (start: Double, length: Double)? { geo.dropGhost }
     @ViewState private var lastClick: (id: String, at: Date)?
     @ViewState private var naming: (id: String?, start: Double, end: Double, bar: Int, x: CGFloat)?
     @ViewState private var nameText = ""
@@ -171,7 +208,7 @@ struct InspirationBarsView: View {
             }
         }
         .coordinateSpace(name: "ibars")
-        .onPreferenceChange(InspirationFramesKey.self) { frames = $0 }
+        .onPreferenceChange(InspirationFramesKey.self) { geo.frames = $0 }
         .onDrop(of: [.plainText, .utf8PlainText], delegate: ChordDropDelegate(view: self))
     }
 
@@ -185,7 +222,7 @@ struct InspirationBarsView: View {
         return Double(bar - 1) * 4 + 4 * min(1, max(0, Double((p.x - f.minX) / max(1, f.width))))
     }
 
-    func setDropGhost(_ g: (start: Double, length: Double)?) { dropGhost = g }
+    func setDropGhost(_ g: (start: Double, length: Double)?) { geo.dropGhost = g }
 
     func performDrop(_ payload: ChordDragPayload, at q: Double) {
         let start = payload.wholeBar ? InspirationEdit.snapBar(q) : InspirationEdit.snap(q)
@@ -193,7 +230,7 @@ struct InspirationBarsView: View {
             if p.chords.isEmpty, let bpm = payload.bpm { p.bpm = bpm.rounded() }
             InspirationEdit.drop(&p, payload.chords, at: start)
         }
-        dropGhost = nil
+        geo.dropGhost = nil
     }
 
     // MARK: Cells
@@ -239,7 +276,7 @@ struct InspirationBarsView: View {
     }
 
     @ViewBuilder private func ghost(s: Double, e: Double, x: (Double) -> CGFloat, height: CGFloat) -> some View {
-        let g: (Double, Double)? = dropGhost.map { ($0.start, $0.start + $0.length) } ?? (drag?.moved == true ? drag!.ghost : nil)
+        let g: (Double, Double)? = dropGhost.map { ($0.start, $0.start + $0.length) } ?? (drag?.moved == true ? drag?.ghost : nil)
         if let g, g.0 < e, g.1 > s {
             let a = max(s, g.0), b = min(e, g.1)
             RoundedRectangle(cornerRadius: 5).fill(Theme.accent.opacity(0.25))
@@ -291,8 +328,15 @@ struct InspirationBarsView: View {
                     } else { if hovered == c.id { hovered = nil }; NSCursor.arrow.set() }
                 }
                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                    .onChanged { v in pointer(c, v, continued: continued, endsHere: endsHere, width: width, origin: origin) }
-                    .onEnded { _ in released(c, anchor: anchor) })
+                    .updating($drag) { v, state, _ in
+                        let first = state == nil
+                        state = track(c, v, from: state, continued: continued, endsHere: endsHere, width: width, origin: origin)
+                        if first, let d = state {
+                            // Press: select and sound at once.
+                            DispatchQueue.main.async { selected = c.id; if d.kind == 0 { AudioEngine.shared.playChord(c.pitches, duration: 1.4) } }
+                        }
+                    }
+                    .onEnded { v in released(c, track(c, v, from: nil, continued: continued, endsHere: endsHere, width: width, origin: origin), anchor: anchor) })
                 .contextMenu {
                     Button("改名…") { nameText = c.symbol; naming = (c.id, c.startQ, c.endQ, anchor.0, anchor.1) }
                     Button("删除", role: .destructive) { model.updateInspiration { InspirationEdit.delete(&$0, id: c.id) } }
@@ -302,33 +346,30 @@ struct InspirationBarsView: View {
         }
     }
 
-    private func pointer(_ c: InspirationChord, _ v: DragGesture.Value, continued: Bool, endsHere: Bool, width: CGFloat, origin: CGPoint) {
+    /// The drag as of this gesture value: from an edge it resizes, from the body it moves; the
+    /// ghost is snapped to eighths. Pure, so the end recomputes the same result.
+    private func track(_ c: InspirationChord, _ v: DragGesture.Value, from prev: InspirationDrag?, continued: Bool, endsHere: Bool,
+                       width: CGFloat, origin: CGPoint) -> InspirationDrag {
         func shared(_ p: CGPoint) -> CGPoint { CGPoint(x: origin.x + p.x, y: origin.y + p.y) }
-        if drag?.id != c.id {
-            let x = v.startLocation.x
-            let kind = (!continued && x <= edge) ? 1 : (endsHere && x >= width - edge) ? 2 : 0
-            let grab = kind == 0 ? (q(at: shared(v.startLocation)) ?? c.startQ) - c.startQ : 0
-            drag = (c.id, kind, grab, (c.startQ, c.endQ), false)
-            selected = c.id
-            if kind == 0 { AudioEngine.shared.playChord(c.pitches, duration: 1.4) }   // sounds at once
-        }
-        guard var d = drag else { return }
-        if hypot(v.translation.width, v.translation.height) > 3 { d.moved = true }
+        let x = v.startLocation.x
+        let kind = prev?.kind ?? ((!continued && x <= edge) ? 1 : (endsHere && x >= width - edge) ? 2 : 0)
+        let grab = prev?.grab ?? (kind == 0 ? (q(at: shared(v.startLocation)) ?? c.startQ) - c.startQ : 0)
+        var d = InspirationDrag(id: c.id, kind: kind, grab: grab, ghost: (c.startQ, c.endQ),
+                                moved: (prev?.moved ?? false) || hypot(v.translation.width, v.translation.height) > 3)
         if d.moved, let t = q(at: shared(v.location)) {
-            switch d.kind {
-            case 0: let a = InspirationEdit.snap(t - d.grab); d.ghost = (a, a + c.lengthQ)
+            switch kind {
+            case 0: let a = InspirationEdit.snap(t - grab); d.ghost = (a, a + c.lengthQ)
             case 1: d.ghost = (min(InspirationEdit.snap(t), c.endQ - 0.5), c.endQ)
             default: d.ghost = (c.startQ, max(InspirationEdit.snap(t), c.startQ + 0.5))
             }
         }
-        drag = d
+        return d
     }
 
-    private func released(_ c: InspirationChord, anchor: (Int, CGFloat)) {
-        defer { drag = nil }
-        guard let d = drag else { return }
+    private func released(_ c: InspirationChord, _ d: InspirationDrag, anchor: (Int, CGFloat)) {
         if d.moved {
             let g = d.ghost
+            guard g.0 != c.startQ || g.1 != c.endQ else { return }
             switch d.kind {
             case 0: model.updateInspiration { InspirationEdit.move(&$0, id: c.id, toStart: g.0) }
             case 1: model.updateInspiration { InspirationEdit.resize(&$0, id: c.id, leftEdge: true, to: g.0) }
@@ -382,8 +423,10 @@ private struct ChordDropDelegate: DropDelegate {
     }
 
     func dropExited(info: DropInfo) { view.setDropGhost(nil) }
+    func dropEntered(info: DropInfo) {}
 
     func performDrop(info: DropInfo) -> Bool {
+        defer { view.setDropGhost(nil) }
         guard let q = view.q(at: info.location) else { return false }
         if let payload = view.model.currentChordDrag {
             view.performDrop(payload, at: q)

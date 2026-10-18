@@ -32,7 +32,8 @@ struct BarProgressionView: View {
     @ViewState private var selected: String?
     @ViewState private var hovered: String?
     @ViewState private var plus: (bar: Int, us: Int64)?
-    @ViewState private var drag: DragState?
+    /// Transient: resets by itself when the gesture ends or is cancelled (no stuck ghosts).
+    @GestureState private var drag: DragState?
     @ViewState private var frames: [Int: CGRect] = [:]
     @ViewState private var minBars = 0
     @ViewState private var lastClick: (id: String, at: Date)?
@@ -42,7 +43,8 @@ struct BarProgressionView: View {
     /// Where the name popover points: the bar and the position across it.
     @ViewState private var popoverAt: (bar: Int, x: CGFloat)?
 
-    struct DragState {
+    struct DragState: Equatable {
+        static func == (a: Self, b: Self) -> Bool { a.id == b.id && a.kind == b.kind && a.ghost == b.ghost && a.moved == b.moved }
         enum Kind { case move, left, right }
         var id: String
         var kind: Kind
@@ -282,8 +284,15 @@ struct BarProgressionView: View {
                     } else { if hovered == ev.id { hovered = nil }; NSCursor.arrow.set() }
                 }
                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                    .onChanged { v in pointerChanged(ev, v, continued: continued, endsHere: endsHere, width: width, origin: origin) }
-                    .onEnded { v in pointerEnded(ev, v, anchor: anchor) })
+                    .updating($drag) { v, state, _ in
+                        let first = state == nil
+                        state = track(ev, v, from: state, continued: continued, endsHere: endsHere, width: width, origin: origin)
+                        if first, let d = state {
+                            // Press: select and sound at once (no double-click wait).
+                            DispatchQueue.main.async { selected = ev.id; if d.kind == .move { play(ev) } }
+                        }
+                    }
+                    .onEnded { v in pointerEnded(ev, track(ev, v, from: nil, continued: continued, endsHere: endsHere, width: width, origin: origin), anchor: anchor) })
                 .contextMenu {
                     Button("改名…") { selected = ev.id; startRename(ev, at: anchor) }
                     Button("删除", role: .destructive) {
@@ -297,36 +306,30 @@ struct BarProgressionView: View {
         }
     }
 
-    /// Press: select and sound at once (no double-click wait). Movement past 3 pt starts a drag:
-    /// from an edge it resizes, from the body it moves; the ghost is snapped to eighths.
-    private func pointerChanged(_ ev: ChordEvent, _ v: DragGesture.Value, continued: Bool, endsHere: Bool, width: CGFloat, origin: CGPoint) {
+    /// The drag as of this gesture value. Movement past 3 pt starts it: from an edge it resizes,
+    /// from the body it moves; the ghost is snapped to eighths. Pure, so the end recomputes it.
+    private func track(_ ev: ChordEvent, _ v: DragGesture.Value, from prev: DragState?, continued: Bool, endsHere: Bool,
+                       width: CGFloat, origin: CGPoint) -> DragState {
         func shared(_ p: CGPoint) -> CGPoint { CGPoint(x: origin.x + p.x, y: origin.y + p.y) }
-        if drag == nil || drag?.id != ev.id {
-            let x = v.startLocation.x
-            let kind: DragState.Kind = (!continued && x <= edgeWidth) ? .left : (endsHere && x >= width - edgeWidth) ? .right : .move
-            var grab: Int64 = 0
-            if kind == .move, let t = time(at: shared(v.startLocation)) { grab = t - ev.startUs }
-            drag = DragState(id: ev.id, kind: kind, grabOffset: grab, ghost: (ev.startUs, ev.endUs))
-            selected = ev.id
-            if kind == .move { play(ev) }
-        }
-        guard var d = drag else { return }
-        if hypot(v.translation.width, v.translation.height) > 3 { d.moved = true }
+        let x = v.startLocation.x
+        let kind: DragState.Kind = prev?.kind ?? ((!continued && x <= edgeWidth) ? .left : (endsHere && x >= width - edgeWidth) ? .right : .move)
+        var grab: Int64 = prev?.grabOffset ?? 0
+        if prev == nil, kind == .move, let t = time(at: shared(v.startLocation)) { grab = t - ev.startUs }
+        var d = DragState(id: ev.id, kind: kind, grabOffset: grab, ghost: (ev.startUs, ev.endUs))
+        d.moved = (prev?.moved ?? false) || hypot(v.translation.width, v.translation.height) > 3
         if d.moved, let t = time(at: shared(v.location)) {
-            switch d.kind {
+            switch kind {
             case .move:
-                let st = snap(t - d.grabOffset)
+                let st = snap(t - grab)
                 d.ghost = (st, st + (ev.endUs - ev.startUs))
             case .left: d.ghost = (min(snap(t), ev.endUs - eighthUs), ev.endUs)
             case .right: d.ghost = (ev.startUs, max(snap(t), ev.startUs + eighthUs))
             }
         }
-        drag = d
+        return d
     }
 
-    private func pointerEnded(_ ev: ChordEvent, _ v: DragGesture.Value, anchor: (bar: Int, x: CGFloat)) {
-        defer { drag = nil }
-        guard let d = drag else { return }
+    private func pointerEnded(_ ev: ChordEvent, _ d: DragState, anchor: (bar: Int, x: CGFloat)) {
         if d.moved {
             let id = ev.id, ghost = d.ghost
             guard ghost.start != ev.startUs || ghost.end != ev.endUs else { return }
