@@ -25,7 +25,6 @@ struct BarProgressionView: View {
     var notes: [MidiNote]? = nil
 
     @AppStorage("foldPushes") private var foldPushes = true
-    @AppStorage("editWritesVoicing") private var writeVoicing = true
     @ViewState private var selected: String?
     @ViewState private var hovered: String?
     @ViewState private var plus: (bar: Int, us: Int64)?
@@ -72,18 +71,20 @@ struct BarProgressionView: View {
 
     var body: some View {
         let bars = barCount
-        let rows = stride(from: 1, through: bars, by: 4).map { Array($0...min(bars, $0 + 3)) }
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             if editable { toolbar }
-            ForEach(rows, id: \.self) { row in
-                HStack(spacing: 4) {
-                    ForEach(row, id: \.self) { bar in barCell(bar) }
-                    if row.last == bars && editable { addBarButton }
-                    let fill = 4 - row.count - (row.last == bars && editable ? 1 : 0)
-                    if fill > 0 { ForEach(0..<fill, id: \.self) { _ in Color.clear.frame(maxWidth: .infinity) } }
+            // Four equal columns; the "+" takes the next slot at full size so every row lines up.
+            Grid(horizontalSpacing: 6, verticalSpacing: 6) {
+                ForEach(Array(stride(from: 1, through: bars + (editable ? 1 : 0), by: 4)), id: \.self) { first in
+                    GridRow {
+                        ForEach(first..<(first + 4), id: \.self) { slot in
+                            if slot <= bars { barCell(slot) }
+                            else if slot == bars + 1 && editable { addBarButton }
+                            else { Color.clear.gridCellUnsizedAxes(.vertical) }
+                        }
+                    }
                 }
             }
-            if editable && bars % 4 == 0 { HStack { addBarButton; Spacer() } }
         }
         .coordinateSpace(name: "bars")
         .onPreferenceChange(CellFramesKey.self) { frames = $0 }
@@ -94,9 +95,14 @@ struct BarProgressionView: View {
 
     private var addBarButton: some View {
         Button { minBars = barCount + 1 } label: {
-            Image(systemName: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                .frame(width: 36, height: 72)
-                .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.borderSubtle, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+            VStack(spacing: 4) {
+                Image(systemName: "plus").font(.system(size: 15, weight: .medium))
+                Text("加一小节").font(.system(size: 10))
+            }
+            .foregroundStyle(Theme.textSecondary.opacity(0.8))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.borderSubtle, style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
         }
         .buttonStyle(.plain).help("在最后加一个小节")
     }
@@ -114,8 +120,6 @@ struct BarProgressionView: View {
                 Text("拖和弦移动，拖边缘改长度；空白处点 ＋ 添加；双击改名").foregroundStyle(Theme.textSecondary)
             }
             Spacer()
-            Toggle("改名时用标准按法改写 MIDI", isOn: $writeVoicing).toggleStyle(.checkbox)
-                .help("改名后，这个和弦时间段里的音换成新和弦名的标准按法（保存时才写进 MIDI）")
             Button { undo?() } label: { Label(undoCount > 0 ? "撤销（\(undoCount)）" : "撤销", systemImage: "arrow.uturn.backward") }
                 .disabled(undoCount == 0)
         }
@@ -327,9 +331,8 @@ struct BarProgressionView: View {
             if !nameText.isEmpty && ChordSymbol.parse(nameText) == nil {
                 Text("看不懂这个和弦名").font(.caption12).foregroundStyle(Theme.warning)
             } else if let p = StandardVoicing.pitches(symbol: nameText) {
-                Text("标准按法：" + p.map { Pitch.noteName($0) }.joined(separator: " ")).font(.caption12).foregroundStyle(Theme.textSecondary)
+                Text("按标准按法写入：" + p.map { Pitch.noteName($0) }.joined(separator: " ")).font(.caption12).foregroundStyle(Theme.textSecondary)
             }
-            Toggle("用标准按法改写 MIDI", isOn: $writeVoicing).toggleStyle(.checkbox).font(.caption12)
             HStack {
                 Spacer()
                 Button("取消") { renaming = nil; pendingAdd = nil }
@@ -341,7 +344,8 @@ struct BarProgressionView: View {
 
     private func commitName() {
         guard ChordSymbol.parse(nameText) != nil else { return }
-        let name = nameText, voicing = writeVoicing
+        // A renamed or added chord sounds as its standard voicing (the MIDI follows the name).
+        let name = nameText, voicing = true
         if let r = pendingAdd {
             edit? { st, g, key in
                 let id = try HarmonyEdit.add(&st, start: r.start, end: r.end, symbol: name, key: key, grid: g, writeVoicing: voicing)
