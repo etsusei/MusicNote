@@ -292,3 +292,33 @@ func runTool(_ args: [String]) async -> Int32 {
     paths.removeOwned(paths.jobs.appendingPathComponent("auto-\(run.id.uuidString)", isDirectory: true))
     return ok ? 0 : 1
 }
+
+/// `fixstart DATA_ROOT ANALYSIS_ID`: the selection start is bar 1 beat 1 (the user cut on a bar
+/// line). Re-reads an adopted model harmony in the new grid; regroups a program harmony.
+func runFixStart(_ args: [String]) async -> Int32 {
+    guard args.count >= 3, let id = UUID(uuidString: args[2]) else { return 2 }
+    let paths = AppPaths(root: URL(fileURLWithPath: args[1]))
+    guard let store = try? Store(url: paths.database), var item = store.fetch(AnalysisItem.self, id: id), var t = item.timing else { return 2 }
+    let before = t.barAnchorUs ?? -1
+    t.barAnchorUs = 0
+    t.beatOriginUs = 0
+    item.timing = t
+    item.timingRevision += 1
+    try? store.save(item)
+    guard var h = store.all(HarmonyRevision.self, owner: id).max(by: { $0.revision < $1.revision }) else { print("no harmony"); return 0 }
+    if h.params["algorithm"] == "agent" {
+        h.timingRevision = item.timingRevision
+        h.params["barAnchorUs"] = "0"
+        try? store.save(h)
+        print(item.source.fileName, String(format: "bar 1: %.3fs → 0", Double(before) / 1e6), "· model harmony re-read in the new grid")
+    } else if let r = item.confirmedMidiRevision, let midi = store.all(MidiRevision.self, owner: id).first(where: { $0.revision == r }) {
+        let root = FileManager.default.currentDirectoryPath
+        let pipeline = Pipeline(store: store, paths: paths, tools: ToolSettings.defaults(projectRoot: root, separatorBinary: ""))
+        let rev = await pipeline.analyzeHarmony(item, midi: midi, timing: t, revision: h.revision + 1, previous: h)
+        try? store.save(rev)
+        item.harmonyRevision = rev.revision
+        try? store.save(item)
+        print(item.source.fileName, String(format: "bar 1: %.3fs → 0", Double(before) / 1e6), "· regrouped r\(rev.revision):", rev.events.compactMap(\.symbol).prefix(8).joined(separator: " "))
+    }
+    return 0
+}

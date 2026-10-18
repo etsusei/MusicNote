@@ -26,6 +26,7 @@ struct ConfirmStage: View {
     @ViewState private var ready = false
     @ViewState private var fromSongGrid = false
     @ViewState private var songGridUnsteady = false
+    @ViewState private var startsOnBar = false
 
     private var rate: Double { item.source.sampleRate }
     private var trimStartFrame: Int64 { Int64((Double(item.trimStartUs) * rate / 1_000_000).rounded()) }
@@ -99,11 +100,15 @@ struct ConfirmStage: View {
                         if let s = d.keyStrength { Text("强度 \(String(format: "%.2f", s))").font(.caption12).foregroundStyle(Theme.textSecondary) }
                     }
                     ForEach(d.errors, id: \.self) { Text($0).font(.caption12).foregroundStyle(Theme.warning) }
+                    if startsOnBar {
+                        Label("选区开头对齐在拍点上：第 1 小节第 1 拍就从选区开头算起。", systemImage: "metronome")
+                            .font(.caption12).foregroundStyle(Theme.accent)
+                    }
                     if songGridUnsteady {
                         Label("整曲拍点在这段不稳（多半锁到了切分节奏），第 1 小节没有沿用整曲小节线。请边听节拍器边设第 1 拍；分析和声后还会用换和弦点再核对一次。", systemImage: "exclamationmark.triangle")
                             .font(.caption12).foregroundStyle(Theme.warning)
                     }
-                    if fromSongGrid {
+                    if fromSongGrid && !startsOnBar {
                         Label("速度、拍号和第 1 小节的位置沿用了选区阶段的整曲小节线；如果改了 BPM 或拍点偏移，记得核对小节线。", systemImage: "metronome")
                             .font(.caption12).foregroundStyle(Theme.accent)
                     }
@@ -220,6 +225,15 @@ struct ConfirmStage: View {
         if let r = clipBpm, abs(r - g.bpm) / g.bpm < 0.04 { bpmText = String(format: "%.1f", r) }
         else if let r = Tempo.roundToHalf(g.bpm) { bpmText = String(format: "%.1f", r) }
         numerator = g.beatsPerBar; denominator = 4
+        // The selection start is where the user put bar 1. When it sits on a beat of the
+        // whole-song grid (snapped to a bar or a beat), bar 1 beat 1 is the clip start — the
+        // grid's own downbeat guess never overrides that choice.
+        if g.beats(from: s - 0.06, to: s + 0.06).contains(where: { abs($0 - s) <= 0.06 }) {
+            barAnchorUs = 0
+            detectedOriginUs = 0
+            startsOnBar = true
+            return
+        }
         guard g.steady(from: s, to: e) else { songGridUnsteady = true; return }
         if let a = g.barAnchor(clipStart: s, clipEnd: e) {
             barAnchorUs = Int64(a * 1e6)

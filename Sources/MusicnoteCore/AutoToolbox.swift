@@ -170,7 +170,9 @@ public final class AutoToolbox: @unchecked Sendable {
         var o: [String: Any] = [
             "selection": String(format: "原曲 %.3f–%.3fs，共 %.3fs（工具只能在这个区间内工作）", i.trimStartUs.seconds, i.trimEndUs.seconds, i.durationUs.seconds),
             "tempo": "\(g.bpm) BPM（四分音符）", "meter": g.meter.display,
-            "barLine": String(format: "第 1 小节从片段内 %.3fs 开始%@", Double(g.barAnchorUs ?? 0) / 1e6, i.timing?.barAnchorUs == nil ? "（自动估计）" : "（用户设定）"),
+            "barLine": abs(g.barAnchorUs ?? 0) <= 30_000 && i.timing?.barAnchorUs != nil
+                ? "选区开头就是第 1 小节第 1 拍（用户截取时对齐在小节线上，这是确定的）"
+                : String(format: "第 1 小节从片段内 %.3fs 开始%@", Double(g.barAnchorUs ?? 0) / 1e6, i.timing?.barAnchorUs == nil ? "（自动估计）" : "（用户设定）"),
             "bars": try bars(i), "keySetByUser": i.timing?.key.display ?? "未设",
             "selectedStem": i.selectedStem == nil ? "无" : i.stemLabel,
             "sourcesAvailable": ["original（原曲选区）"] + (i.selectedStem == nil ? [] : ["stem（已选分轨：\(i.stemLabel)\(i.selectedStems.count > 1 ? "，合并成一轨" : "")，已经分离过，转录保留其中全部乐器）"]),

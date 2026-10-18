@@ -16,6 +16,9 @@ if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "autoanalyze" {
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "skeleton" {
     exit(await runSkeleton(Array(CommandLine.arguments.dropFirst())))
 }
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "fixstart" {
+    exit(await runFixStart(Array(CommandLine.arguments.dropFirst())))
+}
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "tool" {
     exit(await runTool(Array(CommandLine.arguments.dropFirst())))
 }
