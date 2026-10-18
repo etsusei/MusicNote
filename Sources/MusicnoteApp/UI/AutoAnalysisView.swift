@@ -257,9 +257,17 @@ struct BarProgressionView: View {
     @Environment(AppModel.self) private var model
     var item: AnalysisItem
     var harmony: HarmonyRevision
-    var auto: AutoHarmony
+    var auto: AutoHarmony?
     var grid: BeatGrid
+    /// Hand editing of the current harmony (the model's proposal itself is shown read-only).
+    var editable = false
     @AppStorage("foldPushes") private var foldPushes = true
+    @AppStorage("editWritesVoicing") private var writeVoicing = true
+    @ViewState private var selected: String?
+    @ViewState private var insertMode = false
+    @ViewState private var renaming: String?
+    @ViewState private var pendingInsert: Int64?
+    @ViewState private var nameText = ""
 
     /// Chords as read in the bar: anticipations (struck up to an eighth early, held through the
     /// beat) start on the beat they anticipate; each chord runs to the next one's reading start.
@@ -275,6 +283,7 @@ struct BarProgressionView: View {
         let bars = BarEvidence.barCount(grid: grid, durationUs: item.durationUs)
         let rows = stride(from: 1, through: bars, by: 4).map { Array($0...min(bars, $0 + 3)) }
         VStack(alignment: .leading, spacing: 6) {
+            if editable { editBar }
             ForEach(rows, id: \.self) { row in
                 HStack(spacing: 4) {
                     ForEach(row, id: \.self) { bar in barCell(bar) }
@@ -282,7 +291,95 @@ struct BarProgressionView: View {
                 }
             }
         }
+        .popover(isPresented: Binding(get: { renaming != nil || pendingInsert != nil },
+                                      set: { if !$0 { renaming = nil; pendingInsert = nil } })) { namePopover }
     }
+
+    // MARK: Editing
+
+    private var selectedEvent: ChordEvent? { harmony.events.first { $0.id == selected } }
+
+    private var editBar: some View {
+        let ev = selectedEvent
+        let idx = ev.flatMap { e in harmony.events.firstIndex { $0.id == e.id } }
+        let eighth = Int64(grid.beatUs / 2)
+        return HStack(spacing: 8) {
+            Toggle(isOn: $insertMode) { Label("插入", systemImage: "plus") }.toggleStyle(.button)
+                .help("打开后在小节里点一个位置（吸附到八分音符），插入新和弦")
+            Divider().frame(height: 16)
+            if let ev, let idx {
+                Text("\(ev.symbol ?? "?") · \(harmony.position(of: ev.startUs, grid: grid))").font(.system(size: 12, weight: .semibold))
+                Button("改名") { startRename(ev) }
+                Button("删除") { let id = ev.id; selected = nil; model.editHarmony(item.id) { st, g, _ in try HarmonyEdit.delete(&st, id: id, grid: g) } }
+                    .disabled(harmony.events.count < 2).help("这个和弦的时值并入前一个")
+                HStack(spacing: 1) {
+                    Text("起点").foregroundStyle(Theme.textSecondary)
+                    Button { move(ev.id, to: ev.startUs - eighth) } label: { Image(systemName: "chevron.left") }.disabled(idx == 0)
+                    Button { move(ev.id, to: ev.startUs + eighth) } label: { Image(systemName: "chevron.right") }.disabled(idx == 0)
+                }.help("起点前后挪一个八分音符（前一个和弦跟着变）")
+                HStack(spacing: 1) {
+                    Text("终点").foregroundStyle(Theme.textSecondary)
+                    let next = idx + 1 < harmony.events.count ? harmony.events[idx + 1] : nil
+                    Button { if let n = next { move(n.id, to: n.startUs - eighth) } } label: { Image(systemName: "chevron.left") }.disabled(next == nil)
+                    Button { if let n = next { move(n.id, to: n.startUs + eighth) } } label: { Image(systemName: "chevron.right") }.disabled(next == nil)
+                }.help("终点前后挪一个八分音符（后一个和弦跟着变）")
+            } else {
+                Text(insertMode ? "在小节里点一个位置插入和弦" : "点和弦选中；双击改名；右键更多").foregroundStyle(Theme.textSecondary)
+            }
+            Spacer()
+            Toggle("改名时用标准按法改写 MIDI", isOn: $writeVoicing).toggleStyle(.checkbox)
+                .help("改名后，这个和弦时间段里的音换成新和弦名的标准按法（会生成新的 MIDI 版本，可撤销）")
+            let n = model.canUndoHarmony(item.id)
+            Button { model.undoHarmonyEdit(item.id) } label: { Label(n > 0 ? "撤销（\(n)）" : "撤销", systemImage: "arrow.uturn.backward") }
+                .disabled(n == 0)
+        }
+        .buttonStyle(.borderless)
+        .font(.system(size: 11))
+    }
+
+    private func move(_ id: String, to us: Int64) {
+        model.editHarmony(item.id) { st, g, _ in try HarmonyEdit.moveStart(&st, id: id, toUs: us, grid: g) }
+    }
+
+    private func startRename(_ ev: ChordEvent) { nameText = ev.symbol ?? ""; renaming = ev.id; pendingInsert = nil }
+
+    private var namePopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(pendingInsert != nil ? "插入和弦（\(pendingInsert.map { harmony.position(of: HarmonyEdit.snapEighth($0, grid: grid), grid: grid) } ?? "")）" : "改和弦名")
+                .font(.system(size: 13, weight: .semibold))
+            TextField("如 Am7、G7/B、Fmaj9", text: $nameText).textFieldStyle(.roundedBorder).frame(width: 220)
+                .onSubmit(commitName)
+            if !nameText.isEmpty && ChordSymbol.parse(nameText) == nil {
+                Text("看不懂这个和弦名").font(.caption12).foregroundStyle(Theme.warning)
+            } else if let p = StandardVoicing.pitches(symbol: nameText) {
+                Text("标准按法：" + p.map { Pitch.noteName($0) }.joined(separator: " ")).font(.caption12).foregroundStyle(Theme.textSecondary)
+            }
+            Toggle("用标准按法改写 MIDI", isOn: $writeVoicing).toggleStyle(.checkbox).font(.caption12)
+            HStack {
+                Spacer()
+                Button("取消") { renaming = nil; pendingInsert = nil }
+                Button("确定") { commitName() }.buttonStyle(PrimaryButtonStyle()).disabled(ChordSymbol.parse(nameText) == nil)
+            }
+        }
+        .padding(14)
+    }
+
+    private func commitName() {
+        guard ChordSymbol.parse(nameText) != nil else { return }
+        let name = nameText, voicing = writeVoicing
+        if let t = pendingInsert {
+            model.editHarmony(item.id) { st, g, key in
+                let id = try HarmonyEdit.insert(&st, atUs: t, symbol: name, key: key, grid: g, writeVoicing: voicing)
+                Task { @MainActor in selected = id }
+            }
+            insertMode = false
+        } else if let id = renaming {
+            model.editHarmony(item.id) { st, _, key in try HarmonyEdit.rename(&st, id: id, symbol: name, key: key, writeVoicing: voicing) }
+        }
+        renaming = nil; pendingInsert = nil
+    }
+
+    // MARK: Cells
 
     private func barCell(_ bar: Int) -> some View {
         let s = BarEvidence.barStartUs(bar, grid: grid), e = BarEvidence.barStartUs(bar + 1, grid: grid)
@@ -294,10 +391,21 @@ struct BarProgressionView: View {
             }.buttonStyle(.borderless).foregroundStyle(Theme.textSecondary).help("听原曲第 \(bar) 小节")
             GeometryReader { geo in
                 ZStack(alignment: .topLeading) {
+                    // Insert mode: a click anywhere in the bar picks the position.
+                    if editable && insertMode {
+                        Rectangle().fill(Theme.accent.opacity(0.06)).contentShape(Rectangle())
+                            .onTapGesture(coordinateSpace: .local) { loc in
+                                let us = s + Int64(Double(loc.x / max(1, geo.size.width)) * span)
+                                nameText = harmony.events.first { $0.startUs <= us && $0.endUs > us }?.symbol ?? ""
+                                renaming = nil
+                                pendingInsert = min(max(0, us), item.durationUs - 1)
+                            }
+                    }
                     // Beat ticks
                     ForEach(1..<Int(grid.meter.quarterBeatsPerBar.rounded()), id: \.self) { b in
                         Rectangle().fill(Theme.borderSubtle).frame(width: 1, height: 6)
                             .offset(x: geo.size.width * CGFloat(Double(b) / grid.meter.quarterBeatsPerBar), y: geo.size.height - 6)
+                            .allowsHitTesting(false)
                     }
                     ForEach(events, id: \.ev.id) { r in
                         let x0 = max(0, Double(r.s - s) / span), x1 = min(1, Double(r.e - s) / span)
@@ -305,6 +413,7 @@ struct BarProgressionView: View {
                         chordChip(r.ev, continued: r.s < s - 20_000, roomy: w > 70, pushed: r.pushed && r.s >= s - 20_000)
                             .frame(width: w, height: geo.size.height - 8)
                             .offset(x: geo.size.width * CGFloat(x0))
+                            .allowsHitTesting(!(editable && insertMode))
                     }
                 }
             }
@@ -316,26 +425,44 @@ struct BarProgressionView: View {
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.borderSubtle))
     }
 
-    private func chordChip(_ ev: ChordEvent, continued: Bool, roomy: Bool, pushed: Bool) -> some View {
-        let info = auto.chordInfo[ev.id]
+    @ViewBuilder private func chordChip(_ ev: ChordEvent, continued: Bool, roomy: Bool, pushed: Bool) -> some View {
+        let info = auto?.chordInfo[ev.id]
         let strong = info?.role == "backbone" || info?.role == nil
-        let confirm = auto.toConfirm.contains { $0.eventId == ev.id }
-        return Button { play(ev) } label: {
-            HStack(spacing: 2) {
-                Text(continued ? "↳" : Self.breakable(ev.symbol ?? "?")).font(.system(size: strong ? 13 : 11, weight: strong ? .semibold : .medium))
-                    .lineLimit(2).minimumScaleFactor(0.7).fixedSize(horizontal: false, vertical: true)
-                if pushed && !continued { Image(systemName: "arrow.uturn.backward").font(.system(size: 8, weight: .semibold)).opacity(0.7) }
-                if confirm && !continued && roomy { Image(systemName: "questionmark.circle.fill").font(.system(size: 9)).foregroundStyle(Theme.warning) }
-            }
-            .padding(.horizontal, roomy ? 4 : 2)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 5).fill(strong ? Theme.noteFill.opacity(continued ? 0.45 : 1) : Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(confirm ? Theme.warning : Theme.noteFill,
-                                                             style: StrokeStyle(lineWidth: confirm ? 1.5 : 1, dash: strong ? [] : [3, 2])))
-            .foregroundStyle(strong ? Theme.onNote : Theme.textPrimary)
+        let confirm = auto?.toConfirm.contains { $0.eventId == ev.id } ?? false
+        let isSelected = editable && selected == ev.id
+        let label = HStack(spacing: 2) {
+            Text(continued ? "↳" : Self.breakable(ev.symbol ?? "?")).font(.system(size: strong ? 13 : 11, weight: strong ? .semibold : .medium))
+                .lineLimit(2).minimumScaleFactor(0.7).fixedSize(horizontal: false, vertical: true)
+            if pushed && !continued { Image(systemName: "arrow.uturn.backward").font(.system(size: 8, weight: .semibold)).opacity(0.7) }
+            if ev.manualOverride && editable && !continued && roomy { Image(systemName: "pencil").font(.system(size: 8)).opacity(0.7) }
+            if confirm && !continued && roomy { Image(systemName: "questionmark.circle.fill").font(.system(size: 9)).foregroundStyle(Theme.warning) }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, roomy ? 4 : 2)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 5).fill(strong ? Theme.noteFill.opacity(continued ? 0.45 : 1) : Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: 5).stroke(isSelected ? Theme.accent : (confirm ? Theme.warning : Theme.noteFill),
+                                                         style: StrokeStyle(lineWidth: isSelected ? 2.5 : (confirm ? 1.5 : 1), dash: strong || isSelected ? [] : [3, 2])))
+        .foregroundStyle(strong ? Theme.onNote : Theme.textPrimary)
         .help("\(ev.symbol ?? "?")（\(info?.roleDisplay ?? "")）：\(info?.reason ?? "")" + (pushed ? "\n提前一个八分音符按下（按它进入的拍子显示）" : ""))
+        if editable {
+            label
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { selected = ev.id; startRename(ev) }
+                .onTapGesture { selected = ev.id; play(ev) }
+                .contextMenu {
+                    Button("改名…") { selected = ev.id; startRename(ev) }
+                    Button("从中间拆分") {
+                        let mid = ev.startUs + (ev.endUs - ev.startUs) / 2, name = ev.symbol ?? "C"
+                        model.editHarmony(item.id) { st, g, key in _ = try HarmonyEdit.insert(&st, atUs: mid, symbol: name, key: key, grid: g, writeVoicing: false) }
+                    }
+                    Button("删除（并入前一个）", role: .destructive) {
+                        let id = ev.id; selected = nil
+                        model.editHarmony(item.id) { st, g, _ in try HarmonyEdit.delete(&st, id: id, grid: g) }
+                    }.disabled(harmony.events.count < 2)
+                }
+        } else {
+            Button { play(ev) } label: { label }.buttonStyle(.plain)
+        }
     }
 
     /// Lets a narrow chip wrap a long name before its extension or bass ("Fm" / "(add9)", "A♭maj7" / "/B♭").

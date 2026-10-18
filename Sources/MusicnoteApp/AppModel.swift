@@ -62,6 +62,7 @@ final class AppModel {
     @ObservationIgnored var _autoProvider: CodexProvider?
     @ObservationIgnored var _autoClaude: ClaudeAgentProvider?
     var songGridRunning: Set<UUID> = []
+    var harmonyUndo: [UUID: [HarmonyUndo]] = [:]
     var songGridError: [UUID: String] = [:]
     @ObservationIgnored var auditionCache: [String: AVAudioPCMBuffer] = [:]
     @ObservationIgnored var auditionStop: Task<Void, Never>?

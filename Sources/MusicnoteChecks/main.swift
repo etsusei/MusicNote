@@ -448,5 +448,36 @@ do {
     eq(t.last?.startUs, 110_000, "later notes shifted back by the lead-in")
 }
 
+// Hand edits: rename writes the standard voicing over the chord's notes; delete merges into the
+// previous chord; insert splits on an eighth; moving a start snaps and keeps chords contiguous.
+do {
+    let g = BeatGrid(bpm: 120, beatOriginUs: 0, barAnchorUs: 0) // eighth = 250 ms
+    let ns = [MidiNote(pitch: 48, startUs: 0, endUs: 2_000_000), MidiNote(pitch: 64, startUs: 0, endUs: 2_000_000),
+              MidiNote(pitch: 53, startUs: 2_000_000, endUs: 4_000_000)]
+    func ce(_ id: String, _ sym: String, _ s: Int64, _ e: Int64, _ ids: [UUID]) -> ChordEvent {
+        ChordEvent(id: id, order: 0, startUs: s, endUs: e, noteIds: ids, noteRoles: [:], texture: .block, excludedNoteIds: [],
+                   namingPitches: [], candidates: [], symbol: sym, namingSource: .agent, manualOverride: false, degree: nil, bassPitch: nil)
+    }
+    let h = HarmonyRevision(analysisId: UUID(), revision: 1, midiRevision: 1, timingRevision: 0, key: cMajor,
+                            events: [ce("a", "C", 0, 2_000_000, [ns[0].id, ns[1].id]), ce("b", "F", 2_000_000, 4_000_000, [ns[2].id])],
+                            params: [:], namerVersion: "t")
+    var st = HarmonyEdit.State(harmony: h, notes: ns)
+    try HarmonyEdit.rename(&st, id: "a", symbol: "Am7", key: cMajor, writeVoicing: true)
+    let a = st.harmony.events[0]
+    eq(a.symbol, "Am7", "renamed"); check(a.manualOverride, "marked as a hand edit")
+    eq(Set(st.notes.filter { a.noteIds.contains($0.id) }.map { $0.pitch % 12 }), [9, 0, 4, 7], "standard voicing written for Am7")
+    check(!st.notes.contains { $0.pitch == 64 && $0.transcribedIndex == nil && !$0.edited }, "old notes of the chord replaced")
+    check(st.midiChanged, "MIDI marked changed")
+    let newId = try HarmonyEdit.insert(&st, atUs: 1_090_000, symbol: "G7", key: cMajor, grid: g, writeVoicing: false)
+    eq(st.harmony.events.map(\.symbol), ["Am7", "G7", "F"], "inserted in the middle")
+    eq(st.harmony.events.first { $0.id == newId }?.startUs, 1_000_000, "insert snapped to the eighth")
+    try HarmonyEdit.moveStart(&st, id: "b", toUs: 2_400_000, grid: g)
+    eq(st.harmony.events[1].endUs, 2_500_000, "previous chord ends where the moved one starts (snapped)")
+    try HarmonyEdit.delete(&st, id: newId, grid: g)
+    eq(st.harmony.events.map(\.symbol), ["Am7", "F"], "deleted")
+    eq(st.harmony.events[0].endUs, 2_500_000, "previous chord takes over the deleted time")
+    check((try? HarmonyEdit.rename(&st, id: "a", symbol: "Hello", key: cMajor, writeVoicing: true)) == nil, "bad chord name refused")
+} catch { check(false, "harmony edit: \(error)") }
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

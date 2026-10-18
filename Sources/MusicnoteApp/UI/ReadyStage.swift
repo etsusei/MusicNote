@@ -186,8 +186,21 @@ struct NotesStage: View {
                         .help("写入速度网格；之后可在「速度网格」里修改")
                 }
             }
+            if let g = editGrid(h) {
+                // Hand editing of the harmony in use: rename (optionally rewriting the MIDI with the
+                // standard voicing), insert, delete, move boundaries by eighths, undo.
+                BarProgressionView(item: item, harmony: h, auto: h.auto, grid: g, editable: true)
+                    .id(h.id)
+                    .padding(.top, 4)
+            }
             Text("命名：\(h.namerVersion) · 分组：\(h.params["algorithm"] ?? "")（八分音符检测点，换和弦优先落在小节线和强拍）").font(.caption12).foregroundStyle(Theme.textSecondary)
         }
+    }
+
+    private func editGrid(_ h: HarmonyRevision) -> BeatGrid? {
+        guard var g = item.timing?.grid else { return nil }
+        if g.barAnchorUs == nil { g.barAnchorUs = h.barAnchorUs }
+        return g
     }
 
     private func chordCards(_ h: HarmonyRevision) -> some View {
@@ -333,7 +346,9 @@ struct ChordEventCard: View {
         guard var g = item.timing?.grid else { return "" }
         if g.barAnchorUs == nil { g.barAnchorUs = harmony.barAnchorUs }
         let r = BarEvidence.readingStart(event.startUs, endUs: event.endUs, grid: g)
-        return r.pushed ? "（提前八分进入 \(harmony.position(of: r.us, grid: g))）" : ""
+        let into = harmony.position(of: r.us, grid: g)
+        // Slightly early (rounds onto the beat anyway) isn't worth a note.
+        return r.pushed && into != harmony.position(of: event.startUs, grid: g) ? "（提前八分进入 \(into)）" : ""
     }
 
     private var beats: Double {
