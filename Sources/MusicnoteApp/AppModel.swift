@@ -210,6 +210,7 @@ final class AppModel {
             try store.save(item)
             reload()
             route = .analysis(item.id)
+            warnIfShort(source)
         } catch { report(error) }
     }
 
@@ -228,6 +229,35 @@ final class AppModel {
             try store.save(item)
             reload()
             route = .analysis(item.id)
+            if alert == nil { warnIfShort(source) }
+        } catch { report(error) }
+    }
+
+    /// A source of 35 s or less is most likely a store preview, not the song.
+    func warnIfShort(_ s: SourceRef) {
+        guard s.durationSec <= 35 else { return }
+        alert = AppAlert(title: "这个文件只有 \(Int(s.durationSec.rounded())) 秒",
+                         message: "\(s.fileName) 可能是试听片段而不是完整的歌。如果有完整版，可以在选区页点“换一个原曲文件…”。")
+    }
+
+    /// Before separation nothing is derived from the file yet, so a clip may switch to another
+    /// file (e.g. the full song instead of a preview). The selection is kept inside the new file.
+    func replaceSource(_ itemId: UUID) {
+        guard var item = item(itemId), item.separation == nil, let url = pickAudio(title: "换一个原曲文件") else { return }
+        do {
+            let s = try Pipeline.inspectSource(url: url)
+            item.source = s
+            let total = Int64(s.durationSec * 1_000_000)
+            item.trimStartUs = min(item.trimStartUs, max(0, total - 1_000_000))
+            item.trimEndUs = min(max(item.trimEndUs, item.trimStartUs + 1_000_000), total)
+            item.trimRevision += 1
+            item.detection = nil
+            item.timing = nil
+            item.songGrid = nil
+            item.state = .draft
+            save(item)
+            warnIfShort(s)
+            detectSongGrid(itemId)
         } catch { report(error) }
     }
 

@@ -242,7 +242,16 @@ struct SelectionStage: View {
                         .help("锁定当前区间并启动 Essentia。此时不会拆轨。")
                 }
             }
-            Text("显示精度到毫秒；实际裁剪按解码后的采样位置。").font(.caption12).foregroundStyle(Theme.textSecondary)
+            HStack {
+                Text("显示精度到毫秒；实际裁剪按解码后的采样位置。").font(.caption12).foregroundStyle(Theme.textSecondary)
+                Spacer()
+                if item.separation == nil {
+                    Text("\(item.source.fileName) · \(formatTime(us: Int64(item.source.durationSec * 1_000_000), millis: false))")
+                        .font(.caption12).foregroundStyle(Theme.textSecondary)
+                    Button("换一个原曲文件…") { model.replaceSource(item.id) }.buttonStyle(.borderless).font(.caption12)
+                        .help("比如把试听片段换成完整版；还没拆轨，换文件不会影响别的东西")
+                }
+            }
             Spacer()
         }
         .padding(24)
