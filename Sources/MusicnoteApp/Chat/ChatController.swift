@@ -86,6 +86,17 @@ final class ChatController {
         return out.filter { $0.title.lowercased().contains(q) || $0.subtitle.lowercased().contains(q) }
     }
 
+    /// # references: progressions saved in 灵感集合.
+    func inspirationOptions(_ query: String) -> [MentionOption] {
+        let q = query.lowercased()
+        let out = app.inspirationList.map { p in
+            MentionOption(kind: .inspiration, objectId: p.id, title: p.displayTitle,
+                          subtitle: "灵感进行 · \(p.bars) 小节 · \(Int(p.bpm)) BPM" + (p.targetKey.map { " · \($0.display)" } ?? ""))
+        }
+        guard !q.isEmpty else { return out }
+        return out.filter { $0.title.lowercased().contains(q) || $0.subtitle.lowercased().contains(q) }
+    }
+
     func addMention(_ o: MentionOption) {
         if !pendingMentions.contains(o) { pendingMentions.append(o) }
     }
@@ -112,6 +123,10 @@ final class ChatController {
                 mentions.append(Mention(kind: .analysis, objectId: i.id, title: o.title,
                                         revisions: ["midi": i.confirmedMidiRevision ?? 0, "harmony": h?.revision ?? 0, "timing": i.timingRevision],
                                         scope: "analysis", complete: true))
+            case .inspiration:
+                guard let p = store.fetch(InspirationProgression.self, id: o.objectId) else { continue }
+                blocks.append("【#灵感进行 \(p.displayTitle)】\n" + SnapshotBuilder.json(InspirationSnapshot.object(p)))
+                mentions.append(Mention(kind: .inspiration, objectId: p.id, title: p.displayTitle, revisions: [:], scope: "inspiration", complete: true))
             case .conversation:
                 var visited: Set<UUID> = [currentId ?? UUID()]
                 let (text, complete, rev) = await conversationText(o.objectId, visited: &visited, provider: provider)

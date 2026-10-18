@@ -533,5 +533,21 @@ do {
     eq(payload.placed.map(\.lengthQ), [2, 2], "a whole bar keeps its lengths")
 }
 
+// # 灵感进行 in chat: the teacher gets the progression as it plays (transposed names, degrees, voicings).
+do {
+    var ip = InspirationProgression(bars: 4, bpm: 88)
+    ip.title = "ii-V-I"
+    ip.chords = [InspirationChord(symbol: "Dm7", startQ: 0, lengthQ: 4, pitches: [50, 53, 57, 60]),
+                 InspirationChord(symbol: "G7", startQ: 4, lengthQ: 4, pitches: [43, 53, 59, 62]),
+                 InspirationChord(symbol: "Cmaj7", startQ: 8, lengthQ: 8, pitches: [48, 52, 55, 59], sourceLabel: "U&I 第 3 小节")]
+    ip.targetKey = KeySignature(tonic: 2, tonicName: "D", mode: .major)
+    let o = InspirationSnapshot.object(ip)
+    let cs = o["chords"] as? [[String: Any]] ?? []
+    eq(cs.compactMap { $0["symbol"] as? String }, ["Em7", "A7", "Dmaj7"], "chat sees names in the play key")
+    eq(cs.compactMap { $0["degree"] as? String }, ["ii7", "V7", "Imaj7"], "and their degrees")
+    eq(cs.last?["position"] as? String, "第 3 小节第 1 拍", "positions in bars and beats")
+    eq(cs.last?["from"] as? String, "U&I 第 3 小节", "sources kept")
+}
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

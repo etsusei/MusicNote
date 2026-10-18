@@ -4,6 +4,7 @@ import SwiftUI
 struct ChatPanel: View {
     @Environment(AppModel.self) private var model
     @ViewState private var showMentions = false
+    @ViewState private var showInspirations = false
     @ViewState private var showList = false
 
     private var chat: ChatController { model.chat }
@@ -155,7 +156,7 @@ struct ChatPanel: View {
                 FlowLayout(spacing: 4) {
                     ForEach(chat.pendingMentions) { o in
                         HStack(spacing: 3) {
-                            Text("@" + o.title).font(.caption12).lineLimit(1)
+                            Text((o.kind == .inspiration ? "#" : "@") + o.title).font(.caption12).lineLimit(1)
                             Button { chat.pendingMentions.removeAll { $0 == o } } label: { Image(systemName: "xmark").font(.system(size: 8)) }.buttonStyle(.borderless)
                         }
                         .padding(.horizontal, 6).padding(.vertical, 2).background(Capsule().fill(Theme.selectionFill))
@@ -167,18 +168,27 @@ struct ChatPanel: View {
                 TextEditor(text: $chat.draft)
                     .font(.body14).frame(minHeight: 60, maxHeight: 140)
                     .scrollContentBackground(.hidden)
-                    .onChange(of: chat.draft) { _, t in showMentions = mentionQuery(t) != nil }
+                    .onChange(of: chat.draft) { _, t in
+                        showMentions = mentionQuery(t) != nil
+                        showInspirations = !showMentions && inspirationQuery(t) != nil
+                    }
                 if chat.draft.isEmpty {
-                    Text("问问老师…（@ 引用，⌘↩ 发送）").font(.body14).foregroundStyle(Theme.textSecondary).padding(.leading, 5).allowsHitTesting(false)
+                    Text("问问老师…（@ 引用，# 灵感进行，⌘↩ 发送）").font(.body14).foregroundStyle(Theme.textSecondary).padding(.leading, 5).allowsHitTesting(false)
                 }
             }
             .padding(6)
             .background(RoundedRectangle(cornerRadius: 6).fill(Theme.background))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.controlBorder.opacity(0.5)))
             .popover(isPresented: $showMentions, arrowEdge: .top) { mentionPicker }
+            .popover(isPresented: $showInspirations, arrowEdge: .top) { inspirationPicker }
             HStack(spacing: 6) {
                 Button { showMentions = true; if !chat.draft.hasSuffix("@") { chat.draft += "@" } } label: { Image(systemName: "at") }
                     .buttonStyle(.borderless).help("引用")
+                Button {
+                    if !(chat.draft.isEmpty || chat.draft.hasSuffix(" ") || chat.draft.hasSuffix("\n")) { chat.draft += " " }
+                    chat.draft += "#"; showInspirations = true
+                } label: { Image(systemName: "number") }
+                    .buttonStyle(.borderless).help("引用灵感集合里的进行")
                 modelChoice
                 Spacer(minLength: 4)
                 if chat.sending {
@@ -190,6 +200,38 @@ struct ChatPanel: View {
             }
         }
         .padding(10)
+    }
+
+    /// "#" at the start or after a space opens 灵感集合 (a "#" inside a chord name like C#m doesn't).
+    private func inspirationQuery(_ t: String) -> String? {
+        guard let h = t.lastIndex(of: "#") else { return nil }
+        if h > t.startIndex, !t[t.index(before: h)].isWhitespace { return nil }
+        let q = t[t.index(after: h)...]
+        return q.contains("\n") || q.count > 24 ? nil : String(q)
+    }
+
+    private var inspirationPicker: some View {
+        let q = inspirationQuery(chat.draft) ?? ""
+        let options = chat.inspirationOptions(q)
+        return VStack(alignment: .leading, spacing: 0) {
+            Text("引用灵感集合里的进行").font(.caption12).foregroundStyle(Theme.textSecondary).padding(8)
+            if options.isEmpty {
+                Text(model.inspirationList.isEmpty ? "灵感集合还是空的" : "没有匹配的进行").font(.caption12).foregroundStyle(Theme.textSecondary).padding(8)
+            }
+            List(options) { o in
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(o.title).font(.control13)
+                    Text(o.subtitle).font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    chat.addMention(o)
+                    if let h = chat.draft.lastIndex(of: "#") { chat.draft = String(chat.draft[..<h]) }
+                    showInspirations = false
+                }
+            }
+            .frame(width: 320, height: 260)
+        }
     }
 
     private func mentionQuery(_ t: String) -> String? {
@@ -242,7 +284,7 @@ struct MessageView: View {
             }
             if !message.mentions.isEmpty {
                 Button { expandMentions.toggle() } label: {
-                    Text(message.mentions.map { "@" + $0.title }.joined(separator: " ")).font(.caption12).foregroundStyle(Theme.accent).lineLimit(expandMentions ? nil : 1)
+                    Text(message.mentions.map { ($0.kind == .inspiration ? "#" : "@") + $0.title }.joined(separator: " ")).font(.caption12).foregroundStyle(Theme.accent).lineLimit(expandMentions ? nil : 1)
                 }.buttonStyle(.plain)
                 if expandMentions {
                     ForEach(message.mentions, id: \.objectId) { m in

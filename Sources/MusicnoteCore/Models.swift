@@ -495,7 +495,7 @@ public struct NoteDocument: Record {
 
 // MARK: - Chat
 
-public enum MentionKind: String, Codable, Sendable { case song, analysis, conversation }
+public enum MentionKind: String, Codable, Sendable { case song, analysis, conversation, inspiration }
 
 public struct Mention: Codable, Hashable, Sendable {
     public var kind: MentionKind

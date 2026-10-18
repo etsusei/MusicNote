@@ -213,3 +213,34 @@ public struct ChordDragPayload: Codable, Sendable {
 
     public var lengthQ: Double { placed.map(\.endQ).max() ?? 1 }
 }
+
+// MARK: - For the chat (# 灵感进行)
+
+public enum InspirationSnapshot {
+    /// What the teacher gets for a # reference: the progression as it plays in its chosen key
+    /// (names, degrees, voicings, positions), its speed, and where the chords came from.
+    public static func object(_ p: InspirationProgression) -> [String: Any] {
+        let detected = InspirationTranspose.detectedKey(p)
+        let n = InspirationTranspose.semitones(p)
+        let key = p.targetKey ?? detected
+        let smart = p.targetKey != nil && p.smartTranspose
+        let chords: [[String: Any]] = p.chords.sorted { $0.startQ < $1.startQ }.map { c in
+            let sym = InspirationTranspose.symbol(c, by: n, key: p.targetKey)
+            let bar = Int(c.startQ / 4) + 1
+            let beat = c.startQ - Double(bar - 1) * 4 + 1
+            var o: [String: Any] = [
+                "position": "第 \(bar) 小节第 \(beat == beat.rounded() ? String(Int(beat)) : String(format: "%.1f", beat)) 拍",
+                "lengthBeats": c.lengthQ, "symbol": sym,
+                "voicing": InspirationTranspose.pitches(c, by: n, smart: smart).map { Pitch.noteName($0) }.joined(separator: " "),
+            ]
+            if let k = key, let d = Degrees.label(symbol: sym, key: k) { o["degree"] = d.display }
+            if let src = c.sourceLabel { o["from"] = src }
+            return o
+        }
+        var out: [String: Any] = ["title": p.displayTitle, "bars": p.bars, "bpm": p.bpm, "meter": "4/4", "chords": chords,
+                                  "note": "用户从分析里拖出来拼的进行；每个和弦的 voicing 就是用户当时听到的。"]
+        if let d = detected { out["detectedKey"] = d.display }
+        if let t = p.targetKey { out["playKey"] = t.display + (n != 0 ? "（从原调移了 \(n > 0 ? "+" : "")\(n) 半音\(smart ? "，智能移调" : "")）" : "") }
+        return out
+    }
+}
