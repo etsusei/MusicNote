@@ -14,7 +14,8 @@ public enum AutoAgent {
 
     证据和它们的局限：
     - Logic Chord ID（run_logic_chords）：直接读音频的候选和边界。不是真值，可能漏掉短和弦、分段不当；词表没有 9/11/13 等扩展音。
-    - MuScriptor 与 MT3 两路转录（run_transcription，只保留原声钢琴和电钢琴）：音符证据。两者一致只说明这个音存在，不说明它属于和弦；
+    - MuScriptor 与 MT3 两路转录（run_transcription）：音符证据。所选分轨（钢琴、吉他或“其他”）已经分离过，转录保留其中全部有音高的乐器
+      （和弦可能在合成器、吉他上），原曲来源只去掉鼓和人声。两者一致只说明这个音存在，不说明它属于和弦；
       单边出现的音可能是漏转也可能是误转。align_transcriptions 给出对齐结果。
     - 人工校对 MIDI（若有）：用户亲手改过，是最可靠的音符证据。
     - 已保存和声里标“人工命名”的和弦是用户确认过的，除非证据明确矛盾不要改；有分歧就放进 toConfirm 让用户判断。
@@ -23,7 +24,7 @@ public enum AutoAgent {
     默认做法（常见情况照着走就够了；可以跳过、调换或回头再做，已有的有效结果直接复用，不要用同样参数重复调用）：
     1. inspect_analysis：看选区、速度网格、小节线、已有的证据和人工数据。
     2. run_logic_chords（原曲，四分拍点）拿到基础候选。
-    3. 没有转录结果时对钢琴分轨各跑一次 MT3 和 MuScriptor，再 align_transcriptions。
+    3. 没有转录结果时对所选分轨（source=stem）各跑一次 MT3 和 MuScriptor，再 align_transcriptions。
     3.5 小节线核对：拿到 Logic 和转录后调用一次 check_bar_lines。用户的小节线可能放错了（整曲拍点检测在切分节奏、前奏里常锁错），
        如果换和弦点和低音换音大多落在第 3 拍或反拍上，说明网格偏了：不要把每个和弦都写成从第 3 拍开始、跨小节延续，
        而是照常按现在网格写位置，并在 submit 的 barLine 里给出 shiftBeats 和理由。它还会给出和弦走向的重复周期：
@@ -65,18 +66,18 @@ public enum AutoAgent {
         return [
             ["name": "inspect_analysis", "description": "查看选区、速度网格、小节线、调、已有证据和人工数据、预算。", "inputSchema": obj([:])],
             ["name": "run_logic_chords", "description": "用本机 Logic Pro Chord ID 分析选区音频，得到和弦候选与边界（按小节.拍列出）。已有同参数结果时直接复用。",
-             "inputSchema": obj(["source": ["type": "string", "enum": ["original", "piano"], "description": "original=原曲混音，piano=已选钢琴分轨"],
+             "inputSchema": obj(["source": ["type": "string", "enum": ["original", "stem"], "description": "original=原曲混音，stem=已选分轨（钢琴/吉他/其他）"],
                                  "grid": ["type": "string", "enum": ["quarter", "eighth"]], "refresh": bool])],
-            ["name": "run_transcription", "description": "把选区转录成音符（只保留原声钢琴和电钢琴）。MT3 在 GPU 上约 20 秒，MuScriptor 约 20 秒。已有结果时复用。",
+            ["name": "run_transcription", "description": "把选区转录成音符。stem（已选分轨）保留全部有音高的乐器，original 去掉鼓和人声。MT3 在 GPU 上约 20 秒，MuScriptor 约 20 秒。已有结果时复用。",
              "inputSchema": obj(["engine": ["type": "string", "enum": ["mt3", "muscriptor"]],
-                                 "source": ["type": "string", "enum": ["piano", "original"]], "refresh": bool], ["engine"])],
+                                 "source": ["type": "string", "enum": ["stem", "original"]], "refresh": bool], ["engine"])],
             ["name": "align_transcriptions", "description": "对齐 MuScriptor 与 MT3 的转录，给出整体偏移、共同/单边音数和每小节一致率。",
-             "inputSchema": obj(["source": ["type": "string", "enum": ["piano", "original"]]])],
+             "inputSchema": obj(["source": ["type": "string", "enum": ["stem", "original"]]])],
             ["name": "bar_evidence", "description": "按小节列出各路证据：Logic 候选、已保存和声、人工 MIDI 与双转录在每个八分位置按下的音（标出单边音）。一次最多 8 小节。",
              "inputSchema": obj(["fromBar": int, "toBar": int], ["fromBar", "toBar"])],
             ["name": "local_audio_check", "description": "复核一个窗口：音频音级能量（HPCP）加三路音符明细和 Logic 候选。用于确认具体的音。",
              "inputSchema": obj(["bar": int, "beat": num, "endBar": int, "endBeat": num,
-                                 "source": ["type": "string", "enum": ["piano", "original"]]], ["bar", "beat", "endBar", "endBeat"])],
+                                 "source": ["type": "string", "enum": ["stem", "original"]]], ["bar", "beat", "endBar", "endBeat"])],
             ["name": "harmony_draft", "description": "程序按拍子分组 + 模板命名的草稿（参考用，可以整体推翻）。",
              "inputSchema": obj(["useUserMidi": bool])],
             ["name": "check_bar_lines", "description": "小节线核对：Logic 换和弦点和低音换音落在小节第几拍、是否该整体挪小节线，以及和弦走向的重复周期。",

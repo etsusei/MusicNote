@@ -14,14 +14,14 @@ public struct EvidenceNote: Codable, Hashable, Sendable {
     }
 }
 
-/// One transcription run (MuScriptor or MT3) of one source, piano family only.
+/// One transcription run (MuScriptor or MT3) of one source: all pitched instruments of the selected stem, or the original minus drums and voice.
 public struct TranscriptionEvidence: Record {
     public static let kind = "evidence.transcription"
     public var id: UUID
     public var analysisId: UUID
     public var trimRevision: Int
     public var engine: String // muscriptor / mt3
-    public var source: String // piano (selected stem) / original
+    public var source: String // stem (selected stem; "piano" in older records) / original
     public var params: [String: String]
     public var notes: [EvidenceNote]
     public var dropped: [String: Int]

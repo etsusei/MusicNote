@@ -99,13 +99,13 @@ public final class AutoToolbox: @unchecked Sendable {
             let text: String
             switch name {
             case "inspect_analysis": text = try inspect()
-            case "run_logic_chords": text = try await logicChords(source: args["source"] as? String ?? "original",
+            case "run_logic_chords": text = try await logicChords(source: Self.source(args["source"], default: "original"),
                                                                   gridMode: args["grid"] as? String ?? "quarter",
                                                                   refresh: args["refresh"] as? Bool ?? false)
             case "run_transcription": text = try await transcribe(engine: args["engine"] as? String ?? "mt3",
-                                                                  source: args["source"] as? String ?? "piano",
+                                                                  source: Self.source(args["source"]),
                                                                   refresh: args["refresh"] as? Bool ?? false)
-            case "align_transcriptions": text = try alignText(source: args["source"] as? String ?? "piano")
+            case "align_transcriptions": text = try alignText(source: Self.source(args["source"]))
             case "bar_evidence": text = try barEvidence(from: intArg(args["fromBar"]) ?? 1, to: intArg(args["toBar"]) ?? 4)
             case "local_audio_check": text = try await localCheck(args)
             case "harmony_draft": text = try await harmonyDraft(useUserMidi: args["useUserMidi"] as? Bool ?? true)
@@ -122,6 +122,17 @@ public final class AutoToolbox: @unchecked Sendable {
             record(name, argText, msg, ok: false, started)
             return (msg, false)
         }
+    }
+
+    /// "stem" = the selected separated track (piano, guitar or other); "piano" is the old name.
+    static func source(_ v: Any?, default d: String = "stem") -> String {
+        let s = v as? String ?? d
+        return s == "original" ? "original" : "stem"
+    }
+
+    /// Stored evidence from before the rename says "piano" for the stem.
+    static func same(_ stored: String, _ wanted: String) -> Bool {
+        (stored == "piano" ? "stem" : stored) == wanted
     }
 
     func intArg(_ v: Any?) -> Int? { (v as? Int) ?? (v as? Double).map { Int($0) } ?? (v as? NSNumber)?.intValue }
@@ -162,7 +173,7 @@ public final class AutoToolbox: @unchecked Sendable {
             "barLine": String(format: "第 1 小节从片段内 %.3fs 开始%@", Double(g.barAnchorUs ?? 0) / 1e6, i.timing?.barAnchorUs == nil ? "（自动估计）" : "（用户设定）"),
             "bars": try bars(i), "keySetByUser": i.timing?.key.display ?? "未设",
             "selectedStem": i.selectedStem?.displayName ?? "无",
-            "sourcesAvailable": ["original（原曲选区）"] + (i.selectedStem.map { ["piano（已选分轨：\($0.displayName)）"] } ?? []),
+            "sourcesAvailable": ["original（原曲选区）"] + (i.selectedStem.map { ["stem（已选分轨：\($0.displayName)，已经分离过，转录保留其中全部乐器）"] } ?? []),
             "userCorrectedMidi": midi.map { "有：r\($0.revision)，\($0.notes.count) 个音（人工校对过，最可靠的音符证据）" } ?? "无",
             "savedHarmony": h.map { hr in
                 "r\(hr.revision)：" + hr.events.map { e in
@@ -170,7 +181,7 @@ public final class AutoToolbox: @unchecked Sendable {
                     return "\(p.bar).\(BarEvidence.beatText(p.beat)) \(e.symbol ?? "?")\(e.manualOverride ? "（人工命名）" : "")"
                 }.joined(separator: " → ")
             } ?? "无",
-            "evidence": tr.map { "\($0.engine)/\($0.source)：\($0.notes.count) 个钢琴音" } + lg.map { "logic/\($0.source)/\($0.grid)：\($0.events.count) 个和弦" },
+            "evidence": tr.map { "\($0.engine)/\($0.source == "piano" ? "stem" : $0.source)：\($0.notes.count) 个音" } + lg.map { "logic/\($0.source)/\($0.grid)：\($0.events.count) 个和弦" },
             "budget": "已用 \(run.toolCalls)/\(run.maxToolCalls) 次工具调用，\(Int(Date().timeIntervalSince(run.startedAt)))/\(Int(run.maxSeconds)) 秒",
         ]
         if let d = i.detection, let k = d.rawKey { o["audioKeyDetection"] = "\(k) \(d.rawScale ?? "")" }
@@ -181,12 +192,12 @@ public final class AutoToolbox: @unchecked Sendable {
         let i = try item()
         let g = try grid(i)
         if !refresh, let hit = store.all(ChordEvidence.self, owner: analysisId)
-            .last(where: { $0.trimRevision == trimRevision && $0.timingRevision == i.timingRevision && $0.source == source && $0.grid == gridMode }) {
+            .last(where: { $0.trimRevision == trimRevision && $0.timingRevision == i.timingRevision && Self.same($0.source, source) && $0.grid == gridMode }) {
             return "（复用已有结果）\n" + logicText(hit, g)
         }
         var (path, offset) = try audio(source, i)
         var pre = preRoll(source, i, g)
-        if source == "piano", let stem = i.selectedStem, let asset = i.separation?.stem(stem) {
+        if source == "stem", let stem = i.selectedStem, let asset = i.separation?.stem(stem) {
             let input = try await pipeline.stemForTranscription(asset, leadInUs: i.separation?.leadInUs, workDir: scratchDir)
             path = input.path; offset = input.leadInUs.seconds; pre = input.leadInUs
         }
@@ -240,12 +251,12 @@ public final class AutoToolbox: @unchecked Sendable {
     func transcribe(engine: String, source: String, refresh: Bool) async throws -> String {
         let i = try item()
         if !refresh, let hit = store.all(TranscriptionEvidence.self, owner: analysisId)
-            .last(where: { $0.trimRevision == trimRevision && $0.engine == engine && $0.source == source }) {
+            .last(where: { $0.trimRevision == trimRevision && $0.engine == engine && Self.same($0.source, source) }) {
             return "（复用已有结果）" + transcriptionSummary(hit, try grid(i))
         }
         var (path, offset) = try audio(source, i)
         var pre = preRoll(source, i, try grid(i))
-        if source == "piano", let stem = i.selectedStem, let asset = i.separation?.stem(stem) {
+        if source == "stem", let stem = i.selectedStem, let asset = i.separation?.stem(stem) {
             // The stem plus its lead-in (separated together), for chords held into the selection.
             let input = try await pipeline.stemForTranscription(asset, leadInUs: i.separation?.leadInUs, workDir: scratchDir)
             path = input.path; offset = 0; pre = input.leadInUs
@@ -268,24 +279,28 @@ public final class AutoToolbox: @unchecked Sendable {
         nonisolated(unsafe) var secs = 0.0
         let w: WorkerProcess
         var params: [String: String] = ["source": source]
+        // A separated stem needs no instrument filter: every pitched note in it is evidence (the
+        // chords may be on a synth or guitar in "other"). The original mix drops drums and voice.
+        let stemKind = i.selectedStem ?? .piano
         if engine == "mt3" {
             w = WorkerProcess(tools.mt3Python, [tools.workers + "/mt3_worker.py", path, "--mt3-dir", tools.mt3Dir,
                                                 "--offset", String(offset), "--duration", String((durationUs + pre).seconds),
-                                                "--programs", "0-5", "--device", "mps"])
-            params["model"] = "mt3"; params["device"] = "mps (jax-mps)"; params["programs"] = "0-5 原声钢琴+电钢琴"
+                                                "--programs", "all", "--device", "mps"])
+            params["model"] = "mt3"; params["device"] = "mps (jax-mps)"; params["programs"] = "全部有音高的乐器（不含鼓）"
         } else {
-            w = WorkerProcess(tools.muscriptorPython, [tools.workers + "/muscriptor_worker.py", path, "--stem", "piano",
+            w = WorkerProcess(tools.muscriptorPython, [tools.workers + "/muscriptor_worker.py", path, "--stem", stemKind.rawValue,
                                                        "--model", tools.muscriptorModel, "--device", tools.muscriptorDevice])
             w.environment = ProcessInfo.processInfo.environment.merging(["PYTORCH_ENABLE_MPS_FALLBACK": "1"]) { $1 }
-            params["model"] = tools.muscriptorModel; params["instruments"] = "acoustic_piano, electric_piano"
+            params["model"] = tools.muscriptorModel; params["instruments"] = "按所选分轨（\(stemKind.displayName)）"
         }
+        let excluded: Set<String> = source == "original" ? ["drums", "voice"] : ["drums"]
         let r = try await w.run { line in
             guard let o = decodeJSONLine(line), let ev = o["event"] as? String else { return }
             switch ev {
             case "note":
                 guard let p = o["pitch"] as? Int, let s = (o["startUs"] as? NSNumber)?.int64Value, let e = (o["endUs"] as? NSNumber)?.int64Value else { return }
                 let inst = o["instrument"] as? String ?? ""
-                guard inst == "acoustic_piano" || inst == "electric_piano" else { dropped[inst, default: 0] += 1; return }
+                guard !excluded.contains(inst) else { dropped[inst, default: 0] += 1; return }
                 notes.append(EvidenceNote(pitch: p, startUs: s, endUs: e, velocity: o["velocity"] as? Int ?? 100, instrument: inst))
             case "done":
                 secs = o["seconds"] as? Double ?? 0
@@ -315,14 +330,14 @@ public final class AutoToolbox: @unchecked Sendable {
         var perBar: [Int: Int] = [:]
         for n in ev.notes { perBar[BarEvidence.position(n.startUs, grid: g).bar, default: 0] += 1 }
         let inst = Dictionary(grouping: ev.notes, by: \.instrument).mapValues(\.count)
-        return "\(ev.engine)/\(ev.source)：保留 \(ev.notes.count) 个钢琴音（\(inst.map { "\($0.key) \($0.value)" }.sorted().joined(separator: "，"))）"
-            + (ev.dropped.isEmpty ? "" : "；已排除非钢琴：\(ev.dropped.map { "\($0.key)×\($0.value)" }.sorted().joined(separator: "，"))")
+        return "\(ev.engine)/\(ev.source == "piano" ? "stem" : ev.source)：保留 \(ev.notes.count) 个音（\(inst.map { "\($0.key) \($0.value)" }.sorted().joined(separator: "，"))）"
+            + (ev.dropped.isEmpty ? "" : "；已排除：\(ev.dropped.map { "\($0.key)×\($0.value)" }.sorted().joined(separator: "，"))")
             + String(format: "；用时 %.1fs\n每小节音数：", ev.seconds)
             + perBar.keys.sorted().map { "\($0):\(perBar[$0]!)" }.joined(separator: " ")
     }
 
     func latestTranscription(_ engine: String, _ source: String) -> TranscriptionEvidence? {
-        store.all(TranscriptionEvidence.self, owner: analysisId).last { $0.trimRevision == trimRevision && $0.engine == engine && $0.source == source }
+        store.all(TranscriptionEvidence.self, owner: analysisId).last { $0.trimRevision == trimRevision && $0.engine == engine && Self.same($0.source, source) }
     }
 
     func aligned(source: String) -> TranscriptionAligner.Result? {
@@ -354,7 +369,7 @@ public final class AutoToolbox: @unchecked Sendable {
         let logic = store.all(ChordEvidence.self, owner: analysisId)
             .filter { $0.trimRevision == trimRevision && $0.timingRevision == i.timingRevision }
         let preferred = logic.last { $0.source == "original" && $0.grid == "quarter" } ?? logic.last
-        let srcs = BarEvidence.Sources(userMidi: confirmedMidi(i)?.notes ?? [], merged: aligned(source: "piano")?.merged ?? [],
+        let srcs = BarEvidence.Sources(userMidi: confirmedMidi(i)?.notes ?? [], merged: aligned(source: "stem")?.merged ?? [],
                                        logic: preferred?.events ?? [], current: latestHarmony()?.events ?? [])
         var text = BarEvidence.describe(bars: range, grid: g, durationUs: durationUs, key: i.timing?.key, sources: srcs)
         if to > range.upperBound { text += "\n（一次最多 8 小节，后面请再调用）" }
@@ -369,7 +384,7 @@ public final class AutoToolbox: @unchecked Sendable {
         let logic = store.all(ChordEvidence.self, owner: analysisId).filter { $0.trimRevision == trimRevision }
         let lg = (logic.last { $0.source == "original" } ?? logic.last)?.events ?? []
         let notes: [BarLineCheck.Note] = confirmedMidi(i).map { $0.notes.map { BarLineCheck.Note(pitch: $0.pitch, startUs: $0.startUs) } }
-            ?? (aligned(source: "piano")?.merged.map { BarLineCheck.Note(pitch: $0.pitch, startUs: $0.startUs) } ?? [])
+            ?? (aligned(source: "stem")?.merged.map { BarLineCheck.Note(pitch: $0.pitch, startUs: $0.startUs) } ?? [])
         return (BarLineCheck.check(grid: g, durationUs: durationUs, logic: lg, notes: notes), g)
     }
 
@@ -412,7 +427,7 @@ public final class AutoToolbox: @unchecked Sendable {
         }
         // Bass: the lowest sounding note per eighth, weighted by time.
         let notes = confirmedMidi(i)?.notes.map { (p: $0.pitch, s: $0.startUs, e: $0.endUs) }
-            ?? (latestTranscription("muscriptor", "piano")?.notes.map { (p: $0.pitch, s: $0.startUs, e: $0.endUs) } ?? [])
+            ?? (latestTranscription("muscriptor", "stem")?.notes.map { (p: $0.pitch, s: $0.startUs, e: $0.endUs) } ?? [])
         if !notes.isEmpty {
             let g = try grid(i)
             var bass = [Double](repeating: 0, count: 12)
@@ -459,14 +474,14 @@ public final class AutoToolbox: @unchecked Sendable {
         guard s >= 0, e <= durationUs + 1000, e - s >= 100_000 else {
             throw WorkerError(code: "INVALID_RANGE", message: "窗口必须在选区内且至少 0.1 秒", retryable: false)
         }
-        let source = args["source"] as? String ?? "piano"
+        let source = Self.source(args["source"])
         let (path, offset) = try audio(source, i)
         nonisolated(unsafe) var res: [String: Any]?
         let w = WorkerProcess(tools.essentiaPython, [tools.workers + "/essentia_worker.py", "chroma", path,
                                                      "--start", String(offset + Double(s) / 1e6), "--end", String(offset + Double(e) / 1e6)])
         _ = try await w.run { line in if let o = decodeJSONLine(line) { res = o } }
         var lines = [String(format: "窗口 %d.%@–%d.%@（%.2f–%.2fs），音频：%@", bar, BarEvidence.beatText(beat), endBar, BarEvidence.beatText(endBeat),
-                            Double(s) / 1e6, Double(e) / 1e6, source == "original" ? "原曲混音" : "钢琴分轨")]
+                            Double(s) / 1e6, Double(e) / 1e6, source == "original" ? "原曲混音" : "所选分轨")]
         if let c = res?["chroma"] as? [String: Double] {
             let ranked = c.sorted { $0.value > $1.value }
             lines.append("音频音级能量（HPCP，最强=1；谐波也会贡献能量，不能直接当作实际音）：" + ranked.map { String(format: "%@ %.2f", $0.key, $0.value) }.joined(separator: "，"))
@@ -483,7 +498,7 @@ public final class AutoToolbox: @unchecked Sendable {
             lines.append("人工校对MIDI：" + ns.map { fmt($0.pitch, $0.startUs, $0.endUs) }.joined(separator: " "))
         }
         for engine in ["muscriptor", "mt3"] {
-            if let t = latestTranscription(engine, "piano") {
+            if let t = latestTranscription(engine, "stem") {
                 let ns = t.notes.filter { $0.startUs < e && $0.endUs > s }
                 lines.append("\(engine)：" + ns.map { fmt($0.pitch, $0.startUs, $0.endUs) }.joined(separator: " "))
             }
@@ -501,10 +516,10 @@ public final class AutoToolbox: @unchecked Sendable {
         var basis: String
         if useUserMidi, let m = confirmedMidi(i) {
             notes = m.notes; basis = "人工校对 MIDI"
-        } else if let r = aligned(source: "piano") {
+        } else if let r = aligned(source: "stem") {
             notes = r.merged.map { MidiNote(pitch: $0.pitch, startUs: $0.startUs, endUs: $0.endUs, instrument: "acoustic_piano") }
             basis = "双转录合并（含单边音）"
-        } else if let t = latestTranscription("muscriptor", "piano") ?? latestTranscription("mt3", "piano") {
+        } else if let t = latestTranscription("muscriptor", "stem") ?? latestTranscription("mt3", "stem") {
             notes = t.notes.map { MidiNote(pitch: $0.pitch, startUs: $0.startUs, endUs: $0.endUs, instrument: $0.instrument) }
             basis = t.engine
         } else {

@@ -14,7 +14,7 @@ stdout: JSON lines (everything else goes to stderr)
   {"event": "error", "code": "...", "message": "..."}
 
 Times are relative to `offset`. Program filter keeps General MIDI programs in the given
-range (default 0–5: acoustic and electric pianos); drums are always dropped.
+range (default 0–5: acoustic and electric pianos; "all" for a separated stem); drums are always dropped.
 """
 import argparse
 import contextlib
@@ -31,15 +31,22 @@ def emit(obj):
     _protocol.flush()
 
 
+GM_FAMILIES = ["piano", "chromatic_percussion", "organ", "guitar", "bass", "strings", "ensemble", "brass",
+               "reed", "pipe", "synth_lead", "synth_pad", "synth_effects", "ethnic", "percussive", "sound_effects"]
+
+
 def program_name(p):
     if 0 <= p <= 3:
         return "acoustic_piano"
     if 4 <= p <= 5:
         return "electric_piano"
-    return f"program_{p}"
+    return GM_FAMILIES[p // 8] if 0 <= p < 128 else f"program_{p}"
 
 
 def parse_range(s):
+    # "all" keeps every pitched program (a separated stem needs no instrument filter).
+    if s == "all":
+        return 0, 127
     lo, _, hi = s.partition("-")
     return int(lo), int(hi or lo)
 
