@@ -475,7 +475,24 @@ do {
     eq(st.harmony.events[1].endUs, 2_500_000, "previous chord ends where the moved one starts (snapped)")
     try HarmonyEdit.delete(&st, id: newId, grid: g)
     eq(st.harmony.events.map(\.symbol), ["Am7", "F"], "deleted")
-    eq(st.harmony.events[0].endUs, 2_500_000, "previous chord takes over the deleted time")
+    eq(st.harmony.events[0].endUs, 1_000_000, "deleting leaves the time empty")
+    // Moving onto others: the covered part is given up; a chord landed inside is split around it.
+    var mv = HarmonyEdit.State(harmony: h, notes: ns)   // C 0–2 s, F 2–4 s
+    try HarmonyEdit.move(&mv, id: "a", toStart: 2_480_000, grid: g)
+    eq(mv.harmony.events.map { "\($0.symbol ?? "")@\($0.startUs / 1000)-\($0.endUs / 1000)" }, ["F@2000-2500", "C@2500-4500"], "move takes the overlapped time (snapped)")
+    var cover = HarmonyEdit.State(harmony: h, notes: ns)
+    try HarmonyEdit.place(&cover, id: "a", start: 0, end: 4_000_000, grid: g)
+    eq(cover.harmony.events.map(\.symbol), ["C"], "a fully covered chord disappears")
+    var inside = HarmonyEdit.State(harmony: h, notes: ns)
+    let added = try HarmonyEdit.add(&inside, start: 2_500_000, end: 3_000_000, symbol: "G", key: cMajor, grid: g, writeVoicing: false)
+    eq(inside.harmony.events.map(\.symbol), ["C", "F", "G", "F"], "added inside a chord splits it around")
+    _ = added
+    // Edges: a touching neighbour follows when shrinking; stretching across the bar line takes time.
+    var rz = HarmonyEdit.State(harmony: h, notes: ns)
+    try HarmonyEdit.resize(&rz, id: "a", leftEdge: false, to: 1_500_000, grid: g)
+    eq(rz.harmony.events.map { $0.startUs / 1000 }, [0, 1500], "neighbour follows a shrinking edge")
+    try HarmonyEdit.resize(&rz, id: "a", leftEdge: false, to: 2_750_000, grid: g)
+    eq(rz.harmony.events.map { "\($0.symbol ?? "")@\($0.startUs / 1000)" }, ["C@0", "F@2750"], "stretching over the next bar takes its time")
     check((try? HarmonyEdit.rename(&st, id: "a", symbol: "Hello", key: cMajor, writeVoicing: true)) == nil, "bad chord name refused")
 } catch { check(false, "harmony edit: \(error)") }
 
