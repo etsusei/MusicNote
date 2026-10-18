@@ -62,7 +62,7 @@ final class AppModel {
     @ObservationIgnored var _autoProvider: CodexProvider?
     @ObservationIgnored var _autoClaude: ClaudeAgentProvider?
     var songGridRunning: Set<UUID> = []
-    var harmonyUndo: [UUID: [HarmonyUndo]] = [:]
+    var proposalUndo: [UUID: [ProposalUndo]] = [:]
     var songGridError: [UUID: String] = [:]
     @ObservationIgnored var auditionCache: [String: AVAudioPCMBuffer] = [:]
     @ObservationIgnored var auditionStop: Task<Void, Never>?
@@ -802,6 +802,23 @@ extension AppModel {
     /// skeleton follow it. Saved as a new revision; older ones stay.
     func adoptAutoResult(_ itemId: UUID, run: AutoRun) {
         do {
+            var run = store.fetch(AutoRun.self, id: run.id) ?? run
+            // Voicing rewrites made while editing become a confirmed MIDI revision now.
+            if let notes = run.draftNotes, var item = item(itemId), let midi = confirmedMidi(item) {
+                let next = (midiRevisions(itemId).map(\.revision).max() ?? 0) + 1
+                var m = MidiRevision(analysisId: itemId, revision: next, status: .confirmed, parentRevision: midi.revision, stem: midi.stem,
+                                     transcriber: midi.transcriber.merging(["edit": "改和弦名后用标准按法改写"]) { $1 }, notes: notes)
+                m.confirmedAt = Date()
+                try store.save(m)
+                item.confirmedMidiRevision = next
+                try store.save(item)
+                run.proposal?.midiRevision = next
+            }
+            run.draftNotes = nil
+            run.edited = false
+            if run.proposal == nil { run.proposal = run.result(in: store) }
+            try store.save(run)
+            proposalUndo[run.id] = nil
             try AutoAdoption.adopt(run, store: store)
             reload()
             // The skeleton follows with the client that did the analysis (it is known to work right

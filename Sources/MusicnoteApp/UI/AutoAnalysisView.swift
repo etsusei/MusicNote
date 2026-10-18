@@ -38,7 +38,7 @@ struct AutoAnalysisSection: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 SectionHeader(title: "模型自主分析",
-                              subtitle: "模型自己调用 Logic 和弦候选、MT3 + MuScriptor 双转录、局部音频复核，最后交付按小节的和弦走向。结果要你点“采用”才会替换下面的完整进行；你的 MIDI、笔记和标签不会被改动，旧的和声版本都保留。")
+                              subtitle: "模型自己调用 Logic 和弦候选、MT3 + MuScriptor 双转录、局部音频复核，最后交付按小节的和弦走向。你在结果上检查、修改，点“保存”后才更新下面的完整进行和骨架；旧的和声和 MIDI 版本都保留。")
                 Spacer()
                 if running {
                     Button("停止") { model.cancelAutoAnalysis(item.id) }.buttonStyle(SecondaryButtonStyle(compact: true))
@@ -79,29 +79,34 @@ struct AdoptBar: View {
     var current: HarmonyRevision?
 
     var body: some View {
+        let saved = AutoAdoption.isSaved(run, current: current)
         let adopted = AutoAdoption.isAdopted(run, current: current)
         let stale = item.trimRevision != run.trimRevision
         HStack(spacing: 10) {
-            Image(systemName: adopted ? "checkmark.seal.fill" : "tray.full").foregroundStyle(adopted ? Theme.success : Theme.accent)
+            Image(systemName: saved ? "checkmark.seal.fill" : "square.and.pencil").foregroundStyle(saved ? Theme.success : Theme.accent)
             VStack(alignment: .leading, spacing: 2) {
-                Text(adopted ? "已采用：下面的完整进行、和弦卡、播放、骨架和聊天都用这个结果" : "还没采用：下面的完整进行目前是\(currentText)")
+                Text(saved ? "已保存：完整进行、和弦卡、播放、骨架和聊天都用这个结果"
+                     : adopted ? "有未保存的修改" : "检查并修改下面的和弦走向，没问题就保存")
                     .font(.system(size: 13, weight: .semibold))
-                Text(stale ? "选区在分析之后改过，这个结果不能再采用，请重新自主分析。"
-                     : adopted ? "在下面改和弦名会直接改在这个结果上；想换回程序分组可以点“重新分析和声”，这里的结果随时能再采用。"
-                     : "采用后会存成新的和声版本并重新生成骨架，旧版本都保留。")
+                Text(stale ? "选区在分析之后改过，这个结果不能再保存，请重新自主分析。"
+                     : saved ? "还能接着在下面改，改完再保存一次。完整进行目前是\(currentText)。"
+                     : "点和弦选中，双击改名，可插入、删除、按八分音符挪起止，能撤销。保存前不会动你的和声、MIDI 和骨架；保存后更新完整进行并重新生成骨架。完整进行目前是\(currentText)。")
                     .font(.caption12).foregroundStyle(stale ? Theme.warning : Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            if !adopted && !stale {
-                Button("采用这个结果") { model.adoptAutoResult(item.id, run: run) }.buttonStyle(PrimaryButtonStyle())
+            if !saved && !stale {
+                Button(adopted ? "保存修改" : "保存") { model.adoptAutoResult(item.id, run: run) }.buttonStyle(PrimaryButtonStyle())
+                    .help("存成新的和声版本（旧版本保留），更新完整进行并重新生成骨架")
             }
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(adopted ? Theme.success.opacity(0.08) : Theme.accent.opacity(0.08)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(saved ? Theme.success.opacity(0.08) : Theme.accent.opacity(0.08)))
     }
 
     private var currentText: String {
         guard let c = current else { return "空的" }
+        if c.auto?.runId == run.id { return "这次结果上次保存的版本（r\(c.revision)）" }
         if c.params["algorithm"] == "agent" { return "另一次模型分析的结果（r\(c.revision)）" }
         return "程序分组的结果（r\(c.revision)）"
     }
@@ -180,7 +185,13 @@ struct AutoResult: View {
                              shift: sh, apply: { model.shiftBarLine(item.id, beats: sh) }, dismiss: nil)
             }
             Legend(itemId: item.id)
-            BarProgressionView(item: item, harmony: harmony, auto: auto, grid: grid)
+            if let run, item.trimRevision == run.trimRevision {
+                BarProgressionView(item: item, harmony: harmony, auto: auto, grid: grid,
+                                   edit: { f in model.editProposal(run.id, f) }, undo: { model.undoProposalEdit(run.id) },
+                                   undoCount: model.proposalUndoCount(run.id), notes: model.proposalNotes(run))
+            } else {
+                BarProgressionView(item: item, harmony: harmony, auto: auto, grid: grid)
+            }
             if !auto.toConfirm.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("待确认（\(auto.toConfirm.count)）").font(.system(size: 13, weight: .semibold))
@@ -259,8 +270,14 @@ struct BarProgressionView: View {
     var harmony: HarmonyRevision
     var auto: AutoHarmony?
     var grid: BeatGrid
-    /// Hand editing of the current harmony (the model's proposal itself is shown read-only).
-    var editable = false
+    typealias Edit = (inout HarmonyEdit.State, BeatGrid, KeySignature?) throws -> Void
+    /// Hand editing (of the model's result, as a draft until saved); nil = read-only.
+    var edit: ((Edit) -> Void)? = nil
+    var undo: (() -> Void)? = nil
+    var undoCount = 0
+    /// Notes to play chords from (the draft's, when edits rewrote voicings).
+    var notes: [MidiNote]? = nil
+    private var editable: Bool { edit != nil }
     @AppStorage("foldPushes") private var foldPushes = true
     @AppStorage("editWritesVoicing") private var writeVoicing = true
     @ViewState private var selected: String?
@@ -310,7 +327,7 @@ struct BarProgressionView: View {
             if let ev, let idx {
                 Text("\(ev.symbol ?? "?") · \(harmony.position(of: ev.startUs, grid: grid))").font(.system(size: 12, weight: .semibold))
                 Button("改名") { startRename(ev) }
-                Button("删除") { let id = ev.id; selected = nil; model.editHarmony(item.id) { st, g, _ in try HarmonyEdit.delete(&st, id: id, grid: g) } }
+                Button("删除") { let id = ev.id; selected = nil; edit? { st, g, _ in try HarmonyEdit.delete(&st, id: id, grid: g) } }
                     .disabled(harmony.events.count < 2).help("这个和弦的时值并入前一个")
                 HStack(spacing: 1) {
                     Text("起点").foregroundStyle(Theme.textSecondary)
@@ -329,16 +346,15 @@ struct BarProgressionView: View {
             Spacer()
             Toggle("改名时用标准按法改写 MIDI", isOn: $writeVoicing).toggleStyle(.checkbox)
                 .help("改名后，这个和弦时间段里的音换成新和弦名的标准按法（会生成新的 MIDI 版本，可撤销）")
-            let n = model.canUndoHarmony(item.id)
-            Button { model.undoHarmonyEdit(item.id) } label: { Label(n > 0 ? "撤销（\(n)）" : "撤销", systemImage: "arrow.uturn.backward") }
-                .disabled(n == 0)
+            Button { undo?() } label: { Label(undoCount > 0 ? "撤销（\(undoCount)）" : "撤销", systemImage: "arrow.uturn.backward") }
+                .disabled(undoCount == 0)
         }
         .buttonStyle(.borderless)
         .font(.system(size: 11))
     }
 
     private func move(_ id: String, to us: Int64) {
-        model.editHarmony(item.id) { st, g, _ in try HarmonyEdit.moveStart(&st, id: id, toUs: us, grid: g) }
+        edit? { st, g, _ in try HarmonyEdit.moveStart(&st, id: id, toUs: us, grid: g) }
     }
 
     private func startRename(_ ev: ChordEvent) { nameText = ev.symbol ?? ""; renaming = ev.id; pendingInsert = nil }
@@ -368,13 +384,13 @@ struct BarProgressionView: View {
         guard ChordSymbol.parse(nameText) != nil else { return }
         let name = nameText, voicing = writeVoicing
         if let t = pendingInsert {
-            model.editHarmony(item.id) { st, g, key in
+            edit? { st, g, key in
                 let id = try HarmonyEdit.insert(&st, atUs: t, symbol: name, key: key, grid: g, writeVoicing: voicing)
                 Task { @MainActor in selected = id }
             }
             insertMode = false
         } else if let id = renaming {
-            model.editHarmony(item.id) { st, _, key in try HarmonyEdit.rename(&st, id: id, symbol: name, key: key, writeVoicing: voicing) }
+            edit? { st, _, key in try HarmonyEdit.rename(&st, id: id, symbol: name, key: key, writeVoicing: voicing) }
         }
         renaming = nil; pendingInsert = nil
     }
@@ -453,11 +469,11 @@ struct BarProgressionView: View {
                     Button("改名…") { selected = ev.id; startRename(ev) }
                     Button("从中间拆分") {
                         let mid = ev.startUs + (ev.endUs - ev.startUs) / 2, name = ev.symbol ?? "C"
-                        model.editHarmony(item.id) { st, g, key in _ = try HarmonyEdit.insert(&st, atUs: mid, symbol: name, key: key, grid: g, writeVoicing: false) }
+                        edit? { st, g, key in _ = try HarmonyEdit.insert(&st, atUs: mid, symbol: name, key: key, grid: g, writeVoicing: false) }
                     }
                     Button("删除（并入前一个）", role: .destructive) {
                         let id = ev.id; selected = nil
-                        model.editHarmony(item.id) { st, g, _ in try HarmonyEdit.delete(&st, id: id, grid: g) }
+                        edit? { st, g, _ in try HarmonyEdit.delete(&st, id: id, grid: g) }
                     }.disabled(harmony.events.count < 2)
                 }
         } else {
@@ -472,7 +488,7 @@ struct BarProgressionView: View {
 
     /// Plays the chord tones as struck in the corrected MIDI; the standard voicing if they don't cover the chord.
     private func play(_ ev: ChordEvent) {
-        let rel: [PlayedVoicing.Note] = (model.confirmedMidi(item)?.notes ?? []).filter { ev.noteIds.contains($0.id) }.map { n in
+        let rel: [PlayedVoicing.Note] = (notes ?? model.confirmedMidi(item)?.notes ?? []).filter { ev.noteIds.contains($0.id) }.map { n in
             let st = max(n.startUs, ev.startUs)
             return (pitch: n.pitch, start: Double(st - ev.startUs) / 1e6, duration: Double(min(n.endUs, ev.endUs) - st) / 1e6)
         }

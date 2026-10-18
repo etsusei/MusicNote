@@ -116,6 +116,10 @@ public struct AutoRun: Record {
     /// The submitted result, waiting for the user to adopt it. Adopting copies it into a new
     /// current harmony revision; until then the chords below stay as they were.
     public var proposal: HarmonyRevision?
+    /// Hand edits to the proposal not yet saved. When a rename rewrote notes with the standard
+    /// voicing, the edited notes wait here and become a MIDI revision only on save.
+    public var draftNotes: [MidiNote]?
+    public var edited: Bool?
     public var finalMessage: String
     public var error: String?
     public init(analysisId: UUID, trimRevision: Int, provider: String, model: String, maxToolCalls: Int, maxSeconds: Double) {
@@ -139,6 +143,9 @@ public struct AutoRun: Record {
 public enum AutoAdoption {
     /// Whether the current harmony is this run's result (possibly edited since adopting).
     public static func isAdopted(_ run: AutoRun, current: HarmonyRevision?) -> Bool { current?.auto?.runId == run.id }
+
+    /// Saved and not edited since.
+    public static func isSaved(_ run: AutoRun, current: HarmonyRevision?) -> Bool { isAdopted(run, current: current) && run.edited != true }
 
     /// Copies the run's result into a new current harmony revision; nothing else is touched.
     /// Degrees follow the key set now, in case it changed since the run.

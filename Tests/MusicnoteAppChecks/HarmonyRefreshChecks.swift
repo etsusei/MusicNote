@@ -67,6 +67,29 @@ struct HarmonyRefreshChecks {
         precondition(regrouped.fired, "Reloading program grouping must invalidate harmony readers")
         precondition(model.latestHarmony(item.id)?.events.first?.symbol == "Cmaj7")
         precondition(run.result(in: model.store)?.events.first?.symbol == "Bmaj9", "The saved proposal must remain intact")
-        print("Harmony refresh checks passed (adoption, reused event IDs, edits, regrouping, saved proposal).")
+        // Editing the model result is a draft: a voicing rewrite waits in the run and becomes a
+        // MIDI revision only on 保存; saving makes the edited result the current harmony.
+        var it2 = model.item(item.id)!
+        let midi = MidiRevision(analysisId: item.id, revision: 1, status: .confirmed, parentRevision: nil, stem: .piano,
+                                transcriber: [:], notes: [MidiNote(pitch: 60, startUs: 0, endUs: 2_000_000)])
+        try model.store.save(midi)
+        it2.confirmedMidiRevision = 1
+        it2.timing = TimingConfirmation(trimRevision: it2.trimRevision, bpm: 120, beatOriginUs: 0, meter: .fourFour, meterConfirmed: true,
+                                        barAnchorUs: 0, key: key)
+        try model.store.save(it2)
+        model.editProposal(run.id) { st, _, k in try HarmonyEdit.rename(&st, id: "chord-01", symbol: "Am7", key: k, writeVoicing: true) }
+        let draft = model.store.fetch(AutoRun.self, id: run.id)!
+        precondition(draft.edited == true && draft.draftNotes != nil, "Edits stay in the run as a draft")
+        precondition(model.confirmedMidi(model.item(item.id)!)?.revision == 1, "MIDI is untouched before saving")
+        precondition(model.latestHarmony(item.id)?.events.first?.symbol == "Cmaj7", "The progression is untouched before saving")
+        precondition(model.proposalUndoCount(run.id) == 1)
+        model.adoptAutoResult(item.id, run: draft)
+        precondition(model.alert == nil, "Saving must succeed")
+        let after = model.item(item.id)!
+        precondition(after.confirmedMidiRevision == 2, "Saving turns the voicing rewrite into a MIDI revision")
+        precondition(model.latestHarmony(item.id)?.events.first?.symbol == "Am7", "Saving updates the progression")
+        let savedRun = model.store.fetch(AutoRun.self, id: run.id)!
+        precondition(AutoAdoption.isSaved(savedRun, current: model.latestHarmony(item.id)), "Saved state after saving")
+        print("Harmony refresh checks passed (adoption, reused event IDs, edits, regrouping, saved proposal, draft edit and save).")
     }
 }
