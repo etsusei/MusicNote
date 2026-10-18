@@ -141,6 +141,7 @@ private struct ConfirmedPanel: View {
     var item: AnalysisItem
     var harmony: HarmonyRevision
     @ViewState private var transport = TransportModel()
+    @ViewState private var originalGain = Double(AppModel.playAlongOriginalGain)
 
     private var playing: Bool { transport.isPlaying && model.playAlongItem == item.id }
     /// Clip time of the playhead while the original + chords play.
@@ -160,6 +161,13 @@ private struct ConfirmedPanel: View {
                     if playing { model.stopPlayAlong() } else { model.playAlong(item.id, harmony: harmony) }
                 } label: { Label(playing ? "停止" : "播放原曲和和弦", systemImage: playing ? "stop.fill" : "play.fill") }
                     .buttonStyle(SecondaryButtonStyle(compact: true))
+                HStack(spacing: 4) {
+                    Image(systemName: originalGain == 0 ? "speaker.slash" : "speaker.wave.2").font(.system(size: 11))
+                        .foregroundStyle(Theme.textSecondary)
+                    Slider(value: $originalGain, in: 0...1).frame(width: 90)
+                        .onChange(of: originalGain) { _, g in model.setPlayAlongOriginalGain(Float(g)) }
+                }
+                .help("原曲音量（和弦音量不变）")
                 Button("修改") { model.stopPlayAlong(); model.beginEditing(item.id) }.buttonStyle(SecondaryButtonStyle(compact: true))
                     .help("打开核对：改完点确定才生效")
             }

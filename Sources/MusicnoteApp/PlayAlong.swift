@@ -36,13 +36,26 @@ extension AppModel {
         e.pause()
         e.configure(sampleRate: rate)
         e.setMetronome(MetronomeConfig())
-        e.setTracks([AudioTrack(id: "original", buffer: buffer)])
+        let original = AudioTrack(id: "original", buffer: buffer)
+        original.gain = Self.playAlongOriginalGain
+        e.setTracks([original])
         e.setMidi(scheduled, enabled: true)
         e.setLength(frame(item.durationUs))
         e.setLoop(nil)
         auditionStop?.cancel()
         playAlongItem = itemId
         e.play(from: frame(max(0, fromUs)))
+    }
+
+    /// Volume of the original under the chords (0–1), remembered between sessions.
+    static var playAlongOriginalGain: Float {
+        get { UserDefaults.standard.object(forKey: "playAlongOriginalGain") as? Float ?? 0.8 }
+        set { UserDefaults.standard.set(newValue, forKey: "playAlongOriginalGain") }
+    }
+
+    func setPlayAlongOriginalGain(_ g: Float) {
+        Self.playAlongOriginalGain = g
+        AudioEngine.shared.updateTrack("original", gain: g)
     }
 
     func stopPlayAlong() {
