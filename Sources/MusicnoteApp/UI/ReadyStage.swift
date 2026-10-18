@@ -516,25 +516,36 @@ struct NotesEditor: View {
     @Environment(AppModel.self) private var model
     var item: AnalysisItem
     @ViewState private var text = ""
-    @ViewState private var preview = false
+    @ViewState private var editing = false
     @ViewState private var saveTask: Task<Void, Never>?
     @ViewState private var loaded = false
+    @FocusState private var focused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 SectionHeader(title: "自由笔记", subtitle: "和声、旋律听感、voicing、配器、编曲、混音和练习想法。和弦名会自动变成可试听的卡片。")
                 Spacer()
-                Picker("", selection: $preview) { Text("编辑").tag(false); Text("预览").tag(true) }.pickerStyle(.segmented).frame(width: 120)
+                // Preview by default; editing is an explicit step.
+                if editing {
+                    Button("完成") { saveNow(); editing = false }.buttonStyle(PrimaryButtonStyle()).keyboardShortcut(.return, modifiers: .command)
+                } else {
+                    Button { editing = true; focused = true } label: { Label("编辑", systemImage: "square.and.pencil") }
+                        .buttonStyle(SecondaryButtonStyle(compact: true))
+                }
             }
-            if preview {
-                Card { RichTextView(text: text.isEmpty ? "（空）" : text).frame(maxWidth: .infinity, alignment: .leading) }
-            } else {
+            if editing {
                 TextEditor(text: $text).font(.body14).frame(minHeight: 180)
+                    .focused($focused)
                     .scrollContentBackground(.hidden)
                     .padding(8)
                     .background(RoundedRectangle(cornerRadius: 6).fill(Theme.surface))
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.controlBorder.opacity(0.5)))
+                Text("⌘↩ 完成").font(.caption12).foregroundStyle(Theme.textSecondary)
+            } else if text.isEmpty {
+                Card { Text("还没有笔记，点“编辑”开始写。").foregroundStyle(Theme.textSecondary).frame(maxWidth: .infinity, alignment: .leading) }
+            } else {
+                Card { RichTextView(text: text).frame(maxWidth: .infinity, alignment: .leading) }
             }
         }
         .onAppear { if !loaded { text = model.noteDocument(item.id).text; loaded = true } }
@@ -546,7 +557,13 @@ struct NotesEditor: View {
                 var d = model.noteDocument(item.id); d.text = t; model.saveNote(d)
             }
         }
-        .onDisappear { saveTask?.cancel(); var d = model.noteDocument(item.id); if d.text != text { d.text = text; model.saveNote(d) } }
+        .onDisappear { saveNow() }
+    }
+
+    private func saveNow() {
+        saveTask?.cancel()
+        var d = model.noteDocument(item.id)
+        if d.text != text { d.text = text; model.saveNote(d) }
     }
 }
 
