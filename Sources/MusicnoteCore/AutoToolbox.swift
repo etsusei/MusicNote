@@ -72,7 +72,7 @@ public final class AutoToolbox: @unchecked Sendable {
             guard let url = Pipeline.resolve(i.source) else { throw WorkerError(code: "SOURCE_MISSING", message: "原曲文件找不到了") }
             return (url.path, i.trimStartUs.seconds)
         default:
-            guard let stem = i.selectedStem, let a = i.separation?.stem(stem) else {
+            guard let a = i.transcriptionStem else {
                 throw WorkerError(code: "SOURCE_MISSING", message: "没有可用的分轨（只保留了选中的分轨）")
             }
             return (paths.url(relative: a.relativePath).path, 0)
@@ -172,8 +172,8 @@ public final class AutoToolbox: @unchecked Sendable {
             "tempo": "\(g.bpm) BPM（四分音符）", "meter": g.meter.display,
             "barLine": String(format: "第 1 小节从片段内 %.3fs 开始%@", Double(g.barAnchorUs ?? 0) / 1e6, i.timing?.barAnchorUs == nil ? "（自动估计）" : "（用户设定）"),
             "bars": try bars(i), "keySetByUser": i.timing?.key.display ?? "未设",
-            "selectedStem": i.selectedStem?.displayName ?? "无",
-            "sourcesAvailable": ["original（原曲选区）"] + (i.selectedStem.map { ["stem（已选分轨：\($0.displayName)，已经分离过，转录保留其中全部乐器）"] } ?? []),
+            "selectedStem": i.selectedStem == nil ? "无" : i.stemLabel,
+            "sourcesAvailable": ["original（原曲选区）"] + (i.selectedStem == nil ? [] : ["stem（已选分轨：\(i.stemLabel)\(i.selectedStems.count > 1 ? "，合并成一轨" : "")，已经分离过，转录保留其中全部乐器）"]),
             "userCorrectedMidi": midi.map { "有：r\($0.revision)，\($0.notes.count) 个音（人工校对过，最可靠的音符证据）" } ?? "无",
             "savedHarmony": h.map { hr in
                 "r\(hr.revision)：" + hr.events.map { e in
@@ -197,7 +197,7 @@ public final class AutoToolbox: @unchecked Sendable {
         }
         var (path, offset) = try audio(source, i)
         var pre = preRoll(source, i, g)
-        if source == "stem", let stem = i.selectedStem, let asset = i.separation?.stem(stem) {
+        if source == "stem", let asset = i.transcriptionStem {
             let input = try await pipeline.stemForTranscription(asset, leadInUs: i.separation?.leadInUs, workDir: scratchDir)
             path = input.path; offset = input.leadInUs.seconds; pre = input.leadInUs
         }
@@ -256,7 +256,7 @@ public final class AutoToolbox: @unchecked Sendable {
         }
         var (path, offset) = try audio(source, i)
         var pre = preRoll(source, i, try grid(i))
-        if source == "stem", let stem = i.selectedStem, let asset = i.separation?.stem(stem) {
+        if source == "stem", let asset = i.transcriptionStem {
             // The stem plus its lead-in (separated together), for chords held into the selection.
             let input = try await pipeline.stemForTranscription(asset, leadInUs: i.separation?.leadInUs, workDir: scratchDir)
             path = input.path; offset = 0; pre = input.leadInUs
@@ -286,7 +286,7 @@ public final class AutoToolbox: @unchecked Sendable {
         var params: [String: String] = ["source": source]
         // A separated stem needs no instrument filter: every pitched note in it is evidence (the
         // chords may be on a synth or guitar in "other"). The original mix drops drums and voice.
-        let stemKind = i.selectedStem ?? .piano
+        let stemKind = StemKind(rawValue: i.transcriberStem) ?? .piano // a mix of stems → "other" (all instruments)
         if engine == "mt3" {
             w = WorkerProcess(tools.mt3Python, [tools.workers + "/mt3_worker.py", path, "--mt3-dir", tools.mt3Dir,
                                                 "--offset", String(offset), "--duration", String((durationUs + pre).seconds),

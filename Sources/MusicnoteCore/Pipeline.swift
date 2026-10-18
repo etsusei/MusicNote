@@ -252,15 +252,56 @@ public final class Pipeline: @unchecked Sendable {
         return rec
     }
 
-    /// Removes the five unselected stems once MIDI is confirmed.
+    /// Mixes the selected stems (and their lead-ins) into one track when more than one is
+    /// selected; a single stem needs nothing. Levels are summed as separated (the stems share
+    /// one gain), with a limiter against overs.
+    public func prepareStemMix(_ item: AnalysisItem) async throws -> SeparationRecord? {
+        guard var sep = item.separation else { return nil }
+        let kinds = item.selectedStems
+        if let old = sep.mix, sep.mixKinds != kinds || kinds.count < 2 {
+            paths.removeOwned(paths.url(relative: old.relativePath))
+            if let l = old.leadInPath { paths.removeOwned(paths.url(relative: l)) }
+            sep.mix = nil; sep.mixKinds = nil
+        }
+        guard kinds.count > 1, sep.mix == nil else { return sep }
+        let assets = kinds.compactMap { sep.stem($0) }
+        guard assets.count == kinds.count, let first = assets.first else { throw WorkerError(code: "TRANSCRIPTION_FAILED", message: "所选分轨有缺失") }
+        let dir = paths.url(relative: first.relativePath).deletingLastPathComponent()
+        let name = kinds.map(\.rawValue).joined(separator: "+")
+        func mix(_ inputs: [String], to out: URL) async throws {
+            var args = ["-v", "error", "-nostdin", "-y"]
+            for i in inputs { args += ["-i", i] }
+            args += ["-filter_complex", "amix=inputs=\(inputs.count):duration=longest:normalize=0,alimiter=limit=0.97:level=false",
+                     "-ar", "44100", "-c:a", "flac", out.path]
+            let r = try await WorkerProcess(tools.ffmpeg, args).run()
+            guard r.status == 0 else { throw WorkerError(code: "TRANSCRIPTION_FAILED", message: "合并分轨失败：\(r.stderr.suffix(200))") }
+        }
+        let out = dir.appendingPathComponent("mix-\(name).flac")
+        try await mix(assets.map { paths.url(relative: $0.relativePath).path }, to: out)
+        var m = StemAsset(kind: kinds[0], relativePath: paths.relative(out),
+                          bytes: (try? FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int64) ?? 0,
+                          decodedFrames: sep.frames, peakDbfs: nil, level: .normal)
+        let leads = assets.compactMap(\.leadInPath)
+        if leads.count == assets.count {
+            let lout = dir.appendingPathComponent("mix-\(name)-leadin.flac")
+            try await mix(leads.map { paths.url(relative: $0).path }, to: lout)
+            m.leadInPath = paths.relative(lout)
+        }
+        sep.mix = m
+        sep.mixKinds = kinds
+        return sep
+    }
+
+    /// Removes the unselected stems once MIDI is confirmed (every selected stem and the mix stay).
     public func deleteUnselectedStems(_ item: AnalysisItem) -> AnalysisItem {
         var item = item
-        guard var sep = item.separation, let keep = item.selectedStem else { return item }
-        for s in sep.stems where s.kind != keep {
+        guard var sep = item.separation, item.selectedStem != nil else { return item }
+        let keepSet = Set(item.selectedStems)
+        for s in sep.stems where !keepSet.contains(s.kind) {
             paths.removeOwned(paths.url(relative: s.relativePath))
             if let l = s.leadInPath { paths.removeOwned(paths.url(relative: l)) }
         }
-        sep.stems = sep.stems.filter { $0.kind == keep }
+        sep.stems = sep.stems.filter { keepSet.contains($0.kind) }
         sep.candidatesDeleted = true
         item.separation = sep
         return item
@@ -328,7 +369,7 @@ public final class Pipeline: @unchecked Sendable {
 
     public func transcribe(_ item: AnalysisItem, stem: StemKind, revision: Int, parent: Int?,
                            progress: @escaping ProgressHandler) async throws -> MidiRevision {
-        guard let asset = item.separation?.stem(stem) else {
+        guard let asset = item.transcriptionStem ?? item.separation?.stem(stem) else {
             throw WorkerError(code: "TRANSCRIPTION_FAILED", message: "所选分轨已不存在", retryable: false)
         }
         let input = try await stemForTranscription(asset, leadInUs: item.separation?.leadInUs,
@@ -340,7 +381,7 @@ public final class Pipeline: @unchecked Sendable {
         nonisolated(unsafe) var notes: [MidiNote] = []
         nonisolated(unsafe) var failure: WorkerError?
         nonisolated(unsafe) var seconds = 0.0
-        let w = WorkerProcess(tools.muscriptorPython, [tools.workers + "/muscriptor_worker.py", path, "--stem", stem.rawValue,
+        let w = WorkerProcess(tools.muscriptorPython, [tools.workers + "/muscriptor_worker.py", path, "--stem", item.transcriberStem,
                                                       "--model", tools.muscriptorModel, "--device", tools.muscriptorDevice])
         w.environment = ProcessInfo.processInfo.environment.merging(["PYTORCH_ENABLE_MPS_FALLBACK": "1"]) { $1 }
         let r = try await w.run { line in
@@ -364,7 +405,7 @@ public final class Pipeline: @unchecked Sendable {
         notes.sort { ($0.startUs, $0.pitch) < ($1.startUs, $1.pitch) }
         return MidiRevision(analysisId: item.id, revision: revision, status: .draft, parentRevision: parent, stem: stem,
                             transcriber: ["tool": "MuScriptor", "version": "0.2.2a1", "model": tools.muscriptorModel,
-                                          "device": tools.muscriptorDevice, "stem": stem.rawValue,
+                                          "device": tools.muscriptorDevice, "stem": item.selectedStems.map(\.rawValue).joined(separator: "+"),
                                           "inputSha": Self.fingerprint(url: URL(fileURLWithPath: stemPath), bytes: asset.bytes),
                                           "leadIn": String(format: "%.2fs", Double(input.leadInUs) / 1e6),
                                           "startContext": item.separation?.leadInUs ?? 0 > 0 && input.leadInUs != Self.silencePadUs ? "lead-in" : (input.leadInUs > 0 ? "silence" : "none"),

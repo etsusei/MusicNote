@@ -163,7 +163,7 @@ struct NotesStage: View {
                 StatusPill(text: String(format: "%.1f BPM", t.bpm))
                 StatusPill(text: t.meter.display + (t.meterConfirmed ? "" : "（未确认）"))
             }
-            if let s = item.selectedStem { StatusPill(text: s.displayName + "轨") }
+            if item.selectedStem != nil { StatusPill(text: item.stemLabel + "轨") }
             Spacer()
         }
         }

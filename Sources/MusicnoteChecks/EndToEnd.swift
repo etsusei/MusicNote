@@ -41,7 +41,15 @@ func runEndToEnd(_ args: [String]) async -> Int32 {
         item.separation = sep
 
         t = Date()
-        let midi = try await pipeline.transcribe(item, stem: .piano, revision: 1, parent: nil, progress: progress)
+        // STEMS=piano,other transcribes several stems mixed into one track.
+        let kinds = (ProcessInfo.processInfo.environment["STEMS"] ?? "piano").split(separator: ",").compactMap { StemKind(rawValue: String($0)) }
+        item.selectedStem = kinds.first ?? .piano
+        item.extraStems = kinds.count > 1 ? Array(kinds.dropFirst()) : nil
+        if kinds.count > 1, let sep = try await pipeline.prepareStemMix(item) {
+            item.separation = sep
+            print("mix", sep.mix?.relativePath ?? "-", "lead-in", sep.mix?.leadInPath ?? "-", "transcriber stem", item.transcriberStem)
+        }
+        let midi = try await pipeline.transcribe(item, stem: item.selectedStem ?? .piano, revision: 1, parent: nil, progress: progress)
         print("transcribe notes", midi.notes.count, String(format: "%.1fs", Date().timeIntervalSince(t)), "lead-in", sep.leadInUs.map { String(format: "%.2fs", Double($0) / 1e6) } ?? "none")
         print("first onsets", midi.notes.sorted { $0.startUs < $1.startUs }.prefix(12).map { String(format: "%.2f", Double($0.startUs) / 1e6) }.joined(separator: " "))
 

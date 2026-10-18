@@ -43,7 +43,7 @@ struct SongPage: View {
                                     HStack(spacing: 6) {
                                         StatusPill(text: item.state.display, color: item.state == .ready ? Theme.success : Theme.textSecondary)
                                         if let t = item.timing { StatusPill(text: "\(t.key.display) · \(String(format: "%.1f", t.bpm)) BPM") }
-                                        if let s = item.selectedStem { StatusPill(text: s.displayName) }
+                                        if item.selectedStem != nil { StatusPill(text: item.stemLabel) }
                                         ForEach(item.skeletonTags, id: \.self) { StatusPill(text: $0, color: Theme.accent) }
                                     }
                                 }

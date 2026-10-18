@@ -155,6 +155,9 @@ public struct SeparationRecord: Codable, Hashable, Sendable {
     /// before the clip start (an anticipated first chord) is separated and transcribed whole.
     /// The stems themselves cover exactly the selection; the lead-in is kept apart.
     public var leadInUs: Int64?
+    /// Several selected stems mixed into one (with a mixed lead-in), and which ones.
+    public var mix: StemAsset?
+    public var mixKinds: [StemKind]?
 
     public func stem(_ kind: StemKind) -> StemAsset? { stems.first { $0.kind == kind } }
 
@@ -199,6 +202,9 @@ public struct AnalysisItem: Record {
     public var timingRevision: Int
     public var separation: SeparationRecord?
     public var selectedStem: StemKind?
+    /// More harmony stems transcribed together with `selectedStem` (mixed into one track first),
+    /// e.g. a thin piano plus the "other" track carrying the pads.
+    public var extraStems: [StemKind]?
     public var confirmedMidiRevision: Int?
     public var harmonyRevision: Int?
     public var tags: [String]
@@ -218,6 +224,27 @@ public struct AnalysisItem: Record {
     public var sortKey: Double { sortIndex }
     public var durationUs: Int64 { trimEndUs - trimStartUs }
     public var isHarmonic: Bool { selectedStem?.isHarmonic ?? false }
+
+    /// The stems that go into transcription, in a fixed order.
+    public var selectedStems: [StemKind] {
+        guard let s = selectedStem else { return [] }
+        let all = Set([s] + (extraStems ?? []))
+        return StemKind.allCases.filter { all.contains($0) }
+    }
+
+    /// "钢琴" or "钢琴 + 其他".
+    public var stemLabel: String { selectedStems.map(\.displayName).joined(separator: " + ") }
+
+    /// The audio transcribed and auditioned as "the stem": the mix of the selected stems when
+    /// there are several, else the one stem.
+    public var transcriptionStem: StemAsset? {
+        guard let sep = separation, let primary = selectedStem else { return nil }
+        if selectedStems.count > 1, let m = sep.mix, sep.mixKinds == selectedStems { return m }
+        return sep.stem(primary)
+    }
+
+    /// MuScriptor's instrument set: a mix of stems is transcribed as "other" (all instruments).
+    public var transcriberStem: String { selectedStems.count > 1 ? StemKind.other.rawValue : (selectedStem ?? .piano).rawValue }
 
     /// Confirmation is only valid for the selection it was made on.
     public var hasValidTiming: Bool { timing?.trimRevision == trimRevision }

@@ -131,7 +131,7 @@ struct AnalysisHeader: View {
         switch job.type {
         case .detect: model.analyze(item.id)
         case .separate: if let t = item.timing { model.confirmAndSeparate(item.id, timing: t) }
-        case .transcribe: if let s = item.selectedStem { model.transcribe(item.id, stem: s) }
+        case .transcribe: if !item.selectedStems.isEmpty { model.transcribe(item.id, stems: item.selectedStems) }
         case .harmony: model.runHarmony(item.id)
         case .skeleton: model.generateSkeleton(item.id)
         }
@@ -436,13 +436,17 @@ struct StemStage: View {
     @Environment(AppModel.self) private var model
     var item: AnalysisItem
     var transport: TransportModel
-    @ViewState private var chosen: StemKind?
+    @ViewState private var chosen: Set<StemKind> = []
     @ViewState private var listening: StemKind?
+    @ViewState private var listeningMix = false
     @ViewState private var loaded = false
+
+    /// Selected stems in a fixed order.
+    private var ordered: [StemKind] { StemKind.allCases.filter { chosen.contains($0) } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionHeader(title: "试听并单选一条分轨", subtitle: "六条均为 192 kbps MP3。切换试听保持同一播放位置。只有钢琴、吉他、其他轨进入和声分析。")
+            SectionHeader(title: "试听并选择分轨", subtitle: "钢琴、吉他、其他可以多选：会合并成一轨再转 MIDI，钢琴单薄、和弦在铺底或吉他上时信息更全。人声、鼓、贝斯只能单选，不做和声分析。切换试听保持同一播放位置。")
             if let sep = item.separation {
                 VStack(spacing: 0) {
                     ForEach(StemKind.allCases, id: \.self) { kind in
@@ -457,23 +461,32 @@ struct StemStage: View {
                     Text(formatTime(us: transport.positionUs)).font(.mono13).foregroundStyle(Theme.textSecondary)
                     Text("共享增益 \(String(format: "%.2f", sep.sharedGainDb)) dB").font(.caption12).foregroundStyle(Theme.textSecondary)
                     Spacer()
-                    Button("转为 MIDI") { if let c = chosen { AudioEngine.shared.pause(); model.transcribe(item.id, stem: c) } }
-                        .buttonStyle(PrimaryButtonStyle()).disabled(chosen == nil)
+                    if ordered.count > 1 {
+                        Button { listenMix() } label: {
+                            Label(listeningMix ? "正在试听合并" : "试听所选合并", systemImage: listeningMix ? "speaker.wave.3.fill" : "speaker.wave.3")
+                        }.buttonStyle(SecondaryButtonStyle())
+                    }
+                    Button(ordered.isEmpty ? "转为 MIDI" : "转为 MIDI（\(ordered.map(\.displayName).joined(separator: " + "))）") {
+                        guard !ordered.isEmpty else { return }
+                        AudioEngine.shared.pause(); model.transcribe(item.id, stems: ordered)
+                    }
+                    .buttonStyle(PrimaryButtonStyle()).disabled(ordered.isEmpty)
                 }
-                Text("完成 MIDI 校对前，六条候选都会保留，可以改选另一轨重新转录；完成校对后才清理未选的分轨。")
+                Text("转录完成前六条候选都会保留，可以改选重新转录；之后只保留选中的分轨（多选时还有合并后的那一轨）。")
                     .font(.caption12).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
         }
         .padding(24)
-        .onAppear { chosen = item.selectedStem; load() }
+        .onAppear { chosen = Set(item.selectedStems); load() }
         .onReceive(NotificationCenter.default.publisher(for: .togglePlayback)) { _ in toggle() }
     }
 
     private func row(_ kind: StemKind, _ s: StemAsset) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: chosen == kind ? "largecircle.fill.circle" : "circle")
-                .foregroundStyle(chosen == kind ? Theme.accent : Theme.textSecondary)
+            Image(systemName: kind.isHarmonic ? (chosen.contains(kind) ? "checkmark.square.fill" : "square")
+                                              : (chosen.contains(kind) ? "largecircle.fill.circle" : "circle"))
+                .foregroundStyle(chosen.contains(kind) ? Theme.accent : Theme.textSecondary)
             Text(kind.displayName).font(.system(size: 14, weight: .medium)).frame(width: 48, alignment: .leading)
             if s.level == .silent { StatusPill(text: "静音", color: Theme.warning) }
             if s.level == .weak { StatusPill(text: "很弱", color: Theme.warning) }
@@ -486,7 +499,7 @@ struct StemStage: View {
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
         .contentShape(Rectangle())
-        .onTapGesture { chosen = kind }
+        .onTapGesture { pick(kind) }
     }
 
     private func load() {
@@ -504,11 +517,31 @@ struct StemStage: View {
         e.setTracks(tracks)
         e.setLength(sep.frames)
         e.seek(0) // the confirmation page left the cursor at the clip's position in the whole song
-        listen(listening ?? chosen ?? .piano, start: false)
+        listen(listening ?? ordered.first ?? .piano, start: false)
         loaded = true
     }
 
+    /// Harmony stems toggle (several can go in together); vocals, drums and bass are single choices.
+    private func pick(_ kind: StemKind) {
+        if kind.isHarmonic {
+            chosen = chosen.filter(\.isHarmonic)
+            if chosen.contains(kind) { chosen.remove(kind) } else { chosen.insert(kind) }
+        } else {
+            chosen = [kind]
+        }
+        if listeningMix { listenMix() }
+    }
+
+    /// The selected stems together, as they will be mixed for transcription.
+    private func listenMix() {
+        listeningMix = true
+        listening = nil
+        for k in StemKind.allCases { AudioEngine.shared.updateTrack(k.rawValue, muted: !chosen.contains(k), solo: false) }
+        if !AudioEngine.shared.isPlaying { AudioEngine.shared.play() }
+    }
+
     private func listen(_ kind: StemKind, start: Bool = true) {
+        listeningMix = false
         listening = kind
         for k in StemKind.allCases { AudioEngine.shared.updateTrack(k.rawValue, muted: false, solo: k == kind) }
         if start && !AudioEngine.shared.isPlaying { AudioEngine.shared.play() }

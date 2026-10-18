@@ -135,7 +135,7 @@ struct MidiStage: View {
         let e = AudioEngine.shared
         e.pause(); e.configure(sampleRate: 44100); e.setMetronome(MetronomeConfig()); e.setLoop(nil)
         transport.sampleRate = 44100
-        if let stem = item.selectedStem, let asset = item.separation?.stem(stem),
+        if let stem = item.selectedStem, let asset = item.transcriptionStem ?? item.separation?.stem(stem),
            let buf = try? AudioLoader.load(model.paths.url(relative: asset.relativePath)) {
             peaks = WaveformPeaks(buffer: buf)
             e.setTracks([AudioTrack(id: "stem", buffer: buf)])

@@ -453,16 +453,31 @@ final class AppModel {
     // MARK: Stage 3 – transcribe
 
     func transcribe(_ itemId: UUID, stem: StemKind) {
-        guard var item = item(itemId), item.separation?.stem(stem) != nil else { return }
+        transcribe(itemId, stems: item(itemId).map { $0.selectedStem == stem ? $0.selectedStems : [stem] } ?? [stem])
+    }
+
+    /// Transcribes one stem, or several harmony stems mixed into one track first.
+    func transcribe(_ itemId: UUID, stems: [StemKind]) {
+        guard var item = item(itemId), let first = stems.first, stems.allSatisfy({ item.separation?.stem($0) != nil }) else { return }
         let existing = store.all(MidiRevision.self, owner: itemId)
         let next = (existing.map(\.revision).max() ?? 0) + 1
         // Switching stems before confirmation discards the current draft.
         for m in existing where m.status == .draft { try? store.delete(MidiRevision.self, id: m.id) }
-        item.selectedStem = stem
+        item.selectedStem = first
+        item.extraStems = stems.count > 1 ? Array(stems.dropFirst()) : nil
         item.state = .transcribing
         save(item)
+        let stem = first
         startJob(.transcribe, item: item, revision: next, body: { [weak self] _, progress in
             guard let self else { return }
+            var item = item
+            if item.selectedStems.count > 1 || item.separation?.mix != nil {
+                progress(StageProgress("合并所选分轨"))
+                if let sep = try await self.pipeline.prepareStemMix(item) {
+                    item.separation = sep
+                    if var cur = self.item(itemId) { cur.separation = sep; self.save(cur) }
+                }
+            }
             let midi = try await self.pipeline.transcribe(item, stem: stem, revision: next, parent: nil, progress: progress)
             try self.store.save(midi)
             guard var cur = self.item(itemId) else { return }
@@ -809,7 +824,7 @@ extension AppModel {
         let url: URL?
         var offset: Int64 = 0
         if original { url = Pipeline.resolve(item.source); offset = item.trimStartUs }
-        else { url = item.selectedStem.flatMap { item.separation?.stem($0) }.map { paths.url(relative: $0.relativePath) } }
+        else { url = item.transcriptionStem.map { paths.url(relative: $0.relativePath) } }
         guard let url else { alert = AppAlert(title: "无法试听", message: "找不到音频文件"); return }
         let key = url.path
         let buffer: AVAudioPCMBuffer

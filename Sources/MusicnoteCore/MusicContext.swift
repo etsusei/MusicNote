@@ -121,7 +121,7 @@ public struct SnapshotBuilder {
             "schemaVersion": 1, "analysisId": item.id.uuidString, "title": item.title,
             "song": ["title": song?.title ?? "", "artist": song?.artist ?? ""],
             "segment": ["startSec": item.trimStartUs.seconds, "endSec": item.trimEndUs.seconds],
-            "stem": item.selectedStem?.displayName ?? "未选", "state": item.state.display,
+            "stem": item.selectedStem == nil ? "未选" : item.stemLabel, "state": item.state.display,
         ]
         let midi = confirmedMidi(item)
         let harmony = latestHarmony(item.id)
@@ -202,7 +202,7 @@ public struct SnapshotBuilder {
             "analysisItems": items.map { i -> [String: Any] in
                 var d: [String: Any] = ["analysisId": i.id.uuidString, "title": i.title,
                                         "segment": String(format: "%.1f–%.1fs", i.trimStartUs.seconds, i.trimEndUs.seconds),
-                                        "stem": i.selectedStem?.displayName ?? "未选", "state": i.state.display,
+                                        "stem": i.selectedStem == nil ? "未选" : i.stemLabel, "state": i.state.display,
                                         "skeletonTags": i.skeletonTags]
                 if let t = i.timing { d["key"] = t.key.display; d["bpm"] = t.bpm }
                 if let h = latestHarmony(i.id) { d["progression"] = h.events.map { $0.symbol ?? "?" }.joined(separator: " → ") }
