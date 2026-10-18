@@ -216,6 +216,20 @@ struct InspirationBarsView: View {
         .onDrop(of: [.plainText, .utf8PlainText], delegate: ChordDropDelegate(view: self))
     }
 
+    /// A chord the way it sounds here (transposed in 灵感集合), for dragging into the window.
+    private func heard(_ c: InspirationChord) -> InspirationChord {
+        var h = c
+        h.pitches = soundPitches?(c) ?? c.pitches
+        h.symbol = tooltip?(c) ?? c.symbol
+        h.sourceLabel = progression.title.isEmpty ? "灵感集合" : "灵感集合：\(progression.title)"
+        return h
+    }
+
+    private func provider(_ p: ChordDragPayload) -> NSItemProvider {
+        model.beginChordDrag(p)
+        return NSItemProvider(object: p.encoded as NSString)
+    }
+
     // MARK: Geometry
 
     /// Quarter beat under a point in the shared space (row nearest vertically, cell under x).
@@ -244,6 +258,13 @@ struct InspirationBarsView: View {
         let chords = progression.chords.filter { $0.startQ < e && $0.endQ > s }
         return VStack(alignment: .leading, spacing: 3) {
             Text("\(bar)").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                .onDrag {   // a whole bar, as heard here
+                    let chords = progression.chords.filter { $0.startQ < e && $0.endQ > s }.map { c -> InspirationChord in
+                        var h = heard(c); h.startQ = max(s, c.startQ) - s; h.lengthQ = min(e, c.endQ) - max(s, c.startQ); return h
+                    }
+                    return editable || chords.isEmpty ? NSItemProvider() : provider(ChordDragPayload(chords: chords, wholeBar: true, bpm: progression.bpm))
+                }
             GeometryReader { geo in
                 let w = geo.size.width
                 let x = { (q: Double) -> CGFloat in w * CGFloat((q - s) / 4) }
@@ -347,6 +368,7 @@ struct InspirationBarsView: View {
                 }
         } else {
             label.onTapGesture { AudioEngine.shared.playChord(soundPitches?(c) ?? c.pitches, duration: 1.4) }
+                .onDrag { provider(ChordDragPayload(chords: [heard(c)], wholeBar: false, bpm: progression.bpm)) }   // as heard here
         }
     }
 
