@@ -36,6 +36,7 @@ struct NotesStage: View {
     @AppStorage("cardStandard") private var standardAll = false
     @ViewState private var playgroundSend: PlaygroundSendRequest?
     @ViewState private var confirmRegroup = false
+    @ViewState private var confirmResplit = false
 
     /// Re-grouping replaces an adopted model result as the current harmony, so ask first.
     private func regroup() {
@@ -210,6 +211,16 @@ struct NotesStage: View {
                     .buttonStyle(SecondaryButtonStyle())
             }
             Spacer()
+            if item.timing != nil {
+                Button("重新拆轨选轨…") { confirmResplit = true }.buttonStyle(.borderless).font(.caption12)
+                    .help("重新拆出六条分轨，回到选轨（可以多选合并）")
+            }
+        }
+        .confirmationDialog("重新拆轨并选轨？", isPresented: $confirmResplit) {
+            Button("重新拆轨") { if let t = item.timing { model.confirmAndSeparate(item.id, timing: t) } }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("会重新拆出六条分轨并回到选轨这一步，选好后重新转录并分析和声（生成新的 MIDI 和和声版本）。笔记、标签和旧版本都保留。")
         }
     }
 
