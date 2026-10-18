@@ -32,7 +32,7 @@ public final class AutoToolbox: @unchecked Sendable {
     }
 
     func grid(_ i: AnalysisItem) throws -> BeatGrid {
-        guard var g = i.timing?.grid else { throw WorkerError(code: "TEMPO_KEY_UNCONFIRMED", message: "还没有确认速度网格") }
+        guard var g = i.timing?.grid.anchoredOnBeat else { throw WorkerError(code: "TEMPO_KEY_UNCONFIRMED", message: "还没有确认速度网格") }
         if g.barAnchorUs == nil {
             let notes = confirmedMidi(i)?.notes ?? []
             g.barAnchorUs = latestHarmony()?.barAnchorUs ?? ChordGrouper().estimatedBarAnchor(notes: notes, grid: g)

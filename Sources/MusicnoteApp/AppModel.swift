@@ -459,7 +459,7 @@ final class AppModel {
 
     func confirmAndSeparate(_ itemId: UUID, timing: TimingConfirmation) {
         guard var item = item(itemId) else { return }
-        item.timing = timing
+        item.timing = timing.anchoredOnBeat
         item.timingRevision += 1
         item.state = .separating
         save(item)
@@ -481,7 +481,7 @@ final class AppModel {
     /// Changing the grid after confirmation keeps audio and note times; derived analysis goes stale.
     func updateTiming(_ itemId: UUID, timing: TimingConfirmation) {
         guard var item = item(itemId) else { return }
-        item.timing = timing
+        item.timing = timing.anchoredOnBeat
         item.timingRevision += 1
         save(item)
     }

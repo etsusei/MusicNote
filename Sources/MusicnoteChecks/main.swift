@@ -16,6 +16,9 @@ if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "autoanalyze" {
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "skeleton" {
     exit(await runSkeleton(Array(CommandLine.arguments.dropFirst())))
 }
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "fixanchor" {
+    exit(await runFixAnchor(Array(CommandLine.arguments.dropFirst())))
+}
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "fixstart" {
     exit(await runFixStart(Array(CommandLine.arguments.dropFirst())))
 }
@@ -547,6 +550,18 @@ do {
     eq(cs.compactMap { $0["degree"] as? String }, ["ii7", "V7", "Imaj7"], "and their degrees")
     eq(cs.last?["position"] as? String, "第 3 小节第 1 拍", "positions in bars and beats")
     eq(cs.last?["from"] as? String, "U&I 第 3 小节", "sources kept")
+}
+
+// Bar lines sit on beats: bar 1 at the clip start with the beat nudged +180 ms moves to that beat;
+// an anchor already on a beat is kept; downbeats are never empty.
+do {
+    let nudged = BeatGrid(bpm: 119.5, beatOriginUs: 180_000, barAnchorUs: 0)
+    eq(nudged.anchoredOnBeat.barAnchorUs, 180_000, "bar 1 moves to the first beat after the start")
+    let onBeat = BeatGrid(bpm: 120, beatOriginUs: 0, barAnchorUs: 2_000_000)
+    eq(onBeat.anchoredOnBeat.barAnchorUs, 2_000_000, "an anchor on a beat stays")
+    let g = nudged.anchoredOnBeat
+    check((0..<8).contains { g.isDownbeat(q: g.q(atUs: 180_000) + Double($0)) }, "downbeats exist once anchored on a beat")
+    check(!(0..<8).contains { nudged.isDownbeat(q: nudged.q(atUs: 180_000) + Double($0)) }, "(the unanchored grid had none: Logic's empty-grid error)")
 }
 
 print("\(passes) passed, \(failures) failed")

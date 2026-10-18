@@ -322,3 +322,32 @@ func runFixStart(_ args: [String]) async -> Int32 {
     }
     return 0
 }
+
+/// `fixanchor DATA_ROOT ANALYSIS_ID`: bar 1 onto the beat grid (see BeatGrid.beatAlignedAnchor);
+/// re-reads an adopted model harmony, regroups a program one.
+func runFixAnchor(_ args: [String]) async -> Int32 {
+    guard args.count >= 3, let id = UUID(uuidString: args[2]) else { return 2 }
+    let paths = AppPaths(root: URL(fileURLWithPath: args[1]))
+    guard let store = try? Store(url: paths.database), var item = store.fetch(AnalysisItem.self, id: id), let t0 = item.timing else { return 2 }
+    let t = t0.anchoredOnBeat
+    guard t.barAnchorUs != t0.barAnchorUs else { print(item.source.fileName, "already on a beat"); return 0 }
+    item.timing = t
+    item.timingRevision += 1
+    try? store.save(item)
+    let moved = String(format: "bar 1: %.3fs → %.3fs", Double(t0.barAnchorUs ?? 0) / 1e6, Double(t.barAnchorUs ?? 0) / 1e6)
+    guard var h = store.all(HarmonyRevision.self, owner: id).max(by: { $0.revision < $1.revision }) else { print(item.source.fileName, moved); return 0 }
+    if h.params["algorithm"] == "agent" {
+        h.timingRevision = item.timingRevision
+        h.params["barAnchorUs"] = String(t.barAnchorUs ?? 0)
+        try? store.save(h)
+        print(item.source.fileName, moved, "· model harmony re-read")
+    } else if let r = item.confirmedMidiRevision, let midi = store.all(MidiRevision.self, owner: id).first(where: { $0.revision == r }) {
+        let pipeline = Pipeline(store: store, paths: paths, tools: ToolSettings.defaults(projectRoot: FileManager.default.currentDirectoryPath, separatorBinary: ""))
+        let rev = await pipeline.analyzeHarmony(item, midi: midi, timing: t, revision: h.revision + 1, previous: h)
+        try? store.save(rev)
+        item.harmonyRevision = rev.revision
+        try? store.save(item)
+        print(item.source.fileName, moved, "· regrouped r\(rev.revision)")
+    }
+    return 0
+}

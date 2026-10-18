@@ -95,3 +95,32 @@ public func formatTime(us: Int64, millis: Bool = true) -> String {
     let body = millis ? String(format: "%d:%06.3f", m, s) : String(format: "%d:%02d", m, Int(s))
     return (neg ? "-" : "") + body
 }
+
+extension BeatGrid {
+    /// Bar lines sit on beats. An anchor off the beat grid (say the beat offset was nudged after
+    /// bar 1 was set to the clip start) snaps to the nearest beat; one at the clip start takes the
+    /// first beat at or just before it, so bar 1 stays at the start rather than moving into a pickup.
+    public func beatAlignedAnchor(_ a: Int64) -> Int64 {
+        let q = self.q(atUs: a)
+        if abs(q - q.rounded()) < 1e-3 { return a }
+        if a == 0 {
+            let first = us(atQ: q.rounded(.up))
+            return first - Int64(beatUs) >= -40_000 ? first - Int64(beatUs) : first
+        }
+        return us(atQ: q.rounded())
+    }
+
+    public var anchoredOnBeat: BeatGrid {
+        var g = self
+        if let a = barAnchorUs { g.barAnchorUs = beatAlignedAnchor(a) }
+        return g
+    }
+}
+
+extension TimingConfirmation {
+    public var anchoredOnBeat: TimingConfirmation {
+        var t = self
+        if let a = t.barAnchorUs { t.barAnchorUs = t.grid.beatAlignedAnchor(a) }
+        return t
+    }
+}
