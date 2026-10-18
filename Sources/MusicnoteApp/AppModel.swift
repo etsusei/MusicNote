@@ -606,69 +606,16 @@ final class AppModel {
         try? store.save(sk)
         skeletonRunning.insert(itemId)
         dataVersion += 1
-        let snapshot = SnapshotBuilder(store: store).analysisSnapshot(item)
-        var text = TeacherPrompt.skeletonTask + "\n\n数据：\n" + SnapshotBuilder.json(snapshot)
-        let refs = store.all(ReferenceMaterial.self).filter(\.isRead)
-        if !refs.isEmpty {
-            text += "\n\n参考材料（已实际读取）：\n" + refs.map { "[\($0.title) · \($0.section)] \($0.content.prefix(4000))" }.joined(separator: "\n\n")
-        }
         Task { [weak self] in
             guard let self else { return }
-            var attempt = 0
-            var lastText = ""
-            while attempt < 2 {
-                attempt += 1
-                do {
-                    let r = try await provider.send(ProviderTurn(sessionId: nil, systemPrompt: TeacherPrompt.system, text: text,
-                                                                 model: model, effort: effort, outputSchema: TeacherPrompt.skeletonSchema)) { _ in }
-                    lastText = r.text
-                    if let parsed = SkeletonParser.parse(r.text, events: harmony.events) {
-                        sk.backboneEventIds = parsed.backbone
-                        sk.relations = parsed.relations
-                        sk.alternatives = parsed.alternatives
-                        sk.explanation = parsed.explanation
-                        sk.summary = parsed.summary.isEmpty ? nil : parsed.summary
-                        // Numbered degrees are computed, not taken from the model: 1 = major tonic,
-                        // minor keys counted from the relative major.
-                        let byId = Dictionary(uniqueKeysWithValues: harmony.events.map { ($0.id, $0) })
-                        let numKey = parsed.keySuggestion?.key ?? item.timing?.key ?? harmony.key
-                        let pattern = Degrees.numberPattern(parsed.backbone.compactMap { byId[$0]?.symbol }, key: numKey)
-                        sk.numberPattern = Self.onePass(pattern) ?? (parsed.numberPattern.isEmpty ? nil : parsed.numberPattern)
-                        sk.keySuggestion = parsed.keySuggestion
-                        sk.voicings = parsed.voicings
-                        sk.keyUsed = item.timing?.key.display
-                        sk.status = .succeeded
-                        sk.error = parsed.suggestedTags.isEmpty ? nil : "建议标签：" + parsed.suggestedTags.joined(separator: "、")
-                        break
-                    }
-                } catch {
-                    sk.status = .failed
-                    sk.error = error.localizedDescription
-                    break
-                }
-            }
-            if sk.status == .running {
-                // Invalid structure twice: keep the text as an unstructured answer.
-                sk.status = .succeeded
-                sk.unstructured = true
-                sk.explanation = lastText
-            }
+            await SkeletonJob.run(item: item, harmony: harmony, store: self.store, provider: provider, model: model, effort: effort, into: &sk)
             try? self.store.save(sk)
             self.skeletonRunning.remove(itemId)
             self.dataVersion += 1
         }
     }
 
-    /// "6-♭7-6-6-♭7-6" → "6-♭7-6" when the backbone simply repeats.
-    static func onePass(_ pattern: String) -> String? {
-        let parts = pattern.split(separator: "-").map(String.init)
-        guard !parts.isEmpty else { return nil }
-        for n in 1...parts.count where parts.count % n == 0 {
-            let unit = Array(parts[0..<n])
-            if stride(from: 0, to: parts.count, by: n).allSatisfy({ Array(parts[$0..<($0 + n)]) == unit }) { return unit.joined(separator: "-") }
-        }
-        return pattern
-    }
+    static func onePass(_ pattern: String) -> String? { SkeletonJob.onePass(pattern) }
 
     /// Applies a corrected key: re-derives degrees, then regenerates the explanation in the new key.
     func applyKey(_ itemId: UUID, _ key: KeySignature) {

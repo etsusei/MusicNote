@@ -153,40 +153,36 @@ func runRegroup(_ args: [String]) -> Int32 {
 
 /// `swift run MusicnoteChecks skeleton <dataRoot> [codex|claude]`: runs the skeleton prompt on the
 /// first harmonic item and prints what the learner would read. Doesn't save.
+/// `skeleton DATA_ROOT [codex|claude] [--item ID] [--save]`: the same generation as the app's
+/// 生成骨架解释 (model and effort from the library's settings); --save stores it.
 func runSkeleton(_ args: [String]) async -> Int32 {
-    guard args.count >= 2, let store = try? Store(url: AppPaths(root: URL(fileURLWithPath: args[1])).database),
-          let item = store.all(AnalysisItem.self).first(where: { $0.isHarmonic && $0.confirmedMidiRevision != nil }) else { return 2 }
+    guard args.count >= 2, let store = try? Store(url: AppPaths(root: URL(fileURLWithPath: args[1])).database) else { return 2 }
     let paths = AppPaths(root: URL(fileURLWithPath: args[1]))
+    let wanted = args.firstIndex(of: "--item").flatMap { args.indices.contains($0 + 1) ? UUID(uuidString: args[$0 + 1]) : nil }
+    guard let item = wanted.flatMap({ store.fetch(AnalysisItem.self, id: $0) })
+            ?? store.all(AnalysisItem.self).first(where: { $0.isHarmonic && $0.confirmedMidiRevision != nil }) else { print("no item"); return 2 }
     let tools = ToolSettings.defaults(projectRoot: FileManager.default.currentDirectoryPath, separatorBinary: "")
+    let settings = AppSettings.load(paths, defaults: tools)
     let builder = SnapshotBuilder(store: store)
-    guard let h = builder.latestHarmony(item.id) else { return 1 }
-    let text = TeacherPrompt.skeletonTask + "\n\n数据：\n" + SnapshotBuilder.json(builder.analysisSnapshot(item))
-    let provider: ChatProvider = args.count > 2 && args[2] == "claude"
-        ? ClaudeProvider(binary: tools.claudeBinary, sandboxDir: paths.chatSandbox)
-        : CodexProvider(binary: tools.codexBinary, sandboxDir: paths.chatSandbox)
-    do {
-        let r = try await provider.send(ProviderTurn(sessionId: nil, systemPrompt: TeacherPrompt.system, text: text, model: nil,
-                                                     effort: "medium", outputSchema: TeacherPrompt.skeletonSchema)) { _ in }
-        guard let p = SkeletonParser.parse(r.text, events: h.events) else { print("UNPARSED:\n" + r.text); return 1 }
-        let byId = Dictionary(uniqueKeysWithValues: h.events.map { ($0.id, $0) })
-        if let k = p.keySuggestion { print("调性：", k.modeName, k.agreesWithCurrent ? "（与当前一致）" : "（与当前不同）", "—", k.reason) }
-        print("数字型：", p.numberPattern)
-        print("一句话：", p.summary)
-        for v in p.voicings { print("  voicing", byId[v.eventId]?.symbol ?? "?", v.description) }
-        print("骨架：", p.backbone.map { byId[$0]?.symbol ?? "?" }.joined(separator: " → "))
-        for rel in p.relations { print("  ·", byId[rel.eventId]?.symbol ?? "?", rel.kind, rel.reason) }
-        for a in p.alternatives { print("  另一种：", a.backboneEventIds.map { byId[$0]?.symbol ?? "?" }.joined(separator: " → "), a.reason) }
-        print("—— explanation（\(p.explanation.count) 字）——\n" + p.explanation)
-        print("标签：", p.suggestedTags)
-        if args.contains("--save") {
-            var sk = Skeleton(analysisId: item.id, harmonyRevision: h.revision, provider: provider.id, model: "默认")
-            sk.backboneEventIds = p.backbone; sk.relations = p.relations; sk.alternatives = p.alternatives
-            sk.explanation = p.explanation; sk.summary = p.summary; sk.numberPattern = p.numberPattern
-            sk.keySuggestion = p.keySuggestion; sk.voicings = p.voicings; sk.keyUsed = item.timing?.key.display; sk.status = .succeeded
-            try? store.save(sk)
-        }
-        return 0
-    } catch { print("FAILED:", error.localizedDescription); return 1 }
+    guard let h = builder.latestHarmony(item.id), !h.events.isEmpty else { print("no harmony"); return 1 }
+    let pid = args.count > 2 && args[2] == "claude" ? "claude" : "codex"
+    let provider: ChatProvider = pid == "claude"
+        ? ClaudeProvider(binary: settings.tools.claudeBinary, sandboxDir: paths.chatSandbox)
+        : CodexProvider(binary: settings.tools.codexBinary, sandboxDir: paths.chatSandbox)
+    let model = settings.providerModels[pid]
+    let effort = settings.providerEfforts[pid] ?? "medium"
+    var sk = Skeleton(analysisId: item.id, harmonyRevision: h.revision, provider: pid, model: model ?? "默认")
+    await SkeletonJob.run(item: item, harmony: h, store: store, provider: provider, model: model, effort: effort, into: &sk)
+    let byId = Dictionary(uniqueKeysWithValues: h.events.map { ($0.id, $0) })
+    print("片段：", item.source.fileName, "· 和声 r\(h.revision)\(h.auto != nil ? "（采用的模型结果）" : "")", "· \(pid) \(model ?? "默认") \(effort)")
+    guard sk.status == .succeeded else { print("FAILED:", sk.error ?? ""); return 1 }
+    if let k = sk.keySuggestion { print("调性：", k.modeName, k.agreesWithCurrent ? "（与当前一致）" : "（与当前不同）", "—", k.reason) }
+    print("数字型：", sk.numberPattern ?? "")
+    print("一句话：", sk.summary ?? "")
+    print("骨架：", sk.backboneEventIds.map { byId[$0]?.symbol ?? "?" }.joined(separator: " → "))
+    print("—— explanation（\(sk.explanation.count) 字）——\n" + sk.explanation)
+    if args.contains("--save") { try? store.save(sk); print("saved") }
+    return 0
 }
 
 /// `swift run MusicnoteChecks autoanalyze <dataRoot> <analysisId> [model] [effort]`: runs the
