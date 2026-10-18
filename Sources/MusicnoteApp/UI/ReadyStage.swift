@@ -44,6 +44,9 @@ struct NotesStage: View {
 
     var body: some View {
         let _ = model.dataVersion
+        // Capture the current value before building ScrollView's content. A database
+        // change alone doesn't change the captured model reference in that closure.
+        let harmony = model.latestHarmony(item.id)
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 summary
@@ -79,9 +82,11 @@ struct NotesStage: View {
                     }
                 }
                 if item.isHarmonic {
-                    if let h = model.latestHarmony(item.id), !h.events.isEmpty {
+                    if let h = harmony, !h.events.isEmpty {
                         progression(h)
-                        chordCards(h)
+                        // Event IDs (chord-01, ...) are reused across revisions.
+                        // Reset card state when adopting a different harmony.
+                        chordCards(h).id(h.id)
                         SkeletonSection(item: item, harmony: h, send: { playgroundSend = $0 })
                     } else if model.jobs[item.id] == nil {
                         Card {
@@ -151,6 +156,7 @@ struct NotesStage: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 SectionHeader(title: "完整进行", subtitle: "按时间顺序，重复和弦保留为独立实例。级数以主音大调为参照；仅基于\(item.selectedStem?.displayName ?? "所选")分轨。")
+                StatusPill(text: "\(h.auto == nil ? "程序分组" : "已采用模型结果") · r\(h.revision)")
                 Spacer()
                 BarNudge(itemId: item.id).help("小节线整体挪动，音符时间不变；程序分组会按新小节线重新分析")
                 Toggle("全部显示标准按法", isOn: $standardAll).toggleStyle(.checkbox).font(.caption12)
@@ -405,10 +411,11 @@ struct SkeletonSection: View {
                         Text("\(model.providers[id]!.displayName)（\(model.providerStatus[id]?.state.display ?? "…")）").tag(id)
                     }
                 }.frame(width: 220)
+                .onAppear { if provider.isEmpty { provider = model.settings.defaultProvider } }
                 if model.skeletonRunning.contains(item.id) {
                     ProgressView().controlSize(.small); Text("生成中").font(.caption12)
                 } else {
-                    Button(sk == nil ? "生成骨架解释" : "重新生成") { model.generateSkeleton(item.id, providerId: provider) }
+                    Button(sk == nil ? "生成骨架解释" : "重新生成") { model.generateSkeleton(item.id, providerId: provider.isEmpty ? nil : provider) }
                         .buttonStyle(SecondaryButtonStyle(compact: true))
                 }
             }

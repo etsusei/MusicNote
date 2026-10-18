@@ -66,7 +66,8 @@ final class AppModel {
     @ObservationIgnored var auditionCache: [String: AVAudioPCMBuffer] = [:]
     @ObservationIgnored var auditionStop: Task<Void, Never>?
 
-    init() {
+    /// Tests can exercise storage and observation without starting audio or provider login.
+    init(startServices: Bool = true) {
         paths = AppPaths(root: ProcessInfo.processInfo.environment["MUSICNOTE_DATA_ROOT"].map { URL(fileURLWithPath: $0) })
         try? paths.ensure()
         let bundleRoot = Bundle.main.object(forInfoDictionaryKey: "MusicnoteProjectRoot") as? String
@@ -86,10 +87,12 @@ final class AppModel {
         chat = ChatController(app: self)
         interruptedJobs = pipeline.recoverOnLaunch()
         reload()
-        AudioEngine.shared.loadSoundFont(URL(fileURLWithPath: settings.tools.soundFont))
-        AudioEngine.shared.setInstrument(settings.instrument)
-        applyTheme()
-        Task { await refreshProviders() }
+        if startServices {
+            AudioEngine.shared.loadSoundFont(URL(fileURLWithPath: settings.tools.soundFont))
+            AudioEngine.shared.setInstrument(settings.instrument)
+            applyTheme()
+            Task { await refreshProviders() }
+        }
     }
 
     func rebuildProviders() {
@@ -527,7 +530,10 @@ final class AppModel {
     // MARK: Stage 4 – harmony
 
     func latestHarmony(_ itemId: UUID) -> HarmonyRevision? {
-        store.all(HarmonyRevision.self, owner: itemId).max { $0.revision < $1.revision }
+        // SQLite reads aren't observable. Every view that reads the current harmony
+        // must also depend on the invalidation signal used by reload/saveHarmony.
+        let _ = dataVersion
+        return store.all(HarmonyRevision.self, owner: itemId).max { $0.revision < $1.revision }
     }
 
     func confirmedMidi(_ item: AnalysisItem) -> MidiRevision? {
@@ -850,7 +856,9 @@ extension AppModel {
         do {
             try AutoAdoption.adopt(run, store: store)
             reload()
-            autoSkeleton(itemId)
+            // The skeleton follows with the client that did the analysis (it is known to work right
+            // now; the default one may be out of quota), else the default.
+            if providerStatus[run.provider]?.state == .connected { generateSkeleton(itemId, providerId: run.provider) } else { autoSkeleton(itemId) }
         } catch {
             alert = AppAlert(title: "无法采用", message: error.localizedDescription)
         }
