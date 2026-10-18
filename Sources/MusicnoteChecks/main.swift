@@ -504,5 +504,31 @@ eq(["am7", "f#m7/c#", "ebmaj7", "CMAJ7", "g7/b", "bb", "Bbm9", "cm7", "C7(b9)"].
    ["Am7", "F♯m7/C♯", "E♭maj7", "Cmaj7", "G7/B", "B♭", "B♭m9", "Cm7", "C7(b9)"], "chord input normalised")
 check(ChordSymbol.normalizeInput("hello") == nil && ChordSymbol.normalizeInput("") == nil, "non-chords rejected")
 
+// 灵感进行: drops land on eighths and take the time they cover; a whole bar lands on a bar line;
+// transposition goes the short way and respells; smart octave keeps the voicing in range.
+do {
+    var ip = InspirationProgression(bars: 4, bpm: 90)
+    InspirationEdit.drop(&ip, [InspirationChord(symbol: "Cmaj7", startQ: 0, lengthQ: 4, pitches: [48, 52, 55, 59])], at: 0.2)
+    eq(ip.chords.map(\.startQ), [0], "drop snapped to the eighth")
+    InspirationEdit.drop(&ip, [InspirationChord(symbol: "Am7", startQ: 0, lengthQ: 2, pitches: [45, 52, 55, 60])], at: 2)
+    eq(ip.chords.map { "\($0.symbol)@\($0.startQ)+\($0.lengthQ)" }, ["Cmaj7@0.0+2.0", "Am7@2.0+2.0"], "overlapped time given up")
+    let bar = [InspirationChord(symbol: "Dm7", startQ: 0, lengthQ: 2, pitches: [50, 53, 57, 60]), InspirationChord(symbol: "G7", startQ: 2, lengthQ: 2, pitches: [43, 53, 59, 62])]
+    InspirationEdit.drop(&ip, bar, at: InspirationEdit.snapBar(5.3))
+    eq(ip.chords.map(\.symbol), ["Cmaj7", "Am7", "Dm7", "G7"], "a whole bar lands on the bar line")
+    eq(ip.chords.first { $0.symbol == "Dm7" }?.startQ, 4, "bar 2 starts at 4 Q")
+    InspirationEdit.drop(&ip, [InspirationChord(symbol: "F", startQ: 0, lengthQ: 8, pitches: [41, 53, 57, 60])], at: 14)
+    eq(ip.chords.last?.endQ, 16, "clipped to the progression's end")
+    let gMaj = KeySignature(tonic: 7, tonicName: "G", mode: .major)
+    eq(InspirationTranspose.semitones(from: cMajor, to: gMaj, smart: true), -5, "smart transposition takes the short way")
+    eq(InspirationTranspose.semitones(from: cMajor, to: gMaj, smart: false), 7, "plain transposition goes up")
+    ip.targetKey = gMaj
+    check(InspirationTranspose.detectedKey(ip) != nil && abs(InspirationTranspose.semitones(ip)) <= 6, "detected key and target give a short shift")
+    let low = InspirationChord(symbol: "C", startQ: 0, lengthQ: 4, pitches: [36, 40, 43])
+    eq(InspirationTranspose.pitches(low, by: -5, smart: true), [43, 47, 50], "smart octave keeps the bass at or above C2")
+    eq(InspirationTranspose.symbol(InspirationChord(symbol: "B♭maj7", startQ: 0, lengthQ: 4, pitches: []), by: 1, key: KeySignature(tonic: 11, tonicName: "B", mode: .major)), "Bmaj7", "respelled in the target key")
+    let payload = ChordDragPayload(chords: bar, wholeBar: true, bpm: 120)
+    eq(ChordDragPayload.decode(payload.encoded)?.chords.map(\.symbol), ["Dm7", "G7"], "drag payload round trip")
+}
+
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

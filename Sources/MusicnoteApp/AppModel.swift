@@ -11,6 +11,7 @@ enum Route: Hashable {
     case playground(UUID)
     case settings
     case bookmarks
+    case inspirations
 }
 
 enum SortMode: String, CaseIterable { case manual = "手动", title = "歌名", recent = "最近编辑" }
@@ -65,6 +66,11 @@ final class AppModel {
     var draftUndo: [UUID: [DraftUndo]] = [:]
     /// The clip whose original + chords is playing (for highlighting the sounding chord).
     var playAlongItem: UUID?
+    // 灵感进行
+    var inspirationUndo: [InspirationProgression] = []
+    var playingInspiration: UUID?
+    @ObservationIgnored var activeChordDrag: ChordDragPayload?
+    @ObservationIgnored var activeChordDragAt: Date?
     var songGridError: [UUID: String] = [:]
     @ObservationIgnored var auditionCache: [String: AVAudioPCMBuffer] = [:]
     @ObservationIgnored var auditionStop: Task<Void, Never>?

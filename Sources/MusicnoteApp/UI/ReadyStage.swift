@@ -278,6 +278,16 @@ struct ChordEventCard: View {
                 Text(event.texture.display).font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
             }
             KeyboardView(pitches: shownPitches, height: 58)
+                .onDrag {   // into 灵感进行: the voicing shown (片段 or 标准) is what was heard
+                    let beats = (item.timing?.grid.beatUs).map { Double(event.durationUs) / $0 } ?? 4
+                    let p = ChordDragPayload(chords: [InspirationChord(symbol: event.symbol ?? "?", startQ: 0, lengthQ: max(0.5, (beats * 2).rounded() / 2),
+                                                                       pitches: shownPitches, sourceLabel: "\(model.song(item.songId)?.title ?? item.title) \(item.timing.map { harmony.position(of: event.startUs, grid: $0.grid) } ?? "")",
+                                                                       sourceAnalysisId: item.id)],
+                                             wholeBar: false, bpm: item.timing?.bpm)
+                    model.beginChordDrag(p)
+                    return NSItemProvider(object: p.encoded as NSString)
+                }
+                .help("拖进灵感进行")
             HStack(spacing: 6) {
                 Picker("", selection: Binding(get: { useStandard }, set: { standard = $0 })) { Text("片段").tag(false); Text("标准").tag(true) }
                     .pickerStyle(.segmented).frame(width: 100).disabled(forceStandard || playedPitches == nil)

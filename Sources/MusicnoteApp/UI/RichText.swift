@@ -42,6 +42,9 @@ final class ChordTextView: NSTextView {
     var onHoverChord: ((String, String?, NSRange, NSRect) -> Void)?
     var onLeaveChord: (() -> Void)?
     var onClickChord: ((String, String?) -> Void)?
+    /// A chord name dragged out (into 灵感进行): the encoded chords as heard when clicked.
+    var dragPayload: ((String, String?) -> String?)?
+    private var pressed: (sym: String, ev: String?, at: NSPoint, range: NSRange)?
     var extraMenu: ((NSRange) -> [NSMenuItem])?
     private var tracking: NSTrackingArea?
     private var hovered: NSRange?
@@ -91,12 +94,36 @@ final class ChordTextView: NSTextView {
 
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        if let (sym, ev, _) = chord(at: p), event.clickCount == 1 {
+        if let (sym, ev, range) = chord(at: p), event.clickCount == 1 {
             onClickChord?(sym, ev)
+            pressed = (sym, ev, p, range)
             return
         }
+        pressed = nil
         super.mouseDown(with: event)
     }
+
+    /// Pressing a chord name and moving a few points drags it (the click has already sounded it).
+    override func mouseDragged(with event: NSEvent) {
+        guard let pr = pressed else { return super.mouseDragged(with: event) }
+        let p = convert(event.locationInWindow, from: nil)
+        guard hypot(p.x - pr.at.x, p.y - pr.at.y) > 4, let payload = dragPayload?(pr.sym, pr.ev) else { return }
+        pressed = nil
+        let item = NSDraggingItem(pasteboardWriter: payload as NSString)
+        let label = NSAttributedString(string: " \(pr.sym) ", attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+                                                                             .foregroundColor: NSColor.labelColor, .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.25)])
+        let size = label.size()
+        let image = NSImage(size: size, flipped: false) { r in label.draw(in: r); return true }
+        item.setDraggingFrame(NSRect(x: p.x - size.width / 2, y: p.y - size.height / 2, width: size.width, height: size.height), contents: image)
+        beginDraggingSession(with: [item], event: event, source: self)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if pressed != nil { pressed = nil; return }
+        super.mouseUp(with: event)
+    }
+
+    override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
@@ -198,6 +225,15 @@ struct RichTextView: NSViewRepresentable {
             let standard = StandardVoicing.pitches(symbol: sym)
             let played = ev.flatMap { coord.eventVoicings?($0) }.flatMap { PlayedVoicing.pitches(symbol: sym, notes: $0.notes) }
             if let p = played ?? standard { AudioEngine.shared.playChord(p) }
+        }
+        // Dragged into 灵感进行: the same notes the click plays, one bar long.
+        tv.dragPayload = { sym, ev in
+            let played = ev.flatMap { coord.eventVoicings?($0) }.flatMap { PlayedVoicing.pitches(symbol: sym, notes: $0.notes) }
+            guard let pitches = played ?? StandardVoicing.pitches(symbol: sym) else { return nil }
+            let payload = ChordDragPayload(chords: [InspirationChord(symbol: sym, startQ: 0, lengthQ: 4, pitches: pitches, sourceLabel: "笔记")],
+                                           wholeBar: false, bpm: nil)
+            coord.app?.beginChordDrag(payload)
+            return payload.encoded
         }
         return tv
     }

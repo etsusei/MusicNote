@@ -60,6 +60,9 @@ struct SidebarView: View {
                     }
                     Button { model.newPlayground() } label: { Label("新建作品", systemImage: "plus") }.buttonStyle(.borderless)
                 }
+                Section("灵感集合") {
+                    Label("灵感集合（\(model.inspirationList.count)）", systemImage: "lightbulb").routeRow(.inspirations)
+                }
                 Section {
                     Label("收藏与高亮", systemImage: "bookmark").routeRow(.bookmarks)
                     Label("设置与存储", systemImage: "gearshape").routeRow(.settings)

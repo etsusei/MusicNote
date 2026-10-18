@@ -158,7 +158,8 @@ struct BarProgressionView: View {
                 } label: {
                     HStack(spacing: 3) { Text("\(bar)").font(.system(size: 11, weight: .semibold)); Image(systemName: onBarTap == nil ? "speaker.wave.2" : "play").font(.system(size: 9)) }
                 }.buttonStyle(.borderless).foregroundStyle(Theme.textSecondary)
-                    .help(onBarTap == nil ? "听原曲第 \(bar) 小节" : "从第 \(bar) 小节起播放原曲和和弦")
+                    .help(onBarTap == nil ? "听原曲第 \(bar) 小节" : "从第 \(bar) 小节起播放原曲和和弦；拖进灵感进行就是整小节")
+                    .onDrag { editable ? NSItemProvider() : provider(barPayload(bar)) }
                 Spacer()
                 if editable && bar == barCount && bar > chordBars {
                     // An empty bar added at the end (or left over): remove it.
@@ -292,6 +293,7 @@ struct BarProgressionView: View {
                 }
         } else {
             Button { play(ev) } label: { label }.buttonStyle(.plain)
+                .onDrag { provider(chordPayload(ev)) }   // into 灵感进行
         }
     }
 
@@ -396,14 +398,51 @@ struct BarProgressionView: View {
         symbol.replacingOccurrences(of: "(", with: "\u{200B}(").replacingOccurrences(of: "/", with: "\u{200B}/")
     }
 
-    /// Plays the chord tones as struck; the standard voicing if they don't cover the chord.
-    private func play(_ ev: ChordEvent) {
+    /// The notes a click sounds: the chord tones as struck, else the standard voicing. A drag
+    /// into 灵感进行 carries exactly these.
+    private func heard(_ ev: ChordEvent) -> [Int]? {
         let rel: [PlayedVoicing.Note] = (notes ?? model.confirmedMidi(item)?.notes ?? []).filter { ev.noteIds.contains($0.id) }.map { n in
             let st = max(n.startUs, ev.startUs)
             return (pitch: n.pitch, start: Double(st - ev.startUs) / 1e6, duration: Double(min(n.endUs, ev.endUs) - st) / 1e6)
         }
         let window = min(0.6, grid.beatUs / 1e6)
-        guard let p = PlayedVoicing.pitches(symbol: ev.symbol, notes: rel, onsetWindow: window) ?? ev.symbol.flatMap(StandardVoicing.pitches(symbol:)) else { return }
+        return PlayedVoicing.pitches(symbol: ev.symbol, notes: rel, onsetWindow: window) ?? ev.symbol.flatMap(StandardVoicing.pitches(symbol:))
+    }
+
+    private func play(_ ev: ChordEvent) {
+        guard let p = heard(ev) else { return }
         AudioEngine.shared.playChord(p, duration: min(2.5, max(0.8, Double(ev.endUs - ev.startUs) / 1e6)))
+    }
+
+    private func sourceLabel(_ bar: Int) -> String {
+        "\(model.song(item.songId)?.title ?? item.title) 第 \(bar) 小节"
+    }
+
+    /// One chord as heard, with its length as read in the bar.
+    private func chordPayload(_ ev: ChordEvent) -> ChordDragPayload? {
+        guard let pitches = heard(ev), let r = reading.first(where: { $0.ev.id == ev.id }) else { return nil }
+        let len = max(0.5, (Double(r.e - r.s) / grid.beatUs * 2).rounded() / 2)
+        return ChordDragPayload(chords: [InspirationChord(symbol: ev.symbol ?? "?", startQ: 0, lengthQ: len, pitches: pitches,
+                                                          sourceLabel: sourceLabel(max(1, barOf(r.s))), sourceAnalysisId: item.id)],
+                                wholeBar: false, bpm: grid.bpm)
+    }
+
+    /// A whole bar: its chords as heard, at their places in the bar.
+    private func barPayload(_ bar: Int) -> ChordDragPayload? {
+        let s = BarEvidence.barStartUs(bar, grid: grid), e = BarEvidence.barStartUs(bar + 1, grid: grid)
+        let chords: [InspirationChord] = reading.filter { $0.s < e && $0.e > s }.compactMap { r in
+            guard let pitches = heard(r.ev) else { return nil }
+            let a = max(s, r.s), b = min(e, r.e)
+            let start = (Double(a - s) / grid.beatUs * 2).rounded() / 2, len = max(0.5, (Double(b - a) / grid.beatUs * 2).rounded() / 2)
+            return InspirationChord(symbol: r.ev.symbol ?? "?", startQ: start, lengthQ: len, pitches: pitches,
+                                    sourceLabel: sourceLabel(bar), sourceAnalysisId: item.id)
+        }
+        return chords.isEmpty ? nil : ChordDragPayload(chords: chords, wholeBar: true, bpm: grid.bpm)
+    }
+
+    private func provider(_ p: ChordDragPayload?) -> NSItemProvider {
+        guard let p else { return NSItemProvider() }
+        model.beginChordDrag(p)
+        return NSItemProvider(object: p.encoded as NSString)
     }
 }

@@ -89,10 +89,12 @@ struct MainView: View {
             case .playground(let id): if let p = model.playgrounds.first(where: { $0.id == id }) { PlaygroundPage(project: p).id(id) } else { EmptyState() }
             case .settings: SettingsPage()
             case .bookmarks: BookmarksPage()
+            case .inspirations: InspirationCollectionPage()
             case nil: EmptyState()
             }
         }
         .background(Theme.background)
+        .overlay(alignment: .bottomTrailing) { InspirationButton() }
     }
 }
 

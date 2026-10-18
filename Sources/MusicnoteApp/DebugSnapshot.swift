@@ -17,6 +17,7 @@ enum DebugSnapshot {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             if let theme { model.settings.theme = theme; model.applyTheme() }
+            if env["MUSICNOTE_SNAPSHOT_WINDOW"] == "灵感进行" { InspirationWindow.shared.show(model) }
             for (i, r) in routes.enumerated() {
                 apply(r, model)
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -34,6 +35,7 @@ enum DebugSnapshot {
         switch kv[0] {
         case "settings": model.route = .settings
         case "bookmarks": model.route = .bookmarks
+        case "inspirations": model.route = .inspirations
         case "song": model.route = UUID(uuidString: kv[1]).map { .song($0) }
         case "analysis": model.route = UUID(uuidString: kv[1]).map { .analysis($0) }
         case "playground": model.route = UUID(uuidString: kv[1]).map { .playground($0) }
@@ -45,7 +47,10 @@ enum DebugSnapshot {
     }
 
     static func snapshot(to url: URL) {
-        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }), let view = window.contentView else { return }
+        // MUSICNOTE_SNAPSHOT_WINDOW=<title> captures that window (e.g. 灵感进行) instead of the main one.
+        let title = ProcessInfo.processInfo.environment["MUSICNOTE_SNAPSHOT_WINDOW"]
+        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && (title == nil || $0.title == title) }),
+              let view = window.contentView else { return }
         if let y = ProcessInfo.processInfo.environment["MUSICNOTE_SCROLLY"].flatMap(Double.init) {
             func deepest(_ v: NSView) -> NSScrollView? {
                 for sv in v.subviews { if let f = deepest(sv) { return f } }
