@@ -83,7 +83,8 @@ struct MainView: View {
     var body: some View {
         Group {
             switch model.route {
-            case .song(let id): if let s = model.song(id) { SongPage(song: s) } else { EmptyState() }
+            // SongPage keeps the song in @State; a new identity per song makes switching songs reload it.
+            case .song(let id): if let s = model.song(id) { SongPage(song: s).id(id) } else { EmptyState() }
             case .analysis(let id): if model.item(id) != nil { AnalysisPage(itemId: id).id(id) } else { EmptyState() }
             case .playground(let id): if let p = model.playgrounds.first(where: { $0.id == id }) { PlaygroundPage(project: p).id(id) } else { EmptyState() }
             case .settings: SettingsPage()

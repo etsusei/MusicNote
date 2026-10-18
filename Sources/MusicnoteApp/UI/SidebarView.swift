@@ -73,8 +73,10 @@ struct SidebarView: View {
 }
 
 extension AppModel {
+    /// The song or one of its clips is open, so its clips are listed.
     func isSelected(in song: Song) -> Bool {
         if case .analysis(let id) = route { return items(of: song.id).contains { $0.id == id } }
+        if case .song(let id) = route { return id == song.id }
         return false
     }
 
