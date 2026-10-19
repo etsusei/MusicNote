@@ -296,27 +296,6 @@ eq(PlayedVoicing.pitches(symbol: "Cm9", notes: cm9Bar), [48, 55, 58, 62, 63], "m
 eq(PlayedVoicing.pitches(symbol: "F", notes: [(53, 0, 0.3), (57, 0.7, 0.3), (60, 1.4, 0.3), (62, 1.6, 0.2)]), [53, 57, 60], "arpeggio gathered, D dropped")
 check(PlayedVoicing.pitches(symbol: "G7", notes: [(67, 0, 1), (74, 0, 1)]) == nil, "too few chord tones → standard voicing")
 
-// Play-along timing (心雨): B♭m7's boundary sits an eighth early on a lone bass pickup; it sounds
-// when its block is struck, and G♭ before it rings until then. A real anticipation (−40 ms) keeps
-// its strike; a chord with nothing struck near its start keeps its boundary.
-do {
-    let beat = 60e6 / 152
-    func ev(_ id: String, _ sym: String, _ s: Int64, _ e: Int64) -> ChordEvent {
-        ChordEvent(id: id, order: 0, startUs: s, endUs: e, noteIds: [], noteRoles: [:], texture: .block, excludedNoteIds: [],
-                   namingPitches: [], candidates: [], symbol: sym, namingSource: .user, manualOverride: false, degree: nil, bassPitch: nil)
-    }
-    func nt(_ p: Int, _ s: Int64, _ e: Int64) -> MidiNote { MidiNote(pitch: p, startUs: s, endUs: e) }
-    let evs = [ev("a", "G♭", 0, 1_381_000), ev("b", "G♭6/9/A♭", 1_381_000, 2_960_000), ev("c", "B♭m7", 2_960_000, 4_540_000), ev("d", "E♭7", 5_000_000, 6_000_000)]
-    let notes = [nt(42, 0, 1_300_000), nt(58, 0, 1_300_000), nt(61, 0, 1_300_000),
-                 nt(44, 1_340_000, 2_900_000), nt(54, 1_340_000, 2_900_000), nt(58, 1_340_000, 2_900_000), nt(63, 1_340_000, 2_900_000),
-                 nt(44, 2_720_000, 2_950_000),                                                   // bass pickup (A♭)
-                 nt(46, 3_119_000, 4_400_000), nt(56, 3_119_000, 4_400_000), nt(61, 3_119_000, 4_400_000), nt(65, 3_119_000, 4_400_000)]
-    let sp = PlayAlongTiming.spans(evs, notes: notes, beatUs: beat)
-    eq(sp.map(\.startUs), [0, 1_340_000, 3_119_000, 5_000_000], "chords sound when struck")
-    eq(sp[1].endUs, 3_119_000, "previous chord rings until the late strike")
-    eq(sp[2].endUs, 4_540_000, "chord before a gap stops at its own end")
-}
-
 // MCP bridge: initialize, list and call go through workers/mcp_bridge.py to the app-side socket;
 // a wrong token is refused.
 do {

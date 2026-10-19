@@ -19,8 +19,6 @@ extension AppModel {
         func frame(_ clipUs: Int64) -> Int64 { Int64(Double(item.trimStartUs + clipUs) / 1e6 * rate) }
         let midi = confirmedMidi(item)?.notes ?? []
         let window = min(0.6, (item.timing?.grid.beatUs ?? 600_000) / 1e6)
-        let spans = PlayAlongTiming.spans(harmony.events, notes: midi, beatUs: item.timing?.grid.beatUs ?? 500_000)
-        let spanOf = Dictionary(uniqueKeysWithValues: spans.map { ($0.id, $0) })
         var scheduled: [ScheduledNote] = []
         for ev in harmony.events {
             let rel: [PlayedVoicing.Note] = midi.filter { ev.noteIds.contains($0.id) }.map { n in
@@ -29,9 +27,7 @@ extension AppModel {
             }
             guard let pitches = PlayedVoicing.pitches(symbol: ev.symbol, notes: rel, onsetWindow: window)
                     ?? ev.symbol.flatMap(StandardVoicing.pitches(symbol:)) else { continue }
-            // Sound when the chord is struck in the recording, not at its grid boundary.
-            let span = spanOf[ev.id] ?? PlayAlongTiming.Span(id: ev.id, startUs: ev.startUs, endUs: ev.endUs)
-            let a = frame(span.startUs), b = max(a + 1, frame(span.endUs - 20_000))
+            let a = frame(ev.startUs), b = max(a + 1, frame(ev.endUs - 20_000))
             for p in pitches where (0...127).contains(p) {
                 scheduled.append(ScheduledNote(startFrame: a, endFrame: b, pitch: UInt8(p), velocity: 72))
             }
@@ -48,7 +44,6 @@ extension AppModel {
         e.setLoop(nil)
         auditionStop?.cancel()
         playAlongItem = itemId
-        playAlongSpans = spans
         e.play(from: frame(max(0, fromUs)))
     }
 
