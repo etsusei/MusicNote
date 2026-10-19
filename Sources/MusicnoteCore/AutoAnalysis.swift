@@ -365,6 +365,19 @@ public enum BarEvidence {
         return (beatUs, true)
     }
 
+    /// Chords as read in the bars, in time order: anticipations start on the beat they
+    /// anticipate (when `foldPushes`), and a chord touching the next runs to that one's reading
+    /// start. The bars draw these spans and play-along sounds them, so what plays is what shows.
+    public static func readingSpans(_ events: [ChordEvent], grid g: BeatGrid, foldPushes: Bool = true)
+        -> [(ev: ChordEvent, s: Int64, e: Int64, pushed: Bool)] {
+        let evs = events.sorted { $0.startUs < $1.startUs }
+        let starts = evs.map { foldPushes ? readingStart($0.startUs, endUs: $0.endUs, grid: g) : (us: $0.startUs, pushed: false) }
+        return evs.indices.map { i in
+            let touching = i + 1 < evs.count && abs(evs[i].endUs - evs[i + 1].startUs) <= 2_000
+            return (evs[i], starts[i].us, touching ? starts[i + 1].us : evs[i].endUs, starts[i].pushed)
+        }
+    }
+
     public static func usAt(bar: Int, beat: Double, grid: BeatGrid) -> Int64 {
         grid.us(atQ: grid.barAnchorQ + Double(bar - 1) * grid.meter.quarterBeatsPerBar + (beat - 1))
     }

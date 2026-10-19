@@ -296,6 +296,22 @@ eq(PlayedVoicing.pitches(symbol: "Cm9", notes: cm9Bar), [48, 55, 58, 62, 63], "m
 eq(PlayedVoicing.pitches(symbol: "F", notes: [(53, 0, 0.3), (57, 0.7, 0.3), (60, 1.4, 0.3), (62, 1.6, 0.2)]), [53, 57, 60], "arpeggio gathered, D dropped")
 check(PlayedVoicing.pitches(symbol: "G7", notes: [(67, 0, 1), (74, 0, 1)]) == nil, "too few chord tones → standard voicing")
 
+// Reading spans (shared by the bars and play-along): a chord struck half a beat early and held
+// through the beat reads (and sounds) on that beat; the chord before it runs up to there.
+do {
+    let g = BeatGrid(bpm: 120, beatOriginUs: 0, barAnchorUs: 0)
+    func ev(_ id: String, _ s: Int64, _ e: Int64) -> ChordEvent {
+        ChordEvent(id: id, order: 0, startUs: s, endUs: e, noteIds: [], noteRoles: [:], texture: .block, excludedNoteIds: [],
+                   namingPitches: [], candidates: [], symbol: "C", namingSource: .user, manualOverride: false, degree: nil, bassPitch: nil)
+    }
+    let r = BarEvidence.readingSpans([ev("b", 1_750_000, 4_000_000), ev("a", 0, 1_750_000)], grid: g)
+    eq(r.map(\.ev.id), ["a", "b"], "time order")
+    eq(r.map(\.s), [0, 2_000_000], "anticipation reads on the bar line")
+    eq(r[0].e, 2_000_000, "previous chord rings up to it")
+    check(r[1].pushed && !r[0].pushed, "pushed marked")
+    eq(BarEvidence.readingSpans([ev("a", 0, 1_750_000), ev("b", 1_750_000, 4_000_000)], grid: g, foldPushes: false).map(\.s), [0, 1_750_000], "unfolded keeps stored times")
+}
+
 // MCP bridge: initialize, list and call go through workers/mcp_bridge.py to the app-side socket;
 // a wrong token is refused.
 do {

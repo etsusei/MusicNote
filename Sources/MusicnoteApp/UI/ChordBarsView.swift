@@ -63,12 +63,7 @@ struct BarProgressionView: View {
     /// Chords as read in the bar: anticipations (struck up to an eighth early, held through the
     /// beat) start on the beat they anticipate; a chord touching the next runs to its reading start.
     private var reading: [(ev: ChordEvent, s: Int64, e: Int64, pushed: Bool)] {
-        let evs = harmony.events.sorted { $0.startUs < $1.startUs }
-        let starts: [(us: Int64, pushed: Bool)] = evs.map { foldPushes ? BarEvidence.readingStart($0.startUs, endUs: $0.endUs, grid: grid) : (us: $0.startUs, pushed: false) }
-        return evs.indices.map { i in
-            let touching = i + 1 < evs.count && abs(evs[i].endUs - evs[i + 1].startUs) <= 2_000
-            return (evs[i], starts[i].us, touching ? starts[i + 1].us : evs[i].endUs, starts[i].pushed)
-        }
+        BarEvidence.readingSpans(harmony.events, grid: grid, foldPushes: foldPushes)
     }
 
     private func barOf(_ us: Int64) -> Int { Int(floor((grid.q(atUs: us) - grid.barAnchorQ) / grid.meter.quarterBeatsPerBar)) + 1 }

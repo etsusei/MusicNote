@@ -149,7 +149,7 @@ private struct ConfirmedPanel: View {
     private var soundingId: String? {
         guard playing else { return nil }
         let t = clipUs
-        return harmony.events.first { $0.startUs <= t && $0.endUs > t }?.id
+        return model.playAlongSpans.last { $0.startUs <= t && $0.endUs > t }?.id
     }
 
     var body: some View {

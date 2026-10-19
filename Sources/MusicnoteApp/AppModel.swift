@@ -66,6 +66,8 @@ final class AppModel {
     var draftUndo: [UUID: [DraftUndo]] = [:]
     /// The clip whose original + chords is playing (for highlighting the sounding chord).
     var playAlongItem: UUID?
+    /// When each chord sounds during play-along (as the bars show it); the highlight follows these.
+    var playAlongSpans: [(id: String, startUs: Int64, endUs: Int64)] = []
     // 灵感进行
     var inspirationUndo: [InspirationProgression] = []
     var playingInspiration: UUID?
