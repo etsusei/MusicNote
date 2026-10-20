@@ -313,6 +313,16 @@ final class AudioEngine: @unchecked Sendable {
         previewing.insert(p)
     }
 
+    /// One key pressed on an on-screen keyboard: it rings for a moment without cutting off
+    /// whatever else is sounding, so keys can be played one after another.
+    func tapKey(_ pitch: Int, seconds: Double = 1.2) {
+        start()
+        let p = UInt8(clamping: pitch)
+        sampler.stopNote(p, onChannel: 1)
+        sampler.startNote(p, withVelocity: 96, onChannel: 1)
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in self?.sampler.stopNote(p, onChannel: 1) }
+    }
+
     func stopPreview() {
         for p in previewing { sampler.stopNote(p, onChannel: 1) }
         previewing.removeAll()

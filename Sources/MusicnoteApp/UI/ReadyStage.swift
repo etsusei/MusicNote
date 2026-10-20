@@ -306,7 +306,10 @@ struct ChordKeyboardSection: View {
             }
             // The range also covers what is being added, so keys never fall off the edge.
             KeyboardView(pitches: shown, height: 128, flats: flats, fixedRange: range(heard + [shown]), ghost: lit?.previous ?? [],
-                         onKeyTap: editing && current != nil ? { p in if let ev = current { model.toggleDraftKey(item.id, eventId: ev.id, pitch: p) } } : nil)
+                         onKeyTap: { p in
+                             // Checking: the key edits the selected chord. Otherwise it just sounds.
+                             if editing, let ev = current { model.toggleDraftKey(item.id, eventId: ev.id, pitch: p) } else { AudioEngine.shared.tapKey(p) }
+                         })
                 .animation(.easeOut(duration: 0.08), value: shown)
                 .onDrag {   // into 灵感进行: the lit chord, as heard
                     guard let ev = current, let l = lit else { return NSItemProvider() }
@@ -318,7 +321,7 @@ struct ChordKeyboardSection: View {
                     model.beginChordDrag(p)
                     return NSItemProvider(object: p.encoded as NSString)
                 }
-                .help("亮着的和弦可以拖进灵感进行；圆圈是上一个和弦的键")
+                .help(editing ? "点琴键给选中的和弦加音或去音；圆圈是上一个和弦的键" : "点琴键听这个音；亮着的和弦可以拖进灵感进行；圆圈是上一个和弦的键")
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
