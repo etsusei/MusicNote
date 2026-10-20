@@ -13,12 +13,13 @@ public enum HarmonyEdit {
     }
 
     public enum EditError: Error, LocalizedError {
-        case badSymbol(String), notFound, tooShort
+        case badSymbol(String), notFound, tooShort, tooFewNotes
         public var errorDescription: String? {
             switch self {
             case .badSymbol(let s): "看不懂这个和弦名：\(s)"
             case .notFound: "找不到这个和弦"
             case .tooShort: "和弦至少要有一个八分音符长"
+            case .tooFewNotes: "和弦至少要留两个音"
             }
         }
     }
@@ -56,6 +57,38 @@ public enum HarmonyEdit {
             s.midiChanged = true
         }
         s.harmony.events[i] = ev
+    }
+
+    /// Sets a chord's notes to exactly these pitches, struck together for its whole length, and
+    /// names it from them (ChordNaming). Returns the names that fit, best first; when none does
+    /// the name stays. At least two notes.
+    @discardableResult
+    public static func setVoicing(_ s: inout State, id: String, pitches raw: [Int], key: KeySignature?) throws -> [String] {
+        let pitches = Array(Set(raw.filter { (0...127).contains($0) })).sorted()
+        guard pitches.count >= 2 else { throw EditError.tooFewNotes }
+        guard let i = s.harmony.events.firstIndex(where: { $0.id == id }) else { throw EditError.notFound }
+        var ev = s.harmony.events[i]
+        let covered = Set(ev.noteIds)
+        s.notes.removeAll { covered.contains($0.id) }
+        let fresh = pitches.map { MidiNote(pitch: $0, velocity: 90, velocitySource: .edited, startUs: ev.startUs, endUs: ev.endUs, edited: true) }
+        s.notes.append(contentsOf: fresh)
+        s.notes.sort { ($0.startUs, $0.pitch) < ($1.startUs, $1.pitch) }
+        let names = ChordNaming.names(pitches: pitches, key: key)
+        if let name = names.first {
+            ev.symbol = name
+            ev.degree = key.flatMap { Degrees.label(symbol: name, key: $0) }
+        }
+        ev.noteIds = fresh.map(\.id)
+        ev.noteRoles = [:]
+        ev.excludedNoteIds = []
+        ev.namingPitches = pitches
+        ev.bassPitch = pitches.first
+        ev.texture = .block
+        ev.manualOverride = true
+        ev.namingSource = .user
+        s.harmony.events[i] = ev
+        s.midiChanged = true
+        return names
     }
 
     /// Removes a chord, leaving its time empty (a chord can be added there again).

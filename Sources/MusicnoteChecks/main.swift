@@ -296,6 +296,32 @@ eq(PlayedVoicing.pitches(symbol: "Cm9", notes: cm9Bar), [48, 55, 58, 62, 63], "m
 eq(PlayedVoicing.pitches(symbol: "F", notes: [(53, 0, 0.3), (57, 0.7, 0.3), (60, 1.4, 0.3), (62, 1.6, 0.2)]), [53, 57, 60], "arpeggio gathered, D dropped")
 check(PlayedVoicing.pitches(symbol: "G7", notes: [(67, 0, 1), (74, 0, 1)]) == nil, "too few chord tones → standard voicing")
 
+// Naming a voicing built on the keyboard: every pitch class accounted for, root in the bass first.
+do {
+    let c = KeySignature(tonic: 0, tonicName: "C", mode: .major)
+    eq(ChordNaming.names(pitches: [60, 64, 67], key: c).first, "C", "triad")
+    eq(ChordNaming.names(pitches: [52, 60, 67], key: c).first, "C/E", "inversion")
+    eq(ChordNaming.names(pitches: [48, 64, 70], key: c).first, "C7", "seventh without its fifth")
+    eq(Array(ChordNaming.names(pitches: [48, 57, 64, 67], key: c).prefix(2)), ["C6", "Am7/C"], "same notes, both names, bass root first")
+    eq(ChordNaming.names(pitches: [50, 60, 64, 67], key: c).first, "C/D", "triad over a foreign bass")
+    eq(ChordNaming.names(pitches: [50, 55, 57, 60], key: c).first, "D7sus4", "sus")
+    eq(ChordNaming.names(pitches: [53, 57, 60, 64, 67], key: c).first, "Fmaj9", "ninth")
+    check(ChordNaming.names(pitches: [60, 61, 62], key: c).isEmpty, "a cluster has no name")
+    // setVoicing writes the block, renames, and the keyboard shows it as written.
+    let g = BeatGrid(bpm: 120, beatOriginUs: 0, barAnchorUs: 0)
+    let ev = ChordEvent(id: "a", order: 0, startUs: 0, endUs: 2_000_000, noteIds: [], noteRoles: [:], texture: .block, excludedNoteIds: [],
+                        namingPitches: [], candidates: [], symbol: "C", namingSource: .agent, manualOverride: false, degree: nil, bassPitch: nil)
+    var st = HarmonyEdit.State(harmony: HarmonyRevision(analysisId: UUID(), revision: 1, midiRevision: 1, timingRevision: 1, key: c,
+                                                        events: [ev], params: [:], namerVersion: "t"), notes: [])
+    let names = try HarmonyEdit.setVoicing(&st, id: "a", pitches: [48, 57, 64, 67], key: c)
+    eq(names.first, "C6", "named from the notes")
+    eq(st.harmony.events[0].symbol, "C6"); check(st.midiChanged, "voicing goes into the MIDI")
+    eq(HeardVoicing.pitches(st.harmony.events[0], notes: st.notes, beatUs: g.beatUs), [48, 57, 64, 67], "shown as written")
+    _ = try HarmonyEdit.setVoicing(&st, id: "a", pitches: [60, 61, 62], key: c)
+    eq(st.harmony.events[0].symbol, "C6", "no name fits: the name stays")
+    do { try HarmonyEdit.setVoicing(&st, id: "a", pitches: [60], key: c); check(false, "one note refused") } catch { check(true, "") }
+}
+
 // Reading spans (shared by the bars and play-along): a chord struck half a beat early and held
 // through the beat reads (and sounds) on that beat; the chord before it runs up to there.
 do {

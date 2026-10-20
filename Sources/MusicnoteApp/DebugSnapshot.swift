@@ -18,6 +18,7 @@ enum DebugSnapshot {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             if let theme { model.settings.theme = theme; model.applyTheme() }
             if env["MUSICNOTE_SNAPSHOT_WINDOW"] == "灵感进行" { InspirationWindow.shared.show(model) }
+            if env["MUSICNOTE_HIDE_CHAT"] != nil { model.showRight = false }
             for (i, r) in routes.enumerated() {
                 apply(r, model)
                 // MUSICNOTE_LIGHT=<n>: light chord n of the clip's harmony (chord n-1 as the shadow).

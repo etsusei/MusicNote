@@ -12,6 +12,8 @@ struct KeyboardView: View {
     var fixedRange: ClosedRange<Int>? = nil
     /// Keys of the previous chord, marked faintly.
     var ghost: [Int] = []
+    /// When set, clicking a key reports its pitch (editing a voicing).
+    var onKeyTap: ((Int) -> Void)? = nil
 
     private var range: ClosedRange<Int> {
         if let fixedRange { return fixedRange }
@@ -67,11 +69,38 @@ struct KeyboardView: View {
             }
         }
         .frame(height: height)
+        .overlay {
+            if let onKeyTap {
+                GeometryReader { geo in
+                    Color.clear.contentShape(Rectangle())
+                        .onTapGesture(coordinateSpace: .local) { p in
+                            if let k = Self.key(at: p, size: geo.size, range: r) { onKeyTap(k) }
+                        }
+                        .onHover { inside in if inside { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() } }
+                }
+            }
+        }
         .accessibilityElement()
         .accessibilityLabel("键盘：" + pitches.sorted().map { Pitch.noteName($0, flats: flats) }.joined(separator: "、"))
     }
 
     static func isBlack(_ p: Int) -> Bool { [1, 3, 6, 8, 10].contains(p % 12) }
+
+    /// The key under a point, black keys first (they sit on top), laid out as drawn.
+    static func key(at p: CGPoint, size: CGSize, range r: ClosedRange<Int>) -> Int? {
+        let whites = r.filter { !isBlack($0) }
+        guard !whites.isEmpty else { return nil }
+        let ww = size.width / CGFloat(whites.count)
+        if p.y <= size.height * 0.6 {
+            for b in r where isBlack(b) {
+                guard let i = whites.firstIndex(of: b - 1) else { continue }
+                let x = CGFloat(i) * ww + ww - ww * 0.3
+                if p.x >= x && p.x <= x + ww * 0.6 { return b }
+            }
+        }
+        let i = Int(p.x / ww)
+        return whites.indices.contains(i) ? whites[i] : nil
+    }
 }
 
 /// The shared chord preview used in notes, cards and chat. When an event is linked,

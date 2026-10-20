@@ -97,6 +97,11 @@ struct NotesStage: View {
                     if draft != nil || (harmony.map { !$0.events.isEmpty } ?? false) {
                         // 核对中: only the checking panel. 已确定: the progression, then learning material.
                         HarmonySection(item: item, harmony: harmony, draft: draft)
+                        if let d = draft {
+                            // Checking: the same keyboard edits the selected chord's notes.
+                            ChordKeyboardSection(item: item, harmony: d.harmony, draftNotes: model.draftNotes(d), editing: true,
+                                                 send: { playgroundSend = $0 })
+                        }
                         if draft == nil, let h = harmony {
                             // Event IDs (chord-01, ...) are reused across revisions; reset card state per revision.
                             ChordKeyboardSection(item: item, harmony: h, send: { playgroundSend = $0 }).id(h.id)
@@ -224,9 +229,13 @@ struct ChordKeyboardSection: View {
     @Environment(AppModel.self) private var model
     var item: AnalysisItem
     var harmony: HarmonyRevision
+    /// Notes the chords are heard from (the draft's while checking).
+    var draftNotes: [MidiNote]? = nil
+    /// While checking: keys add or remove notes of the selected chord, which is renamed from them.
+    var editing = false
     var send: (PlaygroundSendRequest) -> Void
 
-    private var notes: [MidiNote] { model.confirmedMidi(item)?.notes ?? [] }
+    private var notes: [MidiNote] { draftNotes ?? model.confirmedMidi(item)?.notes ?? [] }
     private var grid: BeatGrid? { HarmonySection.grid(item, harmony) }
     private var flats: Bool { Pitch.prefersFlats(item.timing?.key) }
     private var lit: LitChord? {
@@ -241,29 +250,34 @@ struct ChordKeyboardSection: View {
         guard let lo = all.min(), let hi = all.max() else { return 48...83 }
         var start = (lo / 12) * 12, end = ((hi / 12) + 1) * 12 - 1
         while end - start + 1 < 36 { if start >= 36 { start -= 12 } else { end += 12 } }
+        // Editing: an octave of room on each side to add notes outside what is there.
+        if editing { start = max(24, start - 12); end = min(107, end + 12) }
         return start...end
     }
 
     var body: some View {
         let beatUs = item.timing?.grid.beatUs ?? 500_000
         let heard = harmony.events.compactMap { HeardVoicing.pitches($0, notes: notes, beatUs: beatUs) }
+        // The chord's keys as it sounds now (after keyboard edits too).
+        let shown = current.flatMap { HeardVoicing.pitches($0, notes: notes, beatUs: beatUs) } ?? lit?.pitches ?? []
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("键盘").font(.system(size: 15, weight: .semibold))
-                if let ev = current, let l = lit {
+                if let ev = current, lit != nil {
                     Text(ev.symbol ?? "未确定").font(.system(size: 20, weight: .semibold))
                     if let d = ev.degree?.display { Text(d).font(.control13).foregroundStyle(Theme.textSecondary) }
                     if let g = grid {
                         let at = BarEvidence.readingStart(ev.startUs, endUs: ev.endUs, grid: g).us
                         Text(harmony.position(of: at, grid: g)).font(.caption12).foregroundStyle(Theme.textSecondary)
                     }
-                    Text(l.pitches.sorted().map { Pitch.noteName($0, flats: flats) }.joined(separator: " "))
+                    Text(shown.map { Pitch.noteName($0, flats: flats) }.joined(separator: " "))
                         .font(.mono13).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 } else {
-                    Text("点上面的和弦或播放原曲和和弦，按下的键会亮在这里").font(.caption12).foregroundStyle(Theme.textSecondary)
+                    Text(editing ? "点上面的和弦选中它，再在键盘上点琴键加音或去音" : "点上面的和弦或播放原曲和和弦，按下的键会亮在这里")
+                        .font(.caption12).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()
-                if let ev = current {
+                if let ev = current, !editing {
                     Menu {
                         Button("加入学习收藏") { collect(ev) }
                         Button("送入 Playground…") { send(PlaygroundSendRequest(itemId: item.id, kind: .chord(ev.id))) }
@@ -271,8 +285,29 @@ struct ChordKeyboardSection: View {
                         .menuStyle(.borderlessButton).frame(width: 28)
                 }
             }
-            KeyboardView(pitches: lit?.pitches ?? [], height: 128, flats: flats, fixedRange: range(heard), ghost: lit?.previous ?? [])
-                .animation(.easeOut(duration: 0.08), value: lit?.pitches)
+            if editing, let ev = current {
+                let names = ChordNaming.names(pitches: shown, key: item.timing?.key)
+                HStack(spacing: 6) {
+                    Image(systemName: "pianokeys").foregroundStyle(Theme.accent)
+                    Text("点琴键加音或去音，和弦名会跟着这组音变").font(.caption12).foregroundStyle(Theme.textSecondary)
+                    if names.isEmpty, shown.count >= 2 {
+                        Text("· 这组音认不出和弦名，名字没改").font(.caption12).foregroundStyle(Theme.warning)
+                    }
+                    let others = names.filter { $0 != ev.symbol }
+                    if !others.isEmpty {
+                        Text("· 也可以叫").font(.caption12).foregroundStyle(Theme.textSecondary)
+                        ForEach(others, id: \.self) { n in
+                            Button(n) { model.renameDraftChord(item.id, eventId: ev.id, symbol: n) }
+                                .buttonStyle(SecondaryButtonStyle(compact: true)).help("同一组音换个叫法，音不变")
+                        }
+                    }
+                    Spacer()
+                }
+            }
+            // The range also covers what is being added, so keys never fall off the edge.
+            KeyboardView(pitches: shown, height: 128, flats: flats, fixedRange: range(heard + [shown]), ghost: lit?.previous ?? [],
+                         onKeyTap: editing && current != nil ? { p in if let ev = current { model.toggleDraftKey(item.id, eventId: ev.id, pitch: p) } } : nil)
+                .animation(.easeOut(duration: 0.08), value: shown)
                 .onDrag {   // into 灵感进行: the lit chord, as heard
                     guard let ev = current, let l = lit else { return NSItemProvider() }
                     let beats = (item.timing?.grid.beatUs).map { Double(ev.durationUs) / $0 } ?? 4

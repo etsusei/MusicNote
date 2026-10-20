@@ -381,6 +381,9 @@ public enum PlayedVoicing {
 public enum HeardVoicing {
     public static func pitches(_ ev: ChordEvent, notes: [MidiNote], beatUs: Double) -> [Int]? {
         let ids = Set(ev.noteIds)
+        // A voicing written by hand (rename or keyboard edit) is exactly what was meant.
+        let members = notes.filter { ids.contains($0.id) }
+        if !members.isEmpty, members.allSatisfy(\.edited) { return Array(Set(members.map(\.pitch))).sorted() }
         let rel: [PlayedVoicing.Note] = notes.filter { ids.contains($0.id) }.map { n in
             let st = max(n.startUs, ev.startUs)
             return (pitch: n.pitch, start: Double(st - ev.startUs) / 1e6, duration: Double(min(n.endUs, ev.endUs) - st) / 1e6)

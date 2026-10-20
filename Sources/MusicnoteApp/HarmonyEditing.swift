@@ -57,6 +57,25 @@ extension AppModel {
         dataVersion += 1
     }
 
+    /// Keyboard while checking: a key adds or removes that pitch in the chord; the chord is
+    /// renamed from its notes (the name stays when none fits). Sounds the new chord.
+    func toggleDraftKey(_ itemId: UUID, eventId: String, pitch: Int) {
+        guard let d = harmonyDraft(itemId), let item = item(itemId), let ev = d.harmony.events.first(where: { $0.id == eventId }) else { return }
+        let current = HeardVoicing.pitches(ev, notes: draftNotes(d), beatUs: item.timing?.grid.beatUs ?? 500_000) ?? []
+        var next = Set(current)
+        if next.contains(pitch) { next.remove(pitch) } else { next.insert(pitch) }
+        let pitches = next.sorted()
+        editDraft(itemId) { st, _, key in try HarmonyEdit.setVoicing(&st, id: eventId, pitches: pitches, key: key) }
+        guard harmonyDraft(itemId)?.harmony.events.first(where: { $0.id == eventId })?.namingPitches == pitches else { return }
+        if var l = litChord, l.itemId == itemId, l.eventId == eventId { l.pitches = pitches; litChord = l }
+        AudioEngine.shared.playChord(pitches, duration: 1.2)
+    }
+
+    /// Another name for the same notes (C6 ↔ Am7/C); the notes stay.
+    func renameDraftChord(_ itemId: UUID, eventId: String, symbol: String) {
+        editDraft(itemId) { st, _, key in try HarmonyEdit.rename(&st, id: eventId, symbol: symbol, key: key, writeVoicing: false) }
+    }
+
     func undoDraft(_ itemId: UUID) {
         guard var stack = draftUndo[itemId], let last = stack.popLast(), var d = harmonyDraft(itemId) else { return }
         draftUndo[itemId] = stack

@@ -116,6 +116,18 @@ struct HarmonyRefreshChecks {
                      "Confirmed harmony and MIDI stay until a new transcription")
         model.cancelReselect(item.id)
         precondition(model.item(item.id)!.state == .ready, "不换了 returns to the confirmed result")
-        print("Harmony refresh checks passed (adoption, reused event IDs, edits, regrouping, saved proposal, check / edit / undo / discard / confirm, reselect stems).")
+        // Keyboard while checking: taking G out of Am7 makes it Am; the change waits in the draft.
+        model.beginEditing(item.id)
+        let am7 = model.harmonyDraft(item.id)!.harmony.events[0]
+        let am7Keys = HeardVoicing.pitches(am7, notes: model.draftNotes(model.harmonyDraft(item.id)!), beatUs: 500_000) ?? []
+        precondition(am7Keys.contains(67), "Am7 voicing has G: \(am7Keys)")
+        model.toggleDraftKey(item.id, eventId: am7.id, pitch: 67)
+        let after = model.harmonyDraft(item.id)!.harmony.events[0]
+        precondition(after.symbol == "Am" && !after.namingPitches.contains(67), "Renamed from the notes: \(after.symbol ?? "-")")
+        precondition(model.latestHarmony(item.id)?.events.first?.symbol == "Am7", "Confirmed harmony untouched until 确定")
+        model.undoDraft(item.id)
+        precondition(model.harmonyDraft(item.id)!.harmony.events[0].symbol == "Am7", "Keyboard edits undo")
+        model.discardDraft(item.id)
+        print("Harmony refresh checks passed (adoption, reused event IDs, edits, regrouping, saved proposal, check / edit / undo / discard / confirm, reselect stems, keyboard voicing).")
     }
 }
