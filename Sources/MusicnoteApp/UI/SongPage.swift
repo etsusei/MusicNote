@@ -65,6 +65,7 @@ struct SongPage: View {
             }
             .padding(28)
         }
+        .mediaFileDrop("松开以给这首歌新增片段") { model.addDroppedAnalysis(to: song, $0) }
     }
 
     private func pickCover() {

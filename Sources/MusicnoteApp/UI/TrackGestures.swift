@@ -1,5 +1,7 @@
 import AppKit
+import MusicnoteCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Trackpad on a track (waveform, piano roll): with the pointer over it, a two-finger swipe up
 /// zooms in around the pointer and down zooms out; a sideways swipe pans; pinch zooms too. A
@@ -83,5 +85,60 @@ enum TrackRange {
         let len = Int64(r.count)
         let s = max(0, min(total - len, center - len / 2))
         return s..<(s + len)
+    }
+}
+
+/// Audio or video files dropped from Finder. While files hover, a dashed frame and a hint show.
+struct MediaFileDrop: ViewModifier {
+    var hint: String
+    var cornerRadius: CGFloat = 14
+    var onDrop: ([URL]) -> Void
+    @ViewState private var targeted = false
+
+    static func isMedia(_ url: URL) -> Bool {
+        if Pipeline.isVideo(url) { return true }
+        return UTType(filenameExtension: url.pathExtension.lowercased())?.conforms(to: .audio) ?? false
+    }
+
+    func body(content: Content) -> some View {
+        content
+            // Only Finder files (not text such as dragged chords).
+            .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
+                let group = DispatchGroup()
+                let box = URLBox()
+                for p in providers {
+                    group.enter()
+                    _ = p.loadObject(ofClass: URL.self) { url, _ in
+                        if let url, url.isFileURL { box.append(url) }
+                        group.leave()
+                    }
+                }
+                group.notify(queue: .main) { if !box.urls.isEmpty { onDrop(box.urls) } }
+                return true
+            }
+            .overlay {
+                if targeted {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(Theme.accent.opacity(0.08))
+                        .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 2, dash: [8, 5])))
+                        .overlay(Label(hint, systemImage: "arrow.down.doc").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.accent)
+                            .padding(.horizontal, 14).padding(.vertical, 8).background(Capsule().fill(Theme.surface)))
+                        .padding(8)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
+private final class URLBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var urls: [URL] = []
+    func append(_ u: URL) { lock.lock(); urls.append(u); lock.unlock() }
+}
+
+extension View {
+    func mediaFileDrop(_ hint: String, cornerRadius: CGFloat = 14, onDrop: @escaping ([URL]) -> Void) -> some View {
+        modifier(MediaFileDrop(hint: hint, cornerRadius: cornerRadius, onDrop: onDrop))
     }
 }

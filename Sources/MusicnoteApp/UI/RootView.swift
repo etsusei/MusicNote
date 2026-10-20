@@ -107,8 +107,11 @@ struct EmptyState: View {
             Text("选择本地原曲，圈出想学的片段，确认速度调性后拆轨、转 MIDI、看和弦。")
                 .font(.body14).foregroundStyle(Theme.textSecondary)
             Button("新增歌曲…") { model.addSong() }.buttonStyle(PrimaryButtonStyle())
+            Text("也可以把音频或视频文件直接拖到这里").font(.caption12).foregroundStyle(Theme.textSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .mediaFileDrop("松开以导入为新歌曲") { model.importDropped($0) }
     }
 }
 

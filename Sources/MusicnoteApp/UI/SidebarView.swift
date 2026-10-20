@@ -79,6 +79,7 @@ struct SidebarView: View {
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
+            .mediaFileDrop("松开以导入为新歌曲", cornerRadius: 10) { model.importDropped($0) }
         }
         .background(Theme.sidebar)
     }

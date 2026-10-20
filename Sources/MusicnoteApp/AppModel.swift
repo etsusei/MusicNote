@@ -213,6 +213,23 @@ final class AppModel {
         return s
     }
 
+    /// Files dropped in: each audio or video becomes a song (the last one opens).
+    func importDropped(_ urls: [URL]) {
+        let media = urls.filter(MediaFileDrop.isMedia)
+        if media.count < urls.count {
+            alert = AppAlert(title: "有文件没导入", message: "只能导入音频或视频：" + urls.filter { !MediaFileDrop.isMedia($0) }.map(\.lastPathComponent).joined(separator: "、"))
+        }
+        Task { for u in media { await createSong(from: u) } }
+    }
+
+    /// A file dropped on a song: a new clip of it.
+    func addDroppedAnalysis(to song: Song, _ urls: [URL]) {
+        guard let u = urls.first(where: MediaFileDrop.isMedia) else {
+            alert = AppAlert(title: "没有导入", message: "只能拖入音频或视频文件。"); return
+        }
+        Task { await addAnalysis(to: song, from: u) }
+    }
+
     func addSong() {
         guard let url = pickAudio(title: "选择本地原曲（音频或视频）") else { return }
         Task { await createSong(from: url) }
@@ -245,7 +262,7 @@ final class AppModel {
         Task { await addAnalysis(to: song, from: url) }
     }
 
-    private func addAnalysis(to song: Song, from url: URL) async {
+    func addAnalysis(to song: Song, from url: URL) async {
         do {
             let source = try await importSource(url)
             let existing = items(of: song.id).first?.source
