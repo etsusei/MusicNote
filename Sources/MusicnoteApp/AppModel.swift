@@ -66,6 +66,8 @@ final class AppModel {
     var draftUndo: [UUID: [DraftUndo]] = [:]
     /// The clip whose original + chords is playing (for highlighting the sounding chord).
     var playAlongItem: UUID?
+    /// Shown in the toolbar while a picked video's audio is extracted.
+    var importStatus: String?
     /// When each chord sounds during play-along (as the bars show it); the highlight follows these.
     var playAlongSpans: [(id: String, startUs: Int64, endUs: Int64)] = []
     // 灵感进行
@@ -188,22 +190,37 @@ final class AppModel {
         return list
     }
 
+    /// Audio files, or videos (their audio track is extracted on import).
     func pickAudio(title: String) -> URL? {
         let panel = NSOpenPanel()
         panel.title = title
-        panel.allowedContentTypes = [.audio, .mp3, .wav, .aiff, .mpeg4Audio]
+        panel.message = "可以选音频，也可以选视频（会提取视频里的音轨）"
+        panel.allowedContentTypes = [.audio, .mp3, .wav, .aiff, .mpeg4Audio, .movie, .video]
+            + Pipeline.videoExtensions.compactMap { UTType(filenameExtension: $0) }
         panel.allowsMultipleSelection = false
         return panel.runModal() == .OK ? panel.url : nil
     }
 
+    /// A picked file as a source: audio as it is; for a video, its extracted audio track
+    /// (shown as "<video> 的音轨").
+    func importSource(_ url: URL) async throws -> SourceRef {
+        guard Pipeline.isVideo(url) else { return try Pipeline.inspectSource(url: url) }
+        importStatus = "正在提取视频音轨：\(url.lastPathComponent)"
+        defer { importStatus = nil }
+        let audio = try await pipeline.extractVideoAudio(url)
+        var s = try Pipeline.inspectSource(url: audio)
+        s.fileName = url.lastPathComponent + " 的音轨"
+        return s
+    }
+
     func addSong() {
-        guard let url = pickAudio(title: "选择本地原曲") else { return }
+        guard let url = pickAudio(title: "选择本地原曲（音频或视频）") else { return }
         Task { await createSong(from: url) }
     }
 
     func createSong(from url: URL) async {
         do {
-            let source = try Pipeline.inspectSource(url: url)
+            let source = try await importSource(url)
             let meta = await Pipeline.readMetadata(url: url)
             var song = Song(title: meta.title ?? url.deletingPathExtension().lastPathComponent, artist: meta.artist ?? "",
                             album: meta.album ?? "", sortIndex: (songs.map(\.sortIndex).max() ?? 0) + 1)
@@ -225,8 +242,12 @@ final class AppModel {
     /// 新增分析: re-select the user's original file; a new item never reuses the last range.
     func addAnalysis(to song: Song) {
         guard let url = pickAudio(title: "重新选择原曲（\(song.title)）") else { return }
+        Task { await addAnalysis(to: song, from: url) }
+    }
+
+    private func addAnalysis(to song: Song, from url: URL) async {
         do {
-            let source = try Pipeline.inspectSource(url: url)
+            let source = try await importSource(url)
             let existing = items(of: song.id).first?.source
             if let existing, existing.fingerprint != source.fingerprint {
                 alert = AppAlert(title: "可能不是同一来源", message: "所选文件与这首歌已有片段的来源指纹不同（\(existing.fileName)）。已按新文件创建分析，请确认。")
@@ -251,9 +272,14 @@ final class AppModel {
     /// Before separation nothing is derived from the file yet, so a clip may switch to another
     /// file (e.g. the full song instead of a preview). The selection is kept inside the new file.
     func replaceSource(_ itemId: UUID) {
-        guard var item = item(itemId), item.separation == nil, let url = pickAudio(title: "换一个原曲文件") else { return }
+        guard item(itemId)?.separation == nil, let url = pickAudio(title: "换一个原曲文件") else { return }
+        Task { await replaceSource(itemId, with: url) }
+    }
+
+    private func replaceSource(_ itemId: UUID, with url: URL) async {
+        guard var item = item(itemId) else { return }
         do {
-            let s = try Pipeline.inspectSource(url: url)
+            let s = try await importSource(url)
             item.source = s
             let total = Int64(s.durationSec * 1_000_000)
             item.trimStartUs = min(item.trimStartUs, max(0, total - 1_000_000))
@@ -270,9 +296,14 @@ final class AppModel {
     }
 
     func relinkSource(_ itemId: UUID) {
-        guard var item = item(itemId), let url = pickAudio(title: "重新选择原曲") else { return }
+        guard let url = pickAudio(title: "重新选择原曲") else { return }
+        Task { await relinkSource(itemId, to: url) }
+    }
+
+    private func relinkSource(_ itemId: UUID, to url: URL) async {
+        guard var item = item(itemId) else { return }
         do {
-            let s = try Pipeline.inspectSource(url: url)
+            let s = try await importSource(url)
             if s.fingerprint != item.source.fingerprint {
                 alert = AppAlert(title: "文件不一致", message: "这个文件和原来的来源不是同一份（大小或内容不同），已保留原引用。")
                 return
@@ -315,6 +346,12 @@ final class AppModel {
             report(error); return
         }
         paths.removeOwned(paths.analysisAssets(item.id))
+        // Audio extracted from a video goes with the last clip that uses it.
+        let src = URL(fileURLWithPath: item.source.pathHint)
+        if src.path.hasPrefix(paths.videoAudio.path),
+           !store.all(AnalysisItem.self).contains(where: { $0.source.pathHint == item.source.pathHint }) {
+            paths.removeOwned(src)
+        }
         if route == .analysis(item.id) { route = .song(item.songId) }
         if reloadAfter { reload() }
     }

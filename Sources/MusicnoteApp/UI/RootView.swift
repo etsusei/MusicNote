@@ -116,7 +116,9 @@ struct EmptyState: View {
 struct JobStatusBar: View {
     @Environment(AppModel.self) private var model
     var body: some View {
-        if let (id, j) = model.jobs.first {
+        if let s = model.importStatus {
+            HStack(spacing: 8) { ProgressView().controlSize(.small); Text(s).font(.caption12).lineLimit(1) }
+        } else if let (id, j) = model.jobs.first {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text(model.item(id)?.title ?? "").font(.caption12).foregroundStyle(Theme.textSecondary)

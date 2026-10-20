@@ -19,6 +19,8 @@ public struct AppPaths: Sendable {
     public var exports: URL { root.appendingPathComponent("exports", isDirectory: true) }
     public var settingsFile: URL { root.appendingPathComponent("settings.json") }
     public var chatSandbox: URL { root.appendingPathComponent("chat-sandbox", isDirectory: true) }
+    /// Audio extracted from imported videos; these are the sources of their clips.
+    public var videoAudio: URL { root.appendingPathComponent("video-audio", isDirectory: true) }
 
     public func analysisAssets(_ id: UUID) -> URL { assets.appendingPathComponent(id.uuidString, isDirectory: true) }
     public func jobDirectory(_ id: UUID) -> URL { jobs.appendingPathComponent(id.uuidString, isDirectory: true) }

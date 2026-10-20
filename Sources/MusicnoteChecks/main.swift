@@ -312,6 +312,31 @@ do {
     eq(BarEvidence.readingSpans([ev("a", 0, 1_750_000), ev("b", 1_750_000, 4_000_000)], grid: g, foldPushes: false).map(\.s), [0, 1_750_000], "unfolded keeps stored times")
 }
 
+// Video import: the audio track is extracted (ALAC .m4a, readable as a source) and reused on a
+// second import; a video without audio is refused clearly.
+do {
+    let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("mn-video-\(UUID().uuidString.prefix(6))")
+    try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    let paths = AppPaths(root: tmp.appendingPathComponent("lib"))
+    try paths.ensure()
+    let tools = ToolSettings.defaults(projectRoot: FileManager.default.currentDirectoryPath, separatorBinary: "")
+    let pipeline = Pipeline(store: try Store(url: paths.database), paths: paths, tools: tools)
+    let video = tmp.appendingPathComponent("clip.mp4"), silent = tmp.appendingPathComponent("silent.mov")
+    _ = try await WorkerProcess(tools.ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=2", "-f", "lavfi",
+                                              "-i", "sine=frequency=440:sample_rate=48000:duration=2", "-shortest", "-c:v", "libx264", "-c:a", "aac", video.path]).run()
+    _ = try await WorkerProcess(tools.ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=1", "-c:v", "libx264", silent.path]).run()
+    check(Pipeline.isVideo(video) && Pipeline.isVideo(silent) && !Pipeline.isVideo(URL(fileURLWithPath: "/a.mp3")), "video recognised")
+    let audio = try await pipeline.extractVideoAudio(video)
+    let src = try Pipeline.inspectSource(url: audio)
+    check(abs(src.durationSec - 2) < 0.15 && src.sampleRate == 48000, "extracted audio readable: \(src.durationSec) s @ \(src.sampleRate)")
+    let again = try await pipeline.extractVideoAudio(video)
+    eq(again, audio, "same video reuses its extracted audio")
+    eq(try Pipeline.inspectSource(url: again).fingerprint, src.fingerprint, "one fingerprint per video")
+    do { _ = try await pipeline.extractVideoAudio(silent); check(false, "video without audio refused") }
+    catch let e as WorkerError { check(e.message.contains("没有音轨"), "no-audio message: \(e.message)") }
+}
+
 // MCP bridge: initialize, list and call go through workers/mcp_bridge.py to the app-side socket;
 // a wrong token is refused.
 do {
