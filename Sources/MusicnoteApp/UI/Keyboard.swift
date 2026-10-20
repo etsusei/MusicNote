@@ -8,8 +8,13 @@ struct KeyboardView: View {
     var minOctaves = 2
     var height: CGFloat = 64
     var flats = false
+    /// A range that stays put while the pitches change (so movement between chords shows).
+    var fixedRange: ClosedRange<Int>? = nil
+    /// Keys of the previous chord, marked faintly.
+    var ghost: [Int] = []
 
     private var range: ClosedRange<Int> {
+        if let fixedRange { return fixedRange }
         guard let lo = pitches.min(), let hi = pitches.max() else { return 48...71 }
         var start = (lo / 12) * 12
         var end = ((hi / 12) + 1) * 12 - 1
@@ -21,6 +26,8 @@ struct KeyboardView: View {
         let r = range
         let whites = r.filter { !Self.isBlack($0) }
         let set = Set(pitches)
+        let ghostSet = Set(ghost)
+        let big = height >= 90
         Canvas { ctx, size in
             let ww = size.width / CGFloat(whites.count)
             var xFor: [Int: CGFloat] = [:]
@@ -32,6 +39,12 @@ struct KeyboardView: View {
                 ctx.stroke(key, with: .color(Theme.keyLine), lineWidth: 0.5)
                 if set.contains(p) {
                     ctx.fill(Path(ellipseIn: CGRect(x: rect.midX - 3, y: size.height - 12, width: 6, height: 6)), with: .color(Theme.accent))
+                    if big {
+                        ctx.draw(Text(Pitch.noteName(p, flats: flats)).font(.system(size: 10, weight: .semibold)).foregroundColor(Theme.keyActiveText),
+                                 at: CGPoint(x: rect.midX, y: size.height - 26))
+                    }
+                } else if ghostSet.contains(p) {
+                    ctx.stroke(Path(ellipseIn: CGRect(x: rect.midX - 3.5, y: size.height - 12.5, width: 7, height: 7)), with: .color(Theme.accent.opacity(0.45)), lineWidth: 1.2)
                 }
                 if p % 12 == 0 {
                     ctx.draw(Text("C\(p / 12 - 1)").font(.system(size: 7)).foregroundColor(Theme.textSecondary), at: CGPoint(x: rect.midX, y: size.height - 22))
@@ -44,6 +57,12 @@ struct KeyboardView: View {
                 ctx.fill(Path(roundedRect: rect, cornerSize: CGSize(width: 2, height: 2)), with: .color(set.contains(p) ? Theme.accent : Theme.keyBlack))
                 if set.contains(p) {
                     ctx.fill(Path(ellipseIn: CGRect(x: rect.midX - 2.5, y: rect.maxY - 9, width: 5, height: 5)), with: .color(.white))
+                    if big {
+                        ctx.draw(Text(Pitch.noteName(p, flats: flats)).font(.system(size: 9, weight: .semibold)).foregroundColor(.white),
+                                 at: CGPoint(x: rect.midX, y: rect.maxY - 20))
+                    }
+                } else if ghostSet.contains(p) {
+                    ctx.stroke(Path(ellipseIn: CGRect(x: rect.midX - 3, y: rect.maxY - 9.5, width: 6, height: 6)), with: .color(.white.opacity(0.6)), lineWidth: 1.2)
                 }
             }
         }

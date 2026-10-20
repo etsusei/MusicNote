@@ -20,6 +20,14 @@ enum DebugSnapshot {
             if env["MUSICNOTE_SNAPSHOT_WINDOW"] == "灵感进行" { InspirationWindow.shared.show(model) }
             for (i, r) in routes.enumerated() {
                 apply(r, model)
+                // MUSICNOTE_LIGHT=<n>: light chord n of the clip's harmony (chord n-1 as the shadow).
+                if let n = env["MUSICNOTE_LIGHT"].flatMap(Int.init), case .analysis(let id)? = model.route,
+                   let item = model.item(id), let h = model.latestHarmony(id), n >= 1, n < h.events.count {
+                    let notes = model.confirmedMidi(item)?.notes ?? [], beat = item.timing?.grid.beatUs ?? 500_000
+                    for k in [n - 1, n] {
+                        if let p = HeardVoicing.pitches(h.events[k], notes: notes, beatUs: beat) { model.light(id, eventId: h.events[k].id, pitches: p) }
+                    }
+                }
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 snapshot(to: URL(fileURLWithPath: dir).appendingPathComponent(String(format: "%02d-%@.png", i, r.replacingOccurrences(of: ":", with: "_").prefix(40) as CVarArg)))
             }

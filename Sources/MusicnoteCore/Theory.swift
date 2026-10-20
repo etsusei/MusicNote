@@ -375,6 +375,21 @@ public enum PlayedVoicing {
     }
 }
 
+/// What a chord sounds like when clicked, played over the original, or shown on the keyboard:
+/// its chord tones as struck in the clip (within about a beat of its start), else the standard
+/// voicing. One function so all three agree.
+public enum HeardVoicing {
+    public static func pitches(_ ev: ChordEvent, notes: [MidiNote], beatUs: Double) -> [Int]? {
+        let ids = Set(ev.noteIds)
+        let rel: [PlayedVoicing.Note] = notes.filter { ids.contains($0.id) }.map { n in
+            let st = max(n.startUs, ev.startUs)
+            return (pitch: n.pitch, start: Double(st - ev.startUs) / 1e6, duration: Double(min(n.endUs, ev.endUs) - st) / 1e6)
+        }
+        return PlayedVoicing.pitches(symbol: ev.symbol, notes: rel, onsetWindow: min(0.6, beatUs / 1e6))
+            ?? ev.symbol.flatMap(StandardVoicing.pitches(symbol:))
+    }
+}
+
 public enum StandardVoicing {
     /// Centered close voicing that keeps every tone the symbol requires, plus the slash bass.
     /// Root sits in C3–B3; upper tones stack above; extensions go above the seventh.

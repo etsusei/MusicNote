@@ -32,7 +32,6 @@ struct ReadyStage: View {
 struct NotesStage: View {
     @Environment(AppModel.self) private var model
     var item: AnalysisItem
-    @AppStorage("cardStandard") private var standardAll = false
     @ViewState private var playgroundSend: PlaygroundSendRequest?
     @ViewState private var confirmRegroup = false
     @ViewState private var pickingBarOne = false
@@ -100,7 +99,7 @@ struct NotesStage: View {
                         HarmonySection(item: item, harmony: harmony, draft: draft)
                         if draft == nil, let h = harmony {
                             // Event IDs (chord-01, ...) are reused across revisions; reset card state per revision.
-                            chordCards(h).id(h.id)
+                            ChordKeyboardSection(item: item, harmony: h, send: { playgroundSend = $0 }).id(h.id)
                             SkeletonSection(item: item, harmony: h, send: { playgroundSend = $0 })
                         }
                     } else if model.jobs[item.id] == nil {
@@ -168,23 +167,6 @@ struct NotesStage: View {
         }
     }
 
-    private func chordCards(_ h: HarmonyRevision) -> some View {
-        let notes = model.confirmedMidi(item)?.notes ?? []
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("和弦与按法").font(.system(size: 15, weight: .semibold))
-                Spacer()
-                Toggle("全部显示标准按法", isOn: $standardAll).toggleStyle(.checkbox).font(.caption12)
-            }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 250, maximum: 340), spacing: 12)], spacing: 12) {
-            ForEach(h.events) { ev in
-                ChordEventCard(item: item, harmony: h, event: ev, notes: notes, forceStandard: standardAll,
-                               send: { playgroundSend = $0 })
-            }
-            }
-        }
-    }
-
     private var tags: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "手动标签", subtitle: "只由你填写；跨歌检索以这里为准。")
@@ -232,113 +214,86 @@ struct NotesStage: View {
     }
 }
 
-// MARK: - Chord card
+// MARK: - Keyboard
 
-struct ChordEventCard: View {
+/// 键盘: one keyboard for the whole progression. A chord clicked in the bars, or sounding while
+/// the original plays with the chords, lights its keys (as heard) until the next one; the
+/// chord before stays as faint rings, so the voices' movement shows. The range covers every
+/// chord of the clip and never moves.
+struct ChordKeyboardSection: View {
     @Environment(AppModel.self) private var model
     var item: AnalysisItem
     var harmony: HarmonyRevision
-    var event: ChordEvent
-    var notes: [MidiNote]
-    var forceStandard: Bool
     var send: (PlaygroundSendRequest) -> Void
-    @ViewState private var standard = false
-    @ViewState private var block = false
 
-    private var members: [MidiNote] { notes.filter { event.noteIds.contains($0.id) }.sorted { ($0.startUs, $0.pitch) < ($1.startUs, $1.pitch) } }
-    private var relative: [PlayedVoicing.Note] {
-        members.map { n in
-            let s = max(n.startUs, event.startUs)
-            return (pitch: n.pitch, start: Double(s - event.startUs) / 1e6, duration: Double(min(n.endUs, event.endUs) - s) / 1e6)
-        }
+    private var notes: [MidiNote] { model.confirmedMidi(item)?.notes ?? [] }
+    private var grid: BeatGrid? { HarmonySection.grid(item, harmony) }
+    private var flats: Bool { Pitch.prefersFlats(item.timing?.key) }
+    private var lit: LitChord? {
+        guard let l = model.litChord, l.itemId == item.id, harmony.events.contains(where: { $0.id == l.eventId }) else { return nil }
+        return l
     }
-    /// Chord tones as struck in the clip; nil when the clip doesn't cover the chord.
-    private var playedPitches: [Int]? { PlayedVoicing.pitches(symbol: event.symbol, notes: relative, onsetWindow: onsetWindow) }
-    private var onsetWindow: Double { min(0.6, (item.timing?.grid.beatUs ?? 600_000) / 1e6) }
-    private var useStandard: Bool { standard || forceStandard || playedPitches == nil }
-    private var shownPitches: [Int] { useStandard ? (event.symbol.flatMap(StandardVoicing.pitches(symbol:)) ?? []) : (playedPitches ?? []) }
+    private var current: ChordEvent? { lit.flatMap { l in harmony.events.first { $0.id == l.eventId } } }
+
+    /// Every chord's keys fit; at least three octaves, whole octaves from C.
+    private func range(_ heard: [[Int]]) -> ClosedRange<Int> {
+        let all = heard.flatMap { $0 }
+        guard let lo = all.min(), let hi = all.max() else { return 48...83 }
+        var start = (lo / 12) * 12, end = ((hi / 12) + 1) * 12 - 1
+        while end - start + 1 < 36 { if start >= 36 { start -= 12 } else { end += 12 } }
+        return start...end
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(event.symbol ?? "未确定").font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(event.symbol == nil ? Theme.warning : Theme.textPrimary)
-                Text(event.degree?.display ?? "").font(.control13).foregroundStyle(Theme.textSecondary)
+        let beatUs = item.timing?.grid.beatUs ?? 500_000
+        let heard = harmony.events.compactMap { HeardVoicing.pitches($0, notes: notes, beatUs: beatUs) }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("键盘").font(.system(size: 15, weight: .semibold))
+                if let ev = current, let l = lit {
+                    Text(ev.symbol ?? "未确定").font(.system(size: 20, weight: .semibold))
+                    if let d = ev.degree?.display { Text(d).font(.control13).foregroundStyle(Theme.textSecondary) }
+                    if let g = grid {
+                        let at = BarEvidence.readingStart(ev.startUs, endUs: ev.endUs, grid: g).us
+                        Text(harmony.position(of: at, grid: g)).font(.caption12).foregroundStyle(Theme.textSecondary)
+                    }
+                    Text(l.pitches.sorted().map { Pitch.noteName($0, flats: flats) }.joined(separator: " "))
+                        .font(.mono13).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                } else {
+                    Text("点上面的和弦或播放原曲和和弦，按下的键会亮在这里").font(.caption12).foregroundStyle(Theme.textSecondary)
+                }
                 Spacer()
-                if let info = harmony.auto?.chordInfo[event.id] {
-                    Text(info.roleDisplay).font(.system(size: 10)).padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Capsule().stroke(Theme.noteFill)).help(info.reason)
+                if let ev = current {
+                    Menu {
+                        Button("加入学习收藏") { collect(ev) }
+                        Button("送入 Playground…") { send(PlaygroundSendRequest(itemId: item.id, kind: .chord(ev.id))) }
+                    } label: { Image(systemName: "ellipsis.circle") }
+                        .menuStyle(.borderlessButton).frame(width: 28)
                 }
-                if harmony.auto?.toConfirm.contains(where: { $0.eventId == event.id }) == true {
-                    Image(systemName: "questionmark.circle.fill").foregroundStyle(Theme.warning).help("模型标记为待确认")
-                }
-                if event.manualOverride { Image(systemName: "pencil.circle").foregroundStyle(Theme.accent).help("人工命名") }
-                Text(event.texture.display).font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
             }
-            KeyboardView(pitches: shownPitches, height: 58)
-                .onDrag {   // into 灵感进行: the voicing shown (片段 or 标准) is what was heard
-                    let beats = (item.timing?.grid.beatUs).map { Double(event.durationUs) / $0 } ?? 4
-                    let p = ChordDragPayload(chords: [InspirationChord(symbol: event.symbol ?? "?", startQ: 0, lengthQ: max(0.5, (beats * 2).rounded() / 2),
-                                                                       pitches: shownPitches, sourceLabel: "\(model.song(item.songId)?.title ?? item.title) \(item.timing.map { harmony.position(of: event.startUs, grid: $0.grid) } ?? "")",
+            KeyboardView(pitches: lit?.pitches ?? [], height: 128, flats: flats, fixedRange: range(heard), ghost: lit?.previous ?? [])
+                .animation(.easeOut(duration: 0.08), value: lit?.pitches)
+                .onDrag {   // into 灵感进行: the lit chord, as heard
+                    guard let ev = current, let l = lit else { return NSItemProvider() }
+                    let beats = (item.timing?.grid.beatUs).map { Double(ev.durationUs) / $0 } ?? 4
+                    let p = ChordDragPayload(chords: [InspirationChord(symbol: ev.symbol ?? "?", startQ: 0, lengthQ: max(0.5, (beats * 2).rounded() / 2),
+                                                                       pitches: l.pitches, sourceLabel: "\(model.song(item.songId)?.title ?? item.title) \(grid.map { harmony.position(of: ev.startUs, grid: $0) } ?? "")",
                                                                        sourceAnalysisId: item.id)],
                                              wholeBar: false, bpm: item.timing?.bpm)
                     model.beginChordDrag(p)
                     return NSItemProvider(object: p.encoded as NSString)
                 }
-                .help("拖进灵感进行")
-            HStack(spacing: 6) {
-                Picker("", selection: Binding(get: { useStandard }, set: { standard = $0 })) { Text("片段").tag(false); Text("标准").tag(true) }
-                    .pickerStyle(.segmented).frame(width: 100).disabled(forceStandard || playedPitches == nil)
-                    .help(playedPitches == nil ? "片段里的和弦音凑不成这个和弦，用标准按法" : "片段：只取属于这个和弦的音，按和弦起拍时的按法；旋律和经过音不算")
-                Button { play() } label: { Image(systemName: "play.fill") }.buttonStyle(SecondaryButtonStyle(compact: true)).help("按当前音色发声")
-                if !useStandard && event.texture != .block {
-                    Toggle("原时序", isOn: $block).toggleStyle(.checkbox).font(.caption12).help("按原曲的时序回放这个和弦的和弦音（不含旋律和经过音）")
-                }
-                Spacer()
-                // Looking and listening only; the harmony is changed in 完整进行 → 修改.
-                Menu {
-                    Button("加入学习收藏") { collect() }
-                    Button("送入 Playground…") { send(PlaygroundSendRequest(itemId: item.id, kind: .chord(event.id))) }
-                } label: { Image(systemName: "ellipsis.circle") }
-                    .menuStyle(.borderlessButton).frame(width: 28)
-            }
-            Text("\(item.timing.map { harmony.position(of: event.startUs, grid: $0.grid) } ?? "")\(pushedText) · \(String(format: "%.2f", beats)) 拍 · \(formatTime(us: event.startUs))")
-                .font(.caption12).foregroundStyle(Theme.textSecondary)
+                .help("亮着的和弦可以拖进灵感进行；圆圈是上一个和弦的键")
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.borderSubtle))
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.borderSubtle))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(event.symbol ?? "未确定") \(event.degree?.display ?? "")，音符 \(shownPitches.map { Pitch.noteName($0) }.joined(separator: " "))")
     }
 
-    /// "提前八分进入" when the chord anticipates the next beat (see BarEvidence.readingStart).
-    private var pushedText: String {
-        guard var g = item.timing?.grid else { return "" }
-        if g.barAnchorUs == nil { g.barAnchorUs = harmony.barAnchorUs }
-        let r = BarEvidence.readingStart(event.startUs, endUs: event.endUs, grid: g)
-        let into = harmony.position(of: r.us, grid: g)
-        // Slightly early (rounds onto the beat anyway) isn't worth a note.
-        return r.pushed && into != harmony.position(of: event.startUs, grid: g) ? "（提前八分进入 \(into)）" : ""
-    }
-
-    private var beats: Double {
-        guard let g = item.timing?.grid else { return 0 }
-        return Double(event.durationUs) / g.beatUs
-    }
-
-
-    private func play() {
-        if useStandard { AudioEngine.shared.playChord(shownPitches); return }
-        if block && event.texture != .block, let tones = PlayedVoicing.chordTones(symbol: event.symbol, notes: relative) {
-            AudioEngine.shared.playNotes(tones.map { (pitch: $0.pitch, start: $0.start, duration: $0.duration, velocity: 90) })
-            return
-        }
-        AudioEngine.shared.playChord(shownPitches, duration: min(2.5, max(0.8, Double(event.durationUs) / 1e6)))
-    }
-
-    private func collect() {
+    private func collect(_ event: ChordEvent) {
         guard let g = item.timing?.grid else { return }
+        let members = notes.filter { event.noteIds.contains($0.id) }
         let q0 = g.q(atUs: event.startUs)
         let bn = members.map { BlockNote(pitch: $0.pitch, velocity: $0.velocity, startQ: g.q(atUs: max($0.startUs, event.startUs)) - q0,
                                          durationQ: Double(min($0.endUs, event.endUs) - max($0.startUs, event.startUs)) / g.beatUs, sourceNoteId: $0.id) }

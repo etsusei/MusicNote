@@ -173,11 +173,17 @@ private struct ConfirmedPanel: View {
             }
             Text(harmony.events.map { ($0.symbol ?? "未确定") }.joined(separator: "  →  ")).font(.system(size: 15, weight: .medium)).textSelection(.enabled)
             if let g = HarmonySection.grid(item, harmony) {
-                BarProgressionView(item: item, harmony: harmony, auto: harmony.auto, grid: g, playingId: soundingId,
+                // The sounding chord, else the one last pressed (still lit on the keyboard).
+                BarProgressionView(item: item, harmony: harmony, auto: harmony.auto, grid: g,
+                                   playingId: soundingId ?? (model.litChord?.itemId == item.id ? model.litChord?.eventId : nil),
                                    onBarTap: { bar in model.playAlong(item.id, harmony: harmony, fromUs: max(0, BarEvidence.barStartUs(bar, grid: g))) })
             }
         }
         .onAppear { transport.sampleRate = item.source.sampleRate }
+        // The sounding chord lights the keyboard, and stays lit when playback stops.
+        .onChange(of: soundingId) { _, id in
+            if let id, let p = model.playAlongPitches[id] { model.light(item.id, eventId: id, pitches: p) }
+        }
         .onDisappear { if model.playAlongItem == item.id { model.stopPlayAlong() }; transport.stop() }
     }
 }

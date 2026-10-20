@@ -402,16 +402,13 @@ struct BarProgressionView: View {
     /// The notes a click sounds: the chord tones as struck, else the standard voicing. A drag
     /// into 灵感进行 carries exactly these.
     private func heard(_ ev: ChordEvent) -> [Int]? {
-        let rel: [PlayedVoicing.Note] = (notes ?? model.confirmedMidi(item)?.notes ?? []).filter { ev.noteIds.contains($0.id) }.map { n in
-            let st = max(n.startUs, ev.startUs)
-            return (pitch: n.pitch, start: Double(st - ev.startUs) / 1e6, duration: Double(min(n.endUs, ev.endUs) - st) / 1e6)
-        }
-        let window = min(0.6, grid.beatUs / 1e6)
-        return PlayedVoicing.pitches(symbol: ev.symbol, notes: rel, onsetWindow: window) ?? ev.symbol.flatMap(StandardVoicing.pitches(symbol:))
+        HeardVoicing.pitches(ev, notes: notes ?? model.confirmedMidi(item)?.notes ?? [], beatUs: grid.beatUs)
     }
 
+    /// Sounds the chord and lights it on the keyboard until another one is pressed.
     private func play(_ ev: ChordEvent) {
         guard let p = heard(ev) else { return }
+        model.light(item.id, eventId: ev.id, pitches: p)
         AudioEngine.shared.playChord(p, duration: min(2.5, max(0.8, Double(ev.endUs - ev.startUs) / 1e6)))
     }
 

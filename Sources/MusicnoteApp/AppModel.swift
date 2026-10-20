@@ -70,6 +70,10 @@ final class AppModel {
     var importStatus: String?
     /// When each chord sounds during play-along (as the bars show it); the highlight follows these.
     var playAlongSpans: [(id: String, startUs: Int64, endUs: Int64)] = []
+    /// What each chord sounds during play-along (the keyboard lights these).
+    var playAlongPitches: [String: [Int]] = [:]
+    /// The chord lit on the keyboard: the last one clicked or sounded, until the next.
+    var litChord: LitChord?
     // 灵感进行
     var inspirationUndo: [InspirationProgression] = []
     var playingInspiration: UUID?
@@ -1004,4 +1008,12 @@ extension AppModel {
             if !Task.isCancelled { AudioEngine.shared.pause() }
         }
     }
+}
+
+struct LitChord: Equatable {
+    var itemId: UUID
+    var eventId: String
+    var pitches: [Int]
+    /// The chord lit before it, shown faintly so the voices' movement is visible.
+    var previous: [Int]
 }

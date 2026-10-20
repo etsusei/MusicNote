@@ -34,6 +34,7 @@ enum Theme {
     static let accentPressed = dyn(0x4341B8, 0x726EF0)
     static let selectionFill = dyn(0xECECFD, 0x24233D)
     static let keyActive = dyn(0xC9C8FA, 0x6E6BE8)
+    static let keyActiveText = dyn(0x3B39A8, 0xFFFFFF)
     // Chords and notes (slate-teal)
     static let noteFill = dyn(0x3E6F79, 0x8CC3CB)
     static let onNote = dyn(0xFFFFFF, 0x0B1A1D)

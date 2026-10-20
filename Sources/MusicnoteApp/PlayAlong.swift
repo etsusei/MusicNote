@@ -19,18 +19,15 @@ extension AppModel {
         let rate = buffer.format.sampleRate
         func frame(_ clipUs: Int64) -> Int64 { Int64(Double(item.trimStartUs + clipUs) / 1e6 * rate) }
         let midi = confirmedMidi(item)?.notes ?? []
-        let window = min(0.6, (item.timing?.grid.beatUs ?? 600_000) / 1e6)
+        let beatUs = item.timing?.grid.beatUs ?? 600_000
         let fold = UserDefaults.standard.object(forKey: "foldPushes") as? Bool ?? true
         let spans = HarmonySection.grid(item, harmony).map { BarEvidence.readingSpans(harmony.events, grid: $0, foldPushes: fold) }
             ?? harmony.events.map { (ev: $0, s: $0.startUs, e: $0.endUs, pushed: false) }
         var scheduled: [ScheduledNote] = []
+        var heard: [String: [Int]] = [:]
         for (ev, s, end, _) in spans {
-            let rel: [PlayedVoicing.Note] = midi.filter { ev.noteIds.contains($0.id) }.map { n in
-                let st = max(n.startUs, ev.startUs)
-                return (pitch: n.pitch, start: Double(st - ev.startUs) / 1e6, duration: Double(min(n.endUs, ev.endUs) - st) / 1e6)
-            }
-            guard let pitches = PlayedVoicing.pitches(symbol: ev.symbol, notes: rel, onsetWindow: window)
-                    ?? ev.symbol.flatMap(StandardVoicing.pitches(symbol:)) else { continue }
+            guard let pitches = HeardVoicing.pitches(ev, notes: midi, beatUs: beatUs) else { continue }
+            heard[ev.id] = pitches
             let a = frame(s), b = max(a + 1, frame(end - 20_000))
             for p in pitches where (0...127).contains(p) {
                 scheduled.append(ScheduledNote(startFrame: a, endFrame: b, pitch: UInt8(p), velocity: 72))
@@ -49,6 +46,7 @@ extension AppModel {
         auditionStop?.cancel()
         playAlongItem = itemId
         playAlongSpans = spans.map { (id: $0.ev.id, startUs: $0.s, endUs: $0.e) }
+        playAlongPitches = heard
         e.play(from: frame(max(0, fromUs)))
     }
 
@@ -61,6 +59,13 @@ extension AppModel {
     func setPlayAlongOriginalGain(_ g: Float) {
         Self.playAlongOriginalGain = g
         AudioEngine.shared.updateTrack("original", gain: g)
+    }
+
+    /// Lights a chord on the keyboard (clicked or sounding); the one before stays as a shadow.
+    func light(_ itemId: UUID, eventId: String, pitches: [Int]) {
+        if let l = litChord, l.itemId == itemId, l.eventId == eventId, l.pitches == pitches { return }
+        let previous = litChord?.itemId == itemId ? litChord?.pitches ?? [] : []
+        litChord = LitChord(itemId: itemId, eventId: eventId, pitches: pitches, previous: previous)
     }
 
     func stopPlayAlong() {
