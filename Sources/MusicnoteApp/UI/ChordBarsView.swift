@@ -330,7 +330,10 @@ struct BarProgressionView: View {
     private func pointerEnded(_ ev: ChordEvent, _ d: DragState, anchor: (bar: Int, x: CGFloat)) {
         if d.moved {
             let id = ev.id, ghost = d.ghost
-            guard ghost.start != ev.startUs || ghost.end != ev.endUs else { return }
+            // Compare with where it shows: an anticipation shown on the beat may be dragged to
+            // exactly its stored time, which pins it there.
+            let shown = reading.first { $0.ev.id == id }.map { ($0.s, $0.e) } ?? (ev.startUs, ev.endUs)
+            guard ghost.start != shown.0 || ghost.end != shown.1 || ghost.start != ev.startUs || ghost.end != ev.endUs else { return }
             switch d.kind {
             case .move: edit? { st, g, _ in try HarmonyEdit.move(&st, id: id, toStart: ghost.start, grid: g) }
             case .left: edit? { st, g, _ in try HarmonyEdit.resize(&st, id: id, leftEdge: true, to: ghost.start, grid: g) }

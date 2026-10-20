@@ -146,7 +146,7 @@ public struct SnapshotBuilder {
                 ]
                 if let l = BeatGrid.durationLabel(quarterBeats: q1 - q0) { ev["durationLabel"] = l }
                 ev["position"] = harmony.position(of: e.startUs, grid: grid)
-                let rs = BarEvidence.readingStart(e.startUs, endUs: e.endUs, grid: grid)
+                let rs = BarEvidence.readingStart(e, grid: grid)
                 if rs.pushed, harmony.position(of: rs.us, grid: grid) != harmony.position(of: e.startUs, grid: grid) {
                     ev["anticipates"] = harmony.position(of: rs.us, grid: grid) + "（提前一个八分音符按下）"
                 }

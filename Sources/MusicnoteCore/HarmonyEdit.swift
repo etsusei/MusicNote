@@ -108,6 +108,7 @@ public enum HarmonyEdit {
         guard b - a >= minLen else { throw EditError.tooShort }
         var moved = s.harmony.events[i]
         moved.startUs = a; moved.endUs = b
+        moved.timingSetByHand = true
         var out: [ChordEvent] = []
         for (k, ev) in s.harmony.events.enumerated() where k != i {
             if ev.endUs <= a || ev.startUs >= b { out.append(ev); continue }       // no overlap
@@ -122,6 +123,8 @@ public enum HarmonyEdit {
             }
         }
         out.append(moved)
+        // The chord right after it starts where the user put this one's end: read it there too.
+        for k in out.indices where abs(out[k].startUs - b) <= 2_000 && out[k].id != moved.id { out[k].timingSetByHand = true }
         s.harmony.events = out.sorted { $0.startUs < $1.startUs }
         renumber(&s)
         for k in s.harmony.events.indices { refreshMembers(&s, k, g) }

@@ -338,6 +338,30 @@ do {
     eq(BarEvidence.readingSpans([ev("a", 0, 1_750_000), ev("b", 1_750_000, 4_000_000)], grid: g, foldPushes: false).map(\.s), [0, 1_750_000], "unfolded keeps stored times")
 }
 
+// All of My Love: Bm9 for an eighth, then Gmaj9 pushed half a beat early (read on beat 2, so Bm9
+// reads as a quarter). Dragging Bm9's end to the eighth, or the anticipation back across the bar
+// line, sets those times by hand: they are then read and played where they are.
+do {
+    let g = BeatGrid(bpm: 128, beatOriginUs: 0, barAnchorUs: 0)
+    let q = g.beatUs
+    func ev(_ id: String, _ s: Double, _ e: Double) -> ChordEvent {
+        ChordEvent(id: id, order: 0, startUs: Int64(s * q), endUs: Int64(e * q), noteIds: [], noteRoles: [:], texture: .block, excludedNoteIds: [],
+                   namingPitches: [], candidates: [], symbol: "C", namingSource: .agent, manualOverride: false, degree: nil, bassPitch: nil)
+    }
+    let h = HarmonyRevision(analysisId: UUID(), revision: 1, midiRevision: 1, timingRevision: 1, key: KeySignature(tonic: 11, tonicName: "B", mode: .minor),
+                            events: [ev("bm9", 0, 0.5), ev("gmaj9", 0.5, 4), ev("bm9b", 4, 7.5), ev("bm", 7.5, 12)], params: [:], namerVersion: "t")
+    var r = BarEvidence.readingSpans(h.events, grid: g)
+    eq(r.map(\.s), [0, Int64(q), Int64(4 * q), Int64(8 * q)], "anticipations read on the beat")
+    var st = HarmonyEdit.State(harmony: h, notes: [])
+    try HarmonyEdit.resize(&st, id: "bm9", leftEdge: false, to: Int64(0.5 * q), grid: g)
+    try HarmonyEdit.resize(&st, id: "bm", leftEdge: true, to: Int64(7.5 * q), grid: g)
+    r = BarEvidence.readingSpans(st.harmony.events, grid: g)
+    eq(r[0].e, Int64(0.5 * q), "Bm9 an eighth once its end is set by hand")
+    eq(r[1].s, Int64(0.5 * q), "Gmaj9 then reads where it starts")
+    eq(r[3].s, Int64(7.5 * q), "Bm reads across the bar line once pulled there")
+    eq(r[2].e, Int64(7.5 * q), "the chord before runs up to it")
+}
+
 // Video import: the audio track is extracted (ALAC .m4a, readable as a source) and reused on a
 // second import; a video without audio is refused clearly.
 do {

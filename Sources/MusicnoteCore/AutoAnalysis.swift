@@ -371,11 +371,16 @@ public enum BarEvidence {
     public static func readingSpans(_ events: [ChordEvent], grid g: BeatGrid, foldPushes: Bool = true)
         -> [(ev: ChordEvent, s: Int64, e: Int64, pushed: Bool)] {
         let evs = events.sorted { $0.startUs < $1.startUs }
-        let starts = evs.map { foldPushes ? readingStart($0.startUs, endUs: $0.endUs, grid: g) : (us: $0.startUs, pushed: false) }
+        let starts = evs.map { foldPushes ? readingStart($0, grid: g) : (us: $0.startUs, pushed: false) }
         return evs.indices.map { i in
             let touching = i + 1 < evs.count && abs(evs[i].endUs - evs[i + 1].startUs) <= 2_000
             return (evs[i], starts[i].us, touching ? starts[i + 1].us : evs[i].endUs, starts[i].pushed)
         }
+    }
+
+    /// A chord's reading start; one whose timing was set by hand reads where it was put.
+    public static func readingStart(_ ev: ChordEvent, grid g: BeatGrid) -> (us: Int64, pushed: Bool) {
+        ev.timingSetByHand == true ? (ev.startUs, false) : readingStart(ev.startUs, endUs: ev.endUs, grid: g)
     }
 
     public static func usAt(bar: Int, beat: Double, grid: BeatGrid) -> Int64 {

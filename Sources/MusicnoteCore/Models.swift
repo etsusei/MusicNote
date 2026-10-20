@@ -367,6 +367,9 @@ public struct ChordEvent: Codable, Hashable, Identifiable, Sendable {
     public var manualOverride: Bool
     public var degree: DegreeLabel?
     public var bassPitch: Int?
+    /// Its start was set by hand (moved, resized, added, or a neighbour's edge put there): it is
+    /// read and played exactly there, never folded onto the next beat as an anticipation.
+    public var timingSetByHand: Bool?
 
     public init(id: String, order: Int, startUs: Int64, endUs: Int64, noteIds: [UUID], noteRoles: [UUID: NoteRole],
                 texture: Texture, excludedNoteIds: [UUID], namingPitches: [Int], candidates: [ChordCandidate],

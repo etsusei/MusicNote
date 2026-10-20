@@ -267,7 +267,7 @@ struct ChordKeyboardSection: View {
                     Text(ev.symbol ?? "未确定").font(.system(size: 20, weight: .semibold))
                     if let d = ev.degree?.display { Text(d).font(.control13).foregroundStyle(Theme.textSecondary) }
                     if let g = grid {
-                        let at = BarEvidence.readingStart(ev.startUs, endUs: ev.endUs, grid: g).us
+                        let at = BarEvidence.readingStart(ev, grid: g).us
                         Text(harmony.position(of: at, grid: g)).font(.caption12).foregroundStyle(Theme.textSecondary)
                     }
                     Text(shown.map { Pitch.noteName($0, flats: flats) }.joined(separator: " "))
