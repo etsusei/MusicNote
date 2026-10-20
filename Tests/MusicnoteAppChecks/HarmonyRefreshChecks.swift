@@ -99,6 +99,23 @@ struct HarmonyRefreshChecks {
         precondition(model.alert == nil, "Confirming must succeed")
         precondition(model.item(item.id)!.confirmedMidiRevision == 2, "Confirming turns the voicing rewrite into a MIDI revision")
         precondition(model.latestHarmony(item.id)?.events.first?.symbol == "Am7", "Confirming updates the progression")
-        print("Harmony refresh checks passed (adoption, reused event IDs, edits, regrouping, saved proposal, check / edit / undo / discard / confirm).")
+        // 重选分轨 with the other stems still there: back to choosing stems, the open check dropped,
+        // what was confirmed untouched; 不换了 returns to it.
+        var it3 = model.item(item.id)!
+        it3.separation = SeparationRecord(trimRevision: it3.trimRevision, stems: [], sharedGainDb: 0, encoder: "", logicVersion: nil,
+                                          frames: 0, createdAt: Date(), candidatesDeleted: false)
+        it3.state = .ready
+        try model.store.save(it3)
+        model.beginEditing(item.id)
+        precondition(model.harmonyDraft(item.id) != nil)
+        precondition(!model.reselectNeedsSeparation(model.item(item.id)!))
+        model.reselectStems(item.id)
+        precondition(model.item(item.id)!.state == .awaitingStem, "重选分轨 goes back to choosing stems")
+        precondition(model.harmonyDraft(item.id) == nil, "The open check of the old MIDI is dropped")
+        precondition(model.latestHarmony(item.id)?.events.first?.symbol == "Am7" && model.item(item.id)!.confirmedMidiRevision == 2,
+                     "Confirmed harmony and MIDI stay until a new transcription")
+        model.cancelReselect(item.id)
+        precondition(model.item(item.id)!.state == .ready, "不换了 returns to the confirmed result")
+        print("Harmony refresh checks passed (adoption, reused event IDs, edits, regrouping, saved proposal, check / edit / undo / discard / confirm, reselect stems).")
     }
 }

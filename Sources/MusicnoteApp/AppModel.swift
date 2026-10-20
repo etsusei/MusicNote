@@ -490,6 +490,35 @@ final class AppModel {
 
     // MARK: Stage 3 – transcribe
 
+    /// 重选分轨: back to choosing stems for this clip, its trimmed audio being still there. When
+    /// the unselected stems were removed at the last confirmation, the clip is separated again
+    /// first. Notes, tags and earlier MIDI and harmony revisions stay; transcribing makes new
+    /// ones. An open harmony check belongs to the old MIDI and is dropped.
+    func reselectStems(_ itemId: UUID) {
+        guard var item = item(itemId) else { return }
+        if playAlongItem == itemId { stopPlayAlong() }
+        AudioEngine.shared.stopAll()
+        discardDraft(itemId)
+        for m in store.all(MidiRevision.self, owner: itemId) where m.status == .draft { try? store.delete(MidiRevision.self, id: m.id) }
+        if let sep = item.separation, !sep.candidatesDeleted {
+            item.state = .awaitingStem
+            save(item)
+        } else if let t = item.timing {
+            confirmAndSeparate(itemId, timing: t)
+        }
+    }
+
+    /// Whether 重选分轨 has to separate again (the other stems were removed).
+    func reselectNeedsSeparation(_ item: AnalysisItem) -> Bool { item.separation?.candidatesDeleted ?? true }
+
+    /// Leaves the stem choice opened by 重选分轨 and goes back to the confirmed result.
+    func cancelReselect(_ itemId: UUID) {
+        guard var item = item(itemId), item.confirmedMidiRevision != nil, latestHarmony(itemId) != nil || !item.isHarmonic else { return }
+        AudioEngine.shared.stopAll()
+        item.state = .ready
+        save(item)
+    }
+
     func transcribe(_ itemId: UUID, stem: StemKind) {
         transcribe(itemId, stems: item(itemId).map { $0.selectedStem == stem ? $0.selectedStems : [stem] } ?? [stem])
     }

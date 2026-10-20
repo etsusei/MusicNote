@@ -164,6 +164,7 @@ struct NotesStage: View {
             }
             if item.selectedStem != nil { StatusPill(text: item.stemLabel + "轨") }
             Spacer()
+            if item.separation != nil { ReselectStemsButton(item: item, compact: false) }
         }
         }
     }

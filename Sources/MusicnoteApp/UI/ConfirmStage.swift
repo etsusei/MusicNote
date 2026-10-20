@@ -44,8 +44,8 @@ struct ConfirmStage: View {
                 WaveformSelectionView(peaks: source.peaks, totalFrames: item.source.frames, selection: $selection,
                                       playhead: transport.positionFrame, editable: false, viewRange: $viewRange,
                                       beatFrames: beatFrames, downbeatFrames: downbeatFrames,
-                                      onSeek: { AudioEngine.shared.seek($0) }, onCommit: {})
-                    .frame(height: 140)
+                                      sampleRate: rate, onSeek: { AudioEngine.shared.seek($0) }, onCommit: {})
+                    .frame(height: 190)
                 HStack(spacing: 8) {
                     Button { togglePlay() } label: {
                         Label(transport.isPlaying ? "暂停" : "原速循环播放", systemImage: transport.isPlaying ? "pause.fill" : "play.fill")
