@@ -404,7 +404,7 @@ public final class Pipeline: @unchecked Sendable {
         notes = Self.trimLeadIn(notes, leadInUs: input.leadInUs, durationUs: item.durationUs, start: \.startUs, end: \.endUs)
         notes.sort { ($0.startUs, $0.pitch) < ($1.startUs, $1.pitch) }
         return MidiRevision(analysisId: item.id, revision: revision, status: .draft, parentRevision: parent, stem: stem,
-                            transcriber: ["tool": "MuScriptor", "version": "0.2.2a1", "model": tools.muscriptorModel,
+                            transcriber: ["tool": "MuScriptor", "version": "0.3.0", "model": tools.muscriptorModel,
                                           "device": tools.muscriptorDevice, "stem": item.selectedStems.map(\.rawValue).joined(separator: "+"),
                                           "inputSha": Self.fingerprint(url: URL(fileURLWithPath: stemPath), bytes: asset.bytes),
                                           "leadIn": String(format: "%.2fs", Double(input.leadInUs) / 1e6),
