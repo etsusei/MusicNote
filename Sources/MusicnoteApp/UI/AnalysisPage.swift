@@ -226,7 +226,7 @@ struct SelectionStage: View {
             WaveformSelectionView(peaks: source.peaks, totalFrames: item.source.frames, selection: $selection,
                                   playhead: transport.positionFrame, editable: item.state == .draft, viewRange: $viewRange,
                                   beatFrames: beatFrames, downbeatFrames: downbeatFrames, barLabels: barLabels, snap: snapper,
-                                  sampleRate: rate, onSeek: { AudioEngine.shared.seek($0) }, onCommit: commit)
+                                  sampleRate: rate, isPlaying: transport.isPlaying, onSeek: { AudioEngine.shared.seek($0) }, onCommit: commit)
                 .frame(height: 250)
                 .overlay { if source.loading { ProgressView("正在读取整曲波形…") } }
             HStack {

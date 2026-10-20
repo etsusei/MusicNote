@@ -20,6 +20,8 @@ struct WaveformSelectionView: View {
     /// Applied to edges while dragging; holding ⌥ drags freely.
     var snap: ((Int64) -> Int64)? = nil
     var sampleRate: Double = 44100
+    /// While playing, the playhead is drawn at display rate from the engine (smooth), not from `playhead`.
+    var isPlaying = false
     var showOverview = true
     var onSeek: (Int64) -> Void
     var onCommit: () -> Void
@@ -113,14 +115,21 @@ struct WaveformSelectionView: View {
                         ctx.fill(Path(CGRect(x: x - 2, y: body.midY + dy - 0.5, width: 4, height: 1)), with: .color(Theme.onAccent.opacity(0.9)))
                     }
                 }
-                // Playhead with a marker in the ruler.
-                let px = toX(playhead)
-                if px >= 0 && px <= size.width {
-                    ctx.fill(Path(CGRect(x: px - 0.75, y: top, width: 1.5, height: body.height)), with: .color(Theme.textPrimary))
-                    var tri = Path()
-                    tri.move(to: CGPoint(x: px - 5, y: top - 7)); tri.addLine(to: CGPoint(x: px + 5, y: top - 7)); tri.addLine(to: CGPoint(x: px, y: top))
-                    ctx.fill(tri, with: .color(Theme.textPrimary))
+            }
+            .overlay {
+                // Playhead with a marker in the ruler, redrawn on its own.
+                TimelineView(.animation(paused: !isPlaying)) { _ in
+                    Canvas { ctx, size in
+                        let top = rulerHeight
+                        let px = toX(isPlaying ? AudioEngine.shared.positionFrames : playhead)
+                        guard px >= 0, px <= size.width else { return }
+                        ctx.fill(Path(CGRect(x: px - 0.75, y: top, width: 1.5, height: size.height - top)), with: .color(Theme.textPrimary))
+                        var tri = Path()
+                        tri.move(to: CGPoint(x: px - 5, y: top - 7)); tri.addLine(to: CGPoint(x: px + 5, y: top - 7)); tri.addLine(to: CGPoint(x: px, y: top))
+                        ctx.fill(tri, with: .color(Theme.textPrimary))
+                    }
                 }
+                .allowsHitTesting(false)
             }
             .contentShape(Rectangle())
             .gesture(

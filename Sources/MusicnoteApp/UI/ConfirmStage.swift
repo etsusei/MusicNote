@@ -44,7 +44,7 @@ struct ConfirmStage: View {
                 WaveformSelectionView(peaks: source.peaks, totalFrames: item.source.frames, selection: $selection,
                                       playhead: transport.positionFrame, editable: false, viewRange: $viewRange,
                                       beatFrames: beatFrames, downbeatFrames: downbeatFrames,
-                                      sampleRate: rate, onSeek: { AudioEngine.shared.seek($0) }, onCommit: {})
+                                      sampleRate: rate, isPlaying: transport.isPlaying, onSeek: { AudioEngine.shared.seek($0) }, onCommit: {})
                     .frame(height: 190)
                 HStack(spacing: 8) {
                     Button { togglePlay() } label: {
