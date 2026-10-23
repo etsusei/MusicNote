@@ -118,11 +118,17 @@ final class AudioEngine: @unchecked Sendable {
 
     // MARK: Session setup
 
+    /// A new set of tracks starts with MIDI neither muted nor soloed: a solo left on in MIDI
+    /// 校对 would otherwise silence the original everywhere else (play-along played only the
+    /// chords). Views with their own mix (MidiStage) apply it after this.
     func setTracks(_ new: [AudioTrack]) {
         os_unfair_lock_lock(&lock)
         tracks = new
         lengthFrames = new.map(\.frames).max() ?? 0
+        midiMuted = false
+        midiSolo = false
         os_unfair_lock_unlock(&lock)
+        sampler.volume = 1
     }
 
     func updateTrack(_ id: String, muted: Bool? = nil, solo: Bool? = nil, gain: Float? = nil) {
