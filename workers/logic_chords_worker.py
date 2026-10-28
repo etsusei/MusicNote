@@ -30,7 +30,12 @@ LOGIC = pathlib.Path("/Applications/Logic Pro.app")
 FRAMEWORKS = LOGIC / "Contents/Frameworks"
 ML_BINARY = FRAMEWORKS / "MAMachineLearning.framework/MAMachineLearning"
 RESOURCES = LOGIC / "Contents/Resources/MAMachineLearningResources.bundle"
-EXPECTED_SHA256 = "20581918005b925b0ee2ce26e20f936848f841a8853050ab364f8cfd9c4db195"
+# MAMachineLearning builds checked against stored results (same API; 12.4 changed ~1% of labels,
+# e.g. Gb(maj7) -> Gb, Gm/Bb -> Gm). A new build is refused until it is checked again.
+VERIFIED_SHA256 = {
+    "20581918005b925b0ee2ce26e20f936848f841a8853050ab364f8cfd9c4db195": "12.3.1",
+    "930cd55d602fd4750bb572d611598e6646601213fa265fda31c6aa836d3c1f10": "12.4",
+}
 
 
 def out(obj):
@@ -43,8 +48,8 @@ def fail(code, message):
     return 1
 
 
-def helper(cache_dir: pathlib.Path) -> pathlib.Path:
-    d = cache_dir / EXPECTED_SHA256[:16]
+def helper(cache_dir: pathlib.Path, digest: str) -> pathlib.Path:
+    d = cache_dir / digest[:16]
     exe = d / "harmony_bridge"
     if exe.exists():
         return exe
@@ -73,13 +78,13 @@ def main():
         return fail("MODEL_UNAVAILABLE", "没有找到 Logic Pro 的 Chord ID 框架")
     info = plistlib.loads((LOGIC / "Contents/Info.plist").read_bytes())
     digest = hashlib.sha256(ML_BINARY.read_bytes()).hexdigest()
-    if digest != EXPECTED_SHA256:
+    if digest not in VERIFIED_SHA256:
         return fail("MODEL_UNAVAILABLE", f"Logic {info.get('CFBundleShortVersionString')} 的 Chord ID 框架与已验证版本不同，需要重新验证后才能使用")
     grid = json.loads(a.grid_json.read_text())
     if not grid.get("beats") or not grid.get("downbeats"):
         return fail("INVALID_ARGUMENTS", "拍点为空：Logic 会返回空结果，不能当作没有和弦")
     try:
-        exe = helper(a.cache_dir)
+        exe = helper(a.cache_dir, digest)
     except subprocess.CalledProcessError as e:
         return fail("MODEL_UNAVAILABLE", "编译 Logic 桥接失败：" + (e.stderr or b"").decode()[-300:])
     with tempfile.TemporaryDirectory(prefix="musicnote-logic-") as td:
