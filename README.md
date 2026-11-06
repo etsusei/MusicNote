@@ -8,12 +8,14 @@ Musicnote 是一个自用的 macOS 音乐学习与和弦知识库。从喜欢的
 4. 分组和弦、识别级数，让 Codex 或 Claude Code 解释骨架
 5. 写笔记，在 Playground 里重组素材，导出 MIDI 到 Logic
 
+另外可以把片段的鼓用 Logic 13 拆成单个鼓件、转成步进节奏型，在鼓机里修改，再放到 Playground 的和弦下面一起播放。
+
 设计文档：[docs/开发文档.md](docs/开发文档.md)、[docs/待定事项.md](docs/待定事项.md)。
 
 ## 运行环境（本机）
 
 - macOS 27，Apple Silicon
-- Logic Pro 12.3.1（只引用 App 内的拆轨模型，不复制）
+- Logic Pro 13.0（只引用 App 内的拆轨、鼓细分和 Chord ID 模型，不复制；12.3.1/12.4 也能拆轨，但没有鼓细分）
 - Swift 6.4 命令行工具（不需要 Xcode）
 - `/opt/homebrew/bin/ffmpeg`、`ffprobe`
 - `uv`；Codex 与 Claude Code 的 CLI（`brew install --cask codex claude-code`），并已登录各自的订阅
