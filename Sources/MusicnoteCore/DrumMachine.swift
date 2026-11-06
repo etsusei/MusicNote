@@ -155,9 +155,20 @@ public struct SectionDrums: Codable, Hashable, Sendable {
     public var title: String
     public var groove: DrumGroove
     public var volume: Double
+    /// Bars of the pattern taken (nil = all), so it can be compared with and refreshed from
+    /// the library version.
+    public var bars: Range<Int>?
 
-    public init(patternId: UUID?, title: String, groove: DrumGroove, volume: Double = 1) {
-        self.patternId = patternId; self.title = title; self.groove = groove; self.volume = volume
+    public init(patternId: UUID?, title: String, groove: DrumGroove, volume: Double = 1, bars: Range<Int>? = nil) {
+        self.patternId = patternId; self.title = title; self.groove = groove; self.volume = volume; self.bars = bars
+    }
+
+    /// A snapshot of `pattern` (or of its `bars`).
+    public static func from(_ pattern: DrumPattern, bars: Range<Int>? = nil, volume: Double = 1) -> SectionDrums {
+        var g = pattern.groove
+        let r = bars.flatMap { $0.upperBound <= g.bars ? $0 : nil }
+        if let r { DrumOps.crop(&g, bars: r) }
+        return SectionDrums(patternId: pattern.id, title: pattern.title, groove: g, volume: volume, bars: r)
     }
 }
 

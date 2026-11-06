@@ -717,6 +717,8 @@ public struct PlaygroundSection: Codable, Hashable, Identifiable, Sendable {
     public var name: String
     public var barCount: Int
     public var blocks: [ChordBlock]
+    /// A drum pattern snapshot looping under the section's chords (absent in older projects).
+    public var drums: SectionDrums?
 
     public init(name: String, barCount: Int) { id = UUID(); self.name = name; self.barCount = barCount; blocks = [] }
 }

@@ -232,11 +232,17 @@ struct PlaygroundPage: View {
             .filter { $0.startQ < r.endQ && $0.startQ + $0.durationQ > r.startQ }
             .map { ScheduledNote(startFrame: frames(max(0, $0.startQ - r.startQ)), endFrame: frames(min(r.endQ, $0.startQ + $0.durationQ) - r.startQ),
                                  pitch: UInt8(clamping: $0.pitch), velocity: UInt8(clamping: $0.velocity)) }
+        let drums = PlaygroundOps.drumHits(project, sections: r.sections)
+            .filter { $0.q >= r.startQ - 1e-9 && $0.q < r.endQ }
+            .map { h -> ScheduledNote in
+                let f = frames(max(0, h.q - r.startQ))
+                return ScheduledNote(startFrame: f, endFrame: f + 11025, pitch: UInt8(clamping: h.note), velocity: UInt8(clamping: h.velocity), drum: true)
+            }
         e.configure(sampleRate: 44100)
         e.setTracks([])
         e.setMetronome(MetronomeConfig())
         e.setLength(frames(r.endQ - r.startQ))
-        e.setMidi(notes, enabled: true)
+        e.setMidi(notes + drums, enabled: true)
         e.setMidiMix(muted: false, solo: false)
         e.setLoop(loop ? 0..<frames(r.endQ - r.startQ) : nil)
         playOrigin = (r.sections.lowerBound, r.startQ)
@@ -267,6 +273,7 @@ struct PlaygroundPage: View {
 /// One section: bar grid with blocks. Drag to move, drag the right edge to resize
 /// (inner timing scales). Overlaps are shown, never silently resolved.
 struct SectionLane: View {
+    @Environment(AppModel.self) private var model
     @Binding var project: PlaygroundProject
     var index: Int
     @Binding var selectedBlock: UUID?
@@ -291,6 +298,7 @@ struct SectionLane: View {
                 }
                 .pickerStyle(.segmented).fixedSize()
                 Stepper("\(section.barCount)", value: Binding(get: { section.barCount }, set: { setBars($0) }), in: 1...256).fixedSize()
+                drumMenu
                 Spacer()
                 Button { move(-1) } label: { Image(systemName: "arrow.up") }.disabled(index == 0).help("前移乐段")
                 Button { move(1) } label: { Image(systemName: "arrow.down") }.disabled(index == project.sections.count - 1).help("后移乐段")
@@ -299,6 +307,7 @@ struct SectionLane: View {
             }
             .buttonStyle(.borderless)
             ScrollView(.horizontal) {
+              VStack(alignment: .leading, spacing: 4) {
                 ZStack(alignment: .topLeading) {
                     Canvas { ctx, size in
                         for bar in 0...section.barCount {
@@ -322,6 +331,8 @@ struct SectionLane: View {
                     ForEach(section.blocks) { b in block(b, conflict: conflicts.contains(b.id)) }
                 }
                 .frame(height: 76)
+                if let d = section.drums { drumStrip(d) }
+              }
             }
             .background(RoundedRectangle(cornerRadius: 6).fill(index == selectedSection ? Theme.surface : Theme.background))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(index == selectedSection ? Theme.accent.opacity(0.4) : Theme.borderSubtle))
@@ -338,6 +349,70 @@ struct SectionLane: View {
                 }
             }
         }
+    }
+
+    // MARK: Drums
+
+    private var drumMenu: some View {
+        let current = section.drums
+        let libraryCopy = current?.patternId.flatMap { model.drumPattern($0) }
+        return HStack(spacing: 6) {
+            Menu {
+                ForEach(model.drumPatterns) { p in
+                    Button(p.title + (p.groove.meter != project.meter ? "（\(p.groove.meter.display)）" : "")) { setDrums(p) }
+                }
+                if model.drumPatterns.isEmpty { Text("节奏库还是空的：在侧栏「节奏」新建，或从片段提取") }
+                if current != nil {
+                    Divider()
+                    if let p = libraryCopy { Button("打开这个节奏") { model.route = .drums(p.id) } }
+                    Button("去掉鼓") { project.sections[index].drums = nil }
+                }
+            } label: {
+                Label(current?.title ?? "加鼓", systemImage: "square.grid.4x3.fill").lineLimit(1)
+            }
+            .fixedSize()
+            .frame(maxWidth: 220)
+            if let d = current {
+                Slider(value: Binding(get: { d.volume }, set: { project.sections[index].drums?.volume = $0 }), in: 0...1)
+                    .frame(width: 60).controlSize(.mini).help("鼓的音量")
+                if let p = libraryCopy, SectionDrums.from(p, bars: d.bars).groove != d.groove {
+                    Button("节奏库里改过 · 更新") { setDrums(p, bars: d.bars) }.buttonStyle(.borderless).font(.caption12)
+                        .help("这里放的是送入时的快照；更新成节奏库里现在的版本")
+                }
+                if d.groove.meter != project.meter {
+                    Text("\(d.groove.meter.display) 拍").font(.caption12).foregroundStyle(Theme.warning).help("节奏和作品拍号不同，按节奏自己的长度循环")
+                }
+            }
+        }
+    }
+
+    private func setDrums(_ p: DrumPattern, bars: Range<Int>? = nil) {
+        project.sections[index].drums = .from(p, bars: bars, volume: section.drums?.volume ?? 1)
+    }
+
+    /// The section's drums as marks: kick low, snare middle, the rest high; darker is louder.
+    private func drumStrip(_ d: SectionDrums) -> some View {
+        Canvas { ctx, size in
+            ctx.fill(Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 4), with: .color(Theme.chipFill.opacity(0.35)))
+            for bar in 0...section.barCount {
+                ctx.fill(Path(CGRect(x: CGFloat(Double(bar) * qPerBar) * pxPerBeat, y: 0, width: 1, height: size.height)), with: .color(Theme.controlBorder.opacity(0.5)))
+            }
+            let pieces = Dictionary(d.groove.lanes.map { ($0.id, $0.piece) }, uniquingKeysWith: { a, _ in a })
+            for h in DrumOps.tiled(d.groove, lengthQ: lengthQ, seed: UInt64(index + 1), volume: d.volume) {
+                let row: CGFloat
+                switch pieces[h.laneId] ?? nil {
+                case .kick?: row = 2
+                case .snare?: row = 1
+                default: row = h.note == 36 || h.note == 35 ? 2 : h.note == 38 || h.note == 40 || h.note == 39 ? 1 : 0
+                }
+                let y = 3 + row * (size.height - 6) / 3
+                ctx.fill(Path(CGRect(x: CGFloat(h.q) * pxPerBeat, y: y, width: 2, height: (size.height - 6) / 3 - 1)),
+                         with: .color((row == 2 ? Theme.noteFill : row == 1 ? Theme.accent : Theme.textSecondary).opacity(0.35 + 0.65 * Double(h.velocity) / 127)))
+            }
+            if let q = playheadQ { ctx.fill(Path(CGRect(x: CGFloat(q) * pxPerBeat, y: 0, width: 1.5, height: size.height)), with: .color(Theme.accent)) }
+        }
+        .frame(width: CGFloat(lengthQ) * pxPerBeat + 2, height: 28)
+        .help("鼓：\(d.title)，在乐段里循环")
     }
 
     private func block(_ b: ChordBlock, conflict: Bool) -> some View {

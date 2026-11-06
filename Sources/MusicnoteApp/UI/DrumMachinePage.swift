@@ -34,7 +34,7 @@ enum StepParam: String, CaseIterable {
 private struct DrumSnapshot { var groove: DrumGroove; var cropBars: Int }
 
 /// Step sequencer for one pattern: grid, per-step parameters, lane and bar tools, playback
-/// with the extracted audio for comparison, and MIDI export.
+/// with the extracted audio for comparison, MIDI export and sending to Playground.
 struct DrumMachinePage: View {
     @Environment(AppModel.self) private var model
     @ViewState var pattern: DrumPattern
@@ -50,6 +50,7 @@ struct DrumMachinePage: View {
     @ViewState private var param: StepParam = .velocity
     @ViewState private var cellW: CGFloat = 22
     @ViewState private var playing: PlayState?
+    @ViewState private var sendOpen = false
 
     /// What is scheduled: which bars, how many passes (chance varies per pass).
     struct PlayState: Equatable { var firstBar: Int; var bars: Int; var passes: Int }
@@ -92,6 +93,7 @@ struct DrumMachinePage: View {
         }
         .onDisappear { AudioEngine.shared.stopAll(); transport.stop() }
         .onReceive(NotificationCenter.default.publisher(for: .togglePlayback)) { _ in togglePlay() }
+        .sheet(isPresented: $sendOpen) { DrumSendSheet(pattern: pattern, bars: bars).environment(model) }
     }
 
     // MARK: Header and toolbar
@@ -177,7 +179,8 @@ struct DrumMachinePage: View {
                 .keyboardShortcut("z", modifiers: .command).help("撤销 ⌘Z")
             Button { redo() } label: { Image(systemName: "arrow.uturn.forward") }.disabled(redoStack.isEmpty)
                 .keyboardShortcut("z", modifiers: [.command, .shift]).help("重做 ⇧⌘Z")
-            Button("导出 MIDI…") { exportMidi() }.buttonStyle(PrimaryButtonStyle())
+            Button("导出 MIDI…") { exportMidi() }.buttonStyle(SecondaryButtonStyle(compact: true))
+            Button("送入 Playground…") { sendOpen = true }.buttonStyle(PrimaryButtonStyle())
         }
         .buttonStyle(.borderless)
         .padding(.leading, 20).padding(.trailing, 76).padding(.vertical, 10) // clear of the floating 灵感 button
@@ -568,5 +571,76 @@ struct DrumGrid: View {
             selectedStep = i
             apply { DrumOps.setStep(&$0, lane: lane.id, s) }
         }.onEnded { _ in drag = nil })
+    }
+}
+
+// MARK: - Send to Playground
+
+/// Puts the pattern (or the selected bars) under a Playground section's chords, as a snapshot
+/// that loops for the section's length.
+struct DrumSendSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    var pattern: DrumPattern
+    var bars: ClosedRange<Int>?
+    @ViewState private var projectId: UUID?
+    @ViewState private var sectionIndex = 0
+    @ViewState private var useSelection = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("送入 Playground").font(.sectionTitle)
+            Text("放在乐段的和弦下面，按乐段长度循环。送入的是快照，之后在这里改不影响作品（作品里会提示可以更新）。")
+                .font(.caption12).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+            Picker("作品", selection: $projectId) {
+                Text("新建作品").tag(UUID?.none)
+                ForEach(model.playgrounds) { Text($0.title).tag(Optional($0.id)) }
+            }
+            if let p = project {
+                Picker("乐段", selection: $sectionIndex) {
+                    ForEach(Array(p.sections.enumerated()), id: \.offset) { i, s in
+                        Text("\(s.name)（\(s.barCount) 小节）" + (s.drums != nil ? " · 已有鼓，会替换" : "")).tag(i)
+                    }
+                }
+                if p.meter != pattern.groove.meter {
+                    Text("作品是 \(p.meter.display)，这个节奏是 \(pattern.groove.meter.display)：鼓会按自己的长度循环，和小节线错开。")
+                        .font(.caption12).foregroundStyle(Theme.warning).fixedSize(horizontal: false, vertical: true)
+                }
+                if abs(p.bpm - pattern.bpm) >= 0.5 {
+                    Text("会按作品的 \(String(format: "%g", p.bpm)) BPM 演奏（节奏这里是 \(String(format: "%g", pattern.bpm))）。")
+                        .font(.caption12).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            if let b = bars {
+                Toggle(b.count == 1 ? "只送第 \(b.lowerBound + 1) 小节" : "只送第 \(b.lowerBound + 1)–\(b.upperBound + 1) 小节", isOn: $useSelection)
+            }
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }.buttonStyle(SecondaryButtonStyle())
+                Button("送入") { send() }.buttonStyle(PrimaryButtonStyle())
+            }
+        }
+        .padding(20).frame(width: 440)
+        .onAppear { projectId = model.playgrounds.first?.id }
+    }
+
+    private var project: PlaygroundProject? { projectId.flatMap { id in model.playgrounds.first { $0.id == id } } }
+
+    private func send() {
+        let drums = SectionDrums.from(pattern, bars: useSelection ? bars.map { $0.lowerBound..<($0.upperBound + 1) } : nil)
+        var p = project ?? {
+            var np = PlaygroundProject(title: "\(pattern.title) 练习", key: KeySignature(tonic: 0, tonicName: "C", mode: .major),
+                                       bpm: pattern.bpm, meter: pattern.groove.meter)
+            np.sections[0].barCount = max(4, drums.groove.bars)
+            return np
+        }()
+        let si = min(sectionIndex, p.sections.count - 1)
+        var d = drums
+        d.volume = p.sections[si].drums?.volume ?? 1
+        p.sections[si].drums = d
+        model.save(p)
+        model.reload()
+        dismiss()
+        model.route = .playground(p.id)
     }
 }

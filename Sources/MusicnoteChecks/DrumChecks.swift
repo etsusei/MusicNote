@@ -137,6 +137,28 @@ func runDrumChecks() {
     eq(idx(lk, 49) + idx(lk, 51), [0], "hat strokes and a faint tail in the cymbal track are dropped")
     eq(idx(lk, 42), [2, 4, 6, 8], "the hats stay")
 
+    // Playground: a one-bar pattern loops under an 3-bar section; the next section has none.
+    var proj = PlaygroundProject(title: "p", key: KeySignature(tonic: 0, tonicName: "C", mode: .major), bpm: 90, meter: .fourFour)
+    proj.sections = [PlaygroundSection(name: "A", barCount: 3), PlaygroundSection(name: "B", barCount: 2)]
+    proj.sections[0].drums = SectionDrums(patternId: nil, title: "k", groove: k)
+    let ph = PlaygroundOps.drumHits(proj)
+    eq(ph.count, 12 * 3, "pattern looped over the section")
+    check(ph.allSatisfy { $0.q < 12 }, "nothing past the section")
+    eq(PlaygroundOps.drumHits(proj, sections: 1..<2).count, 0, "section without drums is silent")
+    proj.sections[1].drums = SectionDrums(patternId: nil, title: "k", groove: k, volume: 0.5)
+    eq(PlaygroundOps.drumHits(proj, sections: 1..<2).first?.q, 0, "hits relative to the first played section")
+    eq(PlaygroundOps.drumHits(proj, sections: 1..<2).first { $0.note == 36 }?.velocity, 50, "section drum volume")
+    eq(PlaygroundOps.exportMidi(proj)[10...11].map { $0 }, [0, 3], "Playground MIDI gets a drum track")
+    proj.sections[1].drums?.groove.meter = Meter(3, 4)
+    eq(PlaygroundOps.drumMeterMismatches(proj).count, 1, "meter mismatch reported")
+    var two = k
+    DrumOps.duplicate(&two)
+    let sd = SectionDrums.from(DrumPattern(title: "t", bpm: 90, groove: two), bars: 1..<2)
+    eq(sd.groove.bars, 1, "snapshot of one bar")
+    eq(SectionDrums.from(DrumPattern(title: "t", bpm: 90, groove: two), bars: sd.bars).groove, sd.groove, "same bars, same snapshot (no false 改过)")
+    let old = try! JSONDecoder().decode(PlaygroundSection.self, from: Data(#"{"id":"\#(UUID().uuidString)","name":"V","barCount":4,"blocks":[]}"#.utf8))
+    check(old.drums == nil, "sections saved before drums still load")
+
     // MIDI: drum track on channel 10.
     let p = DrumPattern(title: "t", bpm: 100, groove: k)
     let mid = DrumOps.exportMidi(p)
@@ -184,6 +206,17 @@ func runDrumExtract(_ args: [String]) async -> Int32 {
         }
         try DrumOps.exportMidi(pattern).write(to: paths.root.appendingPathComponent("pattern.mid"))
         try store.save(pattern)
+        // A Playground project using it (two-bar typical loop under four chords), for UI checks.
+        var proj = PlaygroundProject(title: "鼓 + 和弦", key: KeySignature(tonic: 0, tonicName: "C", mode: .major), bpm: pattern.bpm, meter: g.meter)
+        proj.sections[0].barCount = 4
+        let loop = DrumOps.representativeLoop(g, bars: 2).map { $0..<($0 + 2) }
+        proj.sections[0].drums = .from(pattern, bars: loop)
+        for (i, sym) in ["Am7", "Dm7", "G7", "Cmaj7"].enumerated() {
+            if var b = PlaygroundOps.manualBlock(rootPc: [9, 2, 7, 0][i], suffix: ["m7", "m7", "7", "maj7"][i], target: proj.key, durationQ: 4) {
+                b.startQ = Double(i) * 4; _ = sym; proj.sections[0].blocks.append(b)
+            }
+        }
+        try store.save(proj)
         return 0
     } catch {
         print("error:", error.localizedDescription); return 1

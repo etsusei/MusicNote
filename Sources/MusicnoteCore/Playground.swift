@@ -158,6 +158,9 @@ public enum PlaygroundOps {
         for (i, s) in project.sections.enumerated() {
             let len = sectionLengthQ(project, s)
             if !conflicts(in: s).isEmpty { out.append(Problem(message: "「\(s.name)」有重叠的和弦块")) }
+            if let d = s.drums, d.groove.meter != project.meter {
+                out.append(Problem(message: "「\(s.name)」的节奏是 \(d.groove.meter.display)，作品是 \(project.meter.display)，鼓会按自己的长度循环"))
+            }
             for b in s.blocks {
                 if b.endQ > len + 1e-6 { out.append(Problem(message: "「\(s.name)」的 \(b.symbol) 超出乐段末尾")) }
                 for n in sounding(b) {
@@ -186,6 +189,29 @@ public enum PlaygroundOps {
         return out.sorted { $0.2 < $1.2 }.map { (pitch: $0.0, velocity: $0.1, startQ: $0.2, durationQ: $0.3) }
     }
 
+    /// Drum hits (in Q from the first of `sections`): each section's pattern looped over the
+    /// section, a fresh chance draw per section.
+    public static func drumHits(_ project: PlaygroundProject, sections: Range<Int>? = nil) -> [DrumOps.Hit] {
+        let range = sections ?? 0..<project.sections.count
+        let base = sectionStartQ(project, index: range.lowerBound)
+        var out: [DrumOps.Hit] = []
+        for i in range {
+            guard let d = project.sections[i].drums else { continue }
+            let s0 = sectionStartQ(project, index: i) - base
+            out += DrumOps.tiled(d.groove, lengthQ: sectionLengthQ(project, project.sections[i]), seed: UInt64(i + 1), volume: d.volume)
+                .map { var h = $0; h.q += s0; return h }
+        }
+        return out.sorted { $0.q < $1.q }
+    }
+
+    /// Sections whose pattern was made in another meter (it still loops by its own length).
+    public static func drumMeterMismatches(_ project: PlaygroundProject) -> [String] {
+        project.sections.compactMap { s in
+            guard let d = s.drums, d.groove.meter != project.meter else { return nil }
+            return "「\(s.name)」的节奏是 \(d.groove.meter.display)，作品是 \(project.meter.display)"
+        }
+    }
+
     public static func exportMidi(_ project: PlaygroundProject) -> Data {
         var w = MidiFileWriter(bpm: project.bpm, meter: project.meter, key: project.key)
         w.trackName = project.title
@@ -194,7 +220,7 @@ public enum PlaygroundOps {
             MidiFileWriter.Note(pitch: $0.pitch, velocity: $0.velocity, startTick: MidiTicks.ticks(q: $0.startQ),
                                 durationTicks: max(1, MidiTicks.ticks(q: $0.startQ + $0.durationQ) - MidiTicks.ticks(q: $0.startQ)))
         }
-        return w.data(notes: notes)
+        return w.data(notes: notes, drumNotes: DrumOps.midiNotes(drumHits(project)))
     }
 
     /// First free start in a section at or after `from`, or nil if the material doesn't fit.
