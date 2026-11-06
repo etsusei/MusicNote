@@ -1,26 +1,23 @@
 import Foundation
 import MusicnoteCore
 
-/// 新增分析 from audio a song's clips already use, instead of picking the file again.
+/// 新增分析 from a clip the song already has: same audio file and the same selection, instead
+/// of picking the file again.
 extension AppModel {
-    /// Distinct audio files (by fingerprint) used by the song's clips that can still be found,
-    /// most recently used first, with the clips that use each.
-    func reusableSources(of song: Song) -> [(source: SourceRef, clips: [String])] {
-        var out: [(source: SourceRef, clips: [String])] = []
-        for clip in items(of: song.id).sorted(by: { $0.updatedAt > $1.updatedAt }) {
-            if let i = out.firstIndex(where: { $0.source.fingerprint == clip.source.fingerprint }) {
-                out[i].clips.append(clip.title)
-            } else if Pipeline.resolve(clip.source) != nil {
-                out.append((clip.source, [clip.title]))
-            }
+    /// The song's clips whose audio can still be found, most recently edited first; clips with
+    /// the same file and selection are listed once.
+    func reusableClips(of song: Song) -> [AnalysisItem] {
+        var seen = Set<String>()
+        return items(of: song.id).sorted { $0.updatedAt > $1.updatedAt }.filter { clip in
+            guard Pipeline.resolve(clip.source) != nil else { return false }
+            return seen.insert("\(clip.source.fingerprint)|\(clip.trimStartUs)|\(clip.trimEndUs)").inserted
         }
-        return out
     }
 
-    /// A new clip on an audio file already in use; the selection starts fresh (first 30 s).
-    func addAnalysis(to song: Song, reusing source: SourceRef) {
-        let item = AnalysisItem(songId: song.id, title: "片段 \(items(of: song.id).count + 1)", source: source, trimStartUs: 0,
-                                trimEndUs: Int64(min(source.durationSec, 30) * 1_000_000))
+    /// A new clip on the same audio as `clip`, starting with its selection.
+    func addAnalysis(to song: Song, like clip: AnalysisItem) {
+        let item = AnalysisItem(songId: song.id, title: "片段 \(items(of: song.id).count + 1)", source: clip.source,
+                                trimStartUs: clip.trimStartUs, trimEndUs: clip.trimEndUs)
         do { try store.save(item) } catch { report(error); return }
         reload()
         route = .analysis(item.id)

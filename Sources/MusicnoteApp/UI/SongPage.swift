@@ -31,12 +31,12 @@ struct SongPage: View {
                 HStack {
                     SectionHeader(title: "分析子项", subtitle: "每个子项只分析一个连续片段；新增分析可以沿用已有片段的音频，或重新选择本地原曲。")
                     Spacer()
-                    let reusable = model.reusableSources(of: song)
+                    let reusable = model.reusableClips(of: song)
                     if reusable.isEmpty {
                         Button("新增分析…") { model.addAnalysis(to: song) }.buttonStyle(PrimaryButtonStyle())
                     } else {
                         Menu {
-                            NewClipMenuItems(song: song, sources: reusable)
+                            NewClipMenuItems(song: song, clips: reusable)
                         } label: {
                             Text("新增分析")
                         }
@@ -138,17 +138,17 @@ struct FlowLayout: Layout {
     }
 }
 
-/// 新增分析 choices: each audio file the song's clips already use, then picking a file.
+/// 新增分析 choices: start from one of the song's clips (same audio, same selection), or pick a file.
 struct NewClipMenuItems: View {
     @Environment(AppModel.self) private var model
     var song: Song
-    var sources: [(source: SourceRef, clips: [String])]
+    var clips: [AnalysisItem]
 
     var body: some View {
-        Section("用已截取过的音频") {
-            ForEach(sources, id: \.source.fingerprint) { s in
-                Button("\(s.source.fileName)（\(formatTime(us: Int64(s.source.durationSec * 1_000_000), millis: false))，\(s.clips.joined(separator: "、")) 用过）") {
-                    model.addAnalysis(to: song, reusing: s.source)
+        Section("沿用已截取的音频和范围") {
+            ForEach(clips) { c in
+                Button("\(c.title)：\(formatTime(us: c.trimStartUs))–\(formatTime(us: c.trimEndUs)) · \(c.source.fileName)") {
+                    model.addAnalysis(to: song, like: c)
                 }
             }
         }

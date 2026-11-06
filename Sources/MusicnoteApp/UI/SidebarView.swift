@@ -50,7 +50,7 @@ struct SidebarView: View {
                         }
                         .routeRow(.song(song.id))
                         .contextMenu {
-                            let reusable = model.reusableSources(of: song)
+                            let reusable = model.reusableClips(of: song)
                             if reusable.isEmpty {
                                 Button("新增分析…") { model.addAnalysis(to: song) }
                             } else {
