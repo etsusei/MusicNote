@@ -70,6 +70,7 @@ final class AppModel {
     var playAlongItem: UUID?
     /// Shown in the toolbar while a picked video's audio is extracted.
     var importStatus: String?
+    var linkImportOpen = false
     /// When each chord sounds during play-along (as the bars show it); the highlight follows these.
     var playAlongSpans: [(id: String, startUs: Int64, endUs: Int64)] = []
     /// What each chord sounds during play-along (the keyboard lights these).
@@ -246,21 +247,43 @@ final class AppModel {
         do {
             let source = try await importSource(url)
             let meta = await Pipeline.readMetadata(url: url)
-            var song = Song(title: meta.title ?? url.deletingPathExtension().lastPathComponent, artist: meta.artist ?? "",
-                            album: meta.album ?? "", sortIndex: (songs.map(\.sortIndex).max() ?? 0) + 1)
-            if let art = meta.artwork {
-                let name = song.id.uuidString + ".img"
-                try? art.write(to: paths.covers.appendingPathComponent(name))
-                song.coverFile = name
-            }
-            try store.save(song)
-            let item = AnalysisItem(songId: song.id, title: "片段 1", source: source, trimStartUs: 0,
-                                    trimEndUs: Int64(min(source.durationSec, 30) * 1_000_000))
-            try store.save(item)
-            reload()
-            route = .analysis(item.id)
+            try saveNewSong(title: meta.title ?? url.deletingPathExtension().lastPathComponent, artist: meta.artist ?? "",
+                            album: meta.album ?? "", artwork: meta.artwork, source: source)
             warnIfShort(source)
         } catch { report(error) }
+    }
+
+    /// A pasted Instagram or YouTube link as a new song. A short one is a reel or a Short, not a
+    /// store preview, so there is no preview warning.
+    func createSong(fromLink link: MediaLink) async {
+        importStatus = "正在从 \(link.site.display) 下载音频…"
+        defer { importStatus = nil }
+        do {
+            let media = try await pipeline.downloadLink(link)
+            var source = try Pipeline.inspectSource(url: media.audio)
+            source.fileName = "\(link.site.display) \(media.mediaId) 的音轨"
+            source.link = link.url.absoluteString
+            try saveNewSong(title: media.title, artist: media.artist, album: "", artwork: media.artwork, source: source)
+        } catch { report(error) }
+    }
+
+    private func saveNewSong(title: String, artist: String, album: String, artwork: Data?, source: SourceRef) throws {
+        var song = Song(title: title, artist: artist, album: album, sortIndex: (songs.map(\.sortIndex).max() ?? 0) + 1)
+        if let artwork {
+            let name = song.id.uuidString + ".img"
+            try? artwork.write(to: paths.covers.appendingPathComponent(name))
+            song.coverFile = name
+        }
+        try store.save(song)
+        try saveNewClip(of: song, title: "片段 1", source: source)
+    }
+
+    private func saveNewClip(of song: Song, title: String, source: SourceRef) throws {
+        let item = AnalysisItem(songId: song.id, title: title, source: source, trimStartUs: 0,
+                                trimEndUs: Int64(min(source.durationSec, 30) * 1_000_000))
+        try store.save(item)
+        reload()
+        route = .analysis(item.id)
     }
 
     /// 新增分析: re-select the user's original file; a new item never reuses the last range.
@@ -276,12 +299,7 @@ final class AppModel {
             if let existing, existing.fingerprint != source.fingerprint {
                 alert = AppAlert(title: "可能不是同一来源", message: "所选文件与这首歌已有片段的来源指纹不同（\(existing.fileName)）。已按新文件创建分析，请确认。")
             }
-            let n = items(of: song.id).count + 1
-            let item = AnalysisItem(songId: song.id, title: "片段 \(n)", source: source, trimStartUs: 0,
-                                    trimEndUs: Int64(min(source.durationSec, 30) * 1_000_000))
-            try store.save(item)
-            reload()
-            route = .analysis(item.id)
+            try saveNewClip(of: song, title: "片段 \(items(of: song.id).count + 1)", source: source)
             if alert == nil { warnIfShort(source) }
         } catch { report(error) }
     }

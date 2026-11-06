@@ -90,12 +90,57 @@ enum DebugSnapshot {
     }
 }
 
-/// MUSICNOTE_FLOW_AUDIO=<file> (with MUSICNOTE_SNAPSHOT_DIR) drives the real AppModel
-/// through every stage on a 20 s selection and writes flow.txt with checks.
+/// MUSICNOTE_FLOW_LINK=<pasted text> (with MUSICNOTE_SNAPSHOT_DIR) imports an Instagram or YouTube link through
+/// the real AppModel, adds a second clip, runs detection (no separation or transcription) and writes
+/// flow.txt. MUSICNOTE_FLOW_AUDIO=<file> instead drives every stage on a 20 s selection.
 @MainActor
 enum DebugFlow {
+    private static func runLink(_ text: String, _ model: AppModel, dir: String) {
+        Task { @MainActor in
+            var log: [String] = []
+            @MainActor func note(_ s: String) { log.append(s); try? log.joined(separator: "\n").write(toFile: dir + "/flow.txt", atomically: true, encoding: .utf8) }
+            @MainActor func shot(_ name: String) async {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                DebugSnapshot.snapshot(to: URL(fileURLWithPath: dir + "/link-\(name).png"))
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            await shot("0-empty")
+            model.linkImportOpen = true
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if let sheet = NSApp.windows.compactMap(\.attachedSheet).first, let view = sheet.contentView,
+               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                sheet.effectiveAppearance.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: rep) }
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir + "/link-1-sheet.png"))
+                note("sheet shown")
+            } else { note("FAIL sheet not shown") }
+            model.linkImportOpen = false
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard let link = Pipeline.mediaLink(in: text) else { note("FAIL not recognised: \(text)"); NSApp.terminate(nil); return }
+            note("link \(link.site.display) \(link.url.absoluteString)")
+            await model.createSong(fromLink: link)
+            if let a = model.alert { note("alert \(a.title): \(a.message)"); model.alert = nil }
+            guard let song = model.songs.last, let first = model.items(of: song.id).first else { note("FAIL create"); NSApp.terminate(nil); return }
+            note("song \(song.title) / \(song.artist) cover=\(song.coverFile != nil)")
+            note("source \(first.source.fileName) \(first.source.durationSec) s @ \(first.source.sampleRate) link=\(first.source.link ?? "nil") path=\(first.source.pathHint)")
+            await shot("2-selection")
+            model.addAnalysis(to: song, like: first)
+            let clips = model.items(of: song.id)
+            note("clips \(clips.map(\.title)) sameSource=\(Set(clips.map(\.source.fingerprint)).count == 1)")
+            model.analyze(first.id)
+            let t0 = Date()
+            while model.item(first.id)?.state == .detecting, Date().timeIntervalSince(t0) < 180 { try? await Task.sleep(nanoseconds: 300_000_000) }
+            let det = model.item(first.id)?.detection
+            note("state \(model.item(first.id)?.state.display ?? "?") bpm \(det?.roundedBpm ?? -1) key \(det?.rawKey ?? "?") \(det?.rawScale ?? "?")")
+            if let a = model.alert { note("alert \(a.title): \(a.message)") }
+            model.route = .analysis(first.id)
+            await shot("3-confirm")
+            NSApp.terminate(nil)
+        }
+    }
+
     static func runIfRequested(_ model: AppModel) -> Bool {
         let env = ProcessInfo.processInfo.environment
+        if let text = env["MUSICNOTE_FLOW_LINK"], let dir = env["MUSICNOTE_SNAPSHOT_DIR"] { runLink(text, model, dir: dir); return true }
         guard let audio = env["MUSICNOTE_FLOW_AUDIO"], let dir = env["MUSICNOTE_SNAPSHOT_DIR"] else { return false }
         let start = Double(env["MUSICNOTE_FLOW_START"] ?? "75") ?? 75
         Task { @MainActor in

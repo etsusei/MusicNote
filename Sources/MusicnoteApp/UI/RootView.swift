@@ -56,6 +56,7 @@ struct RootView: View {
         .alert(item: $model.alert) { a in
             Alert(title: Text(a.title), message: Text(a.message + (a.code.map { "\n（\($0)）" } ?? "")), dismissButton: .default(Text("好")))
         }
+        .sheet(isPresented: $model.linkImportOpen) { LinkImportSheet().environment(model) }
     }
 }
 
@@ -107,7 +108,10 @@ struct EmptyState: View {
             Text(model.songs.isEmpty ? "从一首喜欢的歌开始" : "从左栏选择歌曲或片段").font(.sectionTitle)
             Text("选择本地原曲，圈出想学的片段，确认速度调性后拆轨、转 MIDI、看和弦。")
                 .font(.body14).foregroundStyle(Theme.textSecondary)
-            Button("新增歌曲…") { model.addSong() }.buttonStyle(PrimaryButtonStyle())
+            HStack(spacing: 8) {
+                Button("新增歌曲…") { model.addSong() }.buttonStyle(PrimaryButtonStyle())
+                Button("从链接…") { model.linkImportOpen = true }.buttonStyle(SecondaryButtonStyle())
+            }
             Text("也可以把音频或视频文件直接拖到这里").font(.caption12).foregroundStyle(Theme.textSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

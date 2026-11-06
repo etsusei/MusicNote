@@ -18,6 +18,7 @@ Musicnote 是一个自用的 macOS 音乐学习与和弦知识库。从喜欢的
 - Logic Pro 13.0（只引用 App 内的拆轨、鼓细分和 Chord ID 模型，不复制；12.3.1/12.4 也能拆轨，但没有鼓细分）
 - Swift 6.4 命令行工具（不需要 Xcode）
 - `/opt/homebrew/bin/ffmpeg`、`ffprobe`
+- `/opt/homebrew/bin/yt-dlp` 和 `deno`（`brew install yt-dlp`，会一起装上 deno；只有从 Instagram / YouTube 链接导入时才用）
 - `uv`；Codex 与 Claude Code 的 CLI（`brew install --cask codex claude-code`），并已登录各自的订阅
 
 ## 一次性准备
@@ -62,3 +63,4 @@ swift run MusicnoteChecks     # 核心逻辑检查（命令行工具没有 XCTes
 - `MUSICNOTE_DATA_ROOT`：改用另一个数据目录
 - `MUSICNOTE_SNAPSHOT_DIR` + `MUSICNOTE_ROUTES`：依次打开页面并把窗口存成 PNG
 - `MUSICNOTE_FLOW_AUDIO`：用真实音频驱动完整流程，并写出 `flow.txt` 检查记录
+- `MUSICNOTE_FLOW_LINK`：用真实 Instagram 或 YouTube 链接走到速度调性检测（不拆轨、不转录），并写出 `flow.txt`

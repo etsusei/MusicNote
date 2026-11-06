@@ -393,6 +393,156 @@ do {
     catch let e as WorkerError { check(e.message.contains("没有音轨"), "no-audio message: \(e.message)") }
 }
 
+// Links: pasted text is reduced to the Instagram post's or YouTube video's canonical address;
+// anything else is refused.
+do {
+    for (text, want) in [("https://www.instagram.com/reel/CDUMkliABpa/?igsh=abc&utm_source=x", "https://www.instagram.com/reel/CDUMkliABpa/"),
+                         ("https://instagram.com/p/aye83DjauH", "https://www.instagram.com/p/aye83DjauH/"),
+                         ("https://m.instagram.com/reels/Ab_c-1/", "https://www.instagram.com/reels/Ab_c-1/"),
+                         ("https://www.instagram.com/someone/reel/Abc123/", "https://www.instagram.com/reel/Abc123/"),
+                         ("https://instagr.am/p/Abc123/", "https://www.instagram.com/p/Abc123/"),
+                         ("www.instagram.com/tv/Abc123/", "https://www.instagram.com/tv/Abc123/"),
+                         ("  看这个 https://www.instagram.com/reel/Abc123/?igsh=x  太好听了", "https://www.instagram.com/reel/Abc123/"),
+                         ("看这个https://www.instagram.com/reel/Abc123/，太好听了", "https://www.instagram.com/reel/Abc123/"),
+                         ("https://www.instagram.com/share/reel/BAabc_1?igsh=x", "https://www.instagram.com/share/reel/BAabc_1/"),
+                         ("https://www.instagram.com/share/BAabc_1", "https://www.instagram.com/share/BAabc_1/"),
+                         ("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ&t=42s", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+                         ("https://youtu.be/dQw4w9WgXcQ?si=abc", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+                         ("https://m.youtube.com/watch?feature=share&v=dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+                         ("https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=RDAMVM", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+                         ("https://www.youtube.com/shorts/a-B_c1234567", "https://www.youtube.com/watch?v=a-B_c123456"),
+                         ("https://youtube.com/shorts/aB_c-123456?feature=share", "https://www.youtube.com/watch?v=aB_c-123456"),
+                         ("https://www.youtube.com/live/aB_c-123456", "https://www.youtube.com/watch?v=aB_c-123456"),
+                         ("分享一首歌 youtu.be/dQw4w9WgXcQ 超好听", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")] {
+        eq(Pipeline.mediaLink(in: text)?.url.absoluteString, text.contains("a-B_c1234567") ? nil : want, "link: \(text)")
+    }
+    eq(Pipeline.mediaLink(in: "https://youtu.be/dQw4w9WgXcQ")?.site, .youtube, "youtube link site")
+    eq(Pipeline.mediaLink(in: "https://www.instagram.com/p/Abc123/")?.site, .instagram, "instagram link site")
+    for text in ["", "不是链接", "https://www.instagram.com/someone/", "https://www.instagram.com/stories/someone/123/",
+                 "https://www.instagram.com/reels/audio/123/", "https://www.instagram.com.evil.example/reel/Abc123/",
+                 "https://evil.example/instagram.com/reel/Abc123/", "file:///www.instagram.com/reel/Abc123/",
+                 "https://www.youtube.com/playlist?list=PL123", "https://www.youtube.com/@someone", "https://www.youtube.com/watch?v=short",
+                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ%22x", "https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ",
+                 "https://evil.example/youtu.be/dQw4w9WgXcQ"] {
+        check(Pipeline.mediaLink(in: text) == nil, "not a supported link: \(text)")
+    }
+    eq(Pipeline.instagramTitle(caption: "#piano @me\n\n雨天的 neo soul 和弦 #chords\nmore", owner: "x"), "雨天的 neo soul 和弦", "title from the caption's first real line")
+    eq(Pipeline.instagramTitle(caption: "#only #tags", owner: "Ja\u{0308}ger"), "J\u{00E4}ger 的 Instagram 视频", "title falls back to the owner")
+    eq(Pipeline.instagramTitle(caption: nil, owner: ""), "Instagram 视频", "title without anything to go on")
+    eq(Pipeline.instagramTitle(caption: String(repeating: "和", count: 50), owner: "x").count, 41, "long captions are cut")
+
+    for (title, uploader, track, artist, want) in [
+        ("Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)", "Rick Astley", nil, nil, ("Never Gonna Give You Up", "Rick Astley")),
+        ("米津玄師 MV「Lemon」", "米津玄師", nil, nil, ("米津玄師 MV「Lemon」", "米津玄師")),
+        ("周杰伦 Jay Chou【晴天 Sunny Day】Official MV", "杰威尔音乐", nil, nil, ("周杰伦 Jay Chou【晴天 Sunny Day】Official MV", "杰威尔音乐")),
+        ("Lemon (Live) [Lyric Video]", "x", nil, nil, ("Lemon (Live)", "x")),
+        ("Song – Name (feat. B) [MV]", "x", nil, nil, ("Name (feat. B)", "Song")),
+        ("anything", "Cory Wong - Topic", "Dean Town", "Vulfpeck", ("Dean Town", "Vulfpeck")),
+        ("anything", "Cory Wong - Topic", "Assassin", nil, ("Assassin", "Cory Wong")),
+        ("(Official Video)", "x", nil, nil, ("(Official Video)", "x"))] as [(String, String, String?, String?, (String, String))] {
+        let got = Pipeline.youtubeNames(title: title, uploader: uploader, track: track, artist: artist)
+        check(got.title == want.0 && got.artist == want.1, "youtube names: \(title) → \(got)")
+    }
+
+    let igLogin = "ERROR: [Instagram] X: Instagram sent an empty media response. Check if this post is accessible in your browser without being logged-in. If it is not, then use --cookies-from-browser or --cookies for the authentication."
+    let ytBot = "ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication."
+    for (stderr, site, browser, code) in [(igLogin, .instagram, nil, "LINK_LOGIN"), (igLogin, .instagram, "chrome", "LINK_LOGIN"),
+                                          ("ERROR: could not find chrome cookies database in \"/x\"", .instagram, "chrome", "LINK_COOKIES"),
+                                          ("PermissionError: [Errno 1] Operation not permitted: '/x/Cookies.binarycookies'", .youtube, "safari", "LINK_COOKIES"),
+                                          ("ERROR: [Instagram] X: There is no video in this post", .instagram, nil, "LINK_NO_VIDEO"),
+                                          ("ERROR: [Instagram] X: Unable to download webpage: The read operation timed out", .instagram, nil, "LINK_NETWORK"),
+                                          (ytBot, .youtube, nil, "LINK_LOGIN"),
+                                          ("ERROR: [youtube] X: Sign in to confirm your age. This video may be inappropriate for some users.", .youtube, nil, "LINK_LOGIN"),
+                                          ("ERROR: [youtube] X: Private video. Sign in if you've been granted access to this video", .youtube, nil, "LINK_LOGIN"),
+                                          ("ERROR: [youtube] BaW_jenozKc: This video is unavailable", .youtube, nil, "LINK_UNAVAILABLE"),
+                                          ("ERROR: [youtube] X: Video unavailable. This video has been removed by the uploader", .youtube, nil, "LINK_UNAVAILABLE"),
+                                          ("ERROR: [youtube] X: This live event will begin in 3 hours.", .youtube, nil, "LINK_UPCOMING"),
+                                          ("ERROR: [youtube] X: Join this channel to get access to members-only content like this video", .youtube, nil, "LINK_MEMBERS"),
+                                          ("ERROR: unable to download video data: HTTP Error 403: Forbidden", .youtube, nil, "LINK_DOWNLOAD")] as [(String, LinkSite, String?, String)] {
+        eq(Pipeline.linkFailure(stderr: stderr, site: site, browser: browser).code, code, "failure class: \(stderr.prefix(60))")
+    }
+    check(Pipeline.linkFailure(stderr: igLogin, site: .instagram, browser: nil).message.contains("设置"), "anonymous login failure points to settings")
+    check(Pipeline.linkFailure(stderr: ytBot, site: .youtube, browser: nil).message.contains("YouTube"), "youtube login failure names youtube")
+    check(Pipeline.linkFailure(stderr: "ERROR: unable to download video data: HTTP Error 403: Forbidden", site: .youtube, browser: nil).message.contains("brew upgrade yt-dlp"), "unknown failure suggests updating yt-dlp")
+}
+
+// Link download against a stand-in yt-dlp: arguments, audio extraction, names, cover, cleanup, failure.
+do {
+    let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("mn-link-\(UUID().uuidString.prefix(6))")
+    try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    let paths = AppPaths(root: tmp.appendingPathComponent("lib"))
+    try paths.ensure()
+    var tools = ToolSettings.defaults(projectRoot: FileManager.default.currentDirectoryPath, separatorBinary: "")
+    let argsLog = tmp.appendingPathComponent("args.txt"), fake = tmp.appendingPathComponent("yt-dlp")
+    // Names the file after the -o template's site prefix, as yt-dlp would.
+    let script = """
+    #!/bin/sh
+    printf '%s\\n' "$@" > '\(argsLog.path)'
+    while [ $# -gt 0 ]; do [ "$1" = "-P" ] && dir="$2"; [ "$1" = "-o" ] && site="${2%%-*}"; shift; done
+    '\(tools.ffmpeg)' -v error -y -f lavfi -i sine=frequency=440:sample_rate=48000:duration=2 -c:a aac "$dir/$site-Abc123.m4a"
+    printf 'cover' > "$dir/$site-Abc123.jpg"
+    printf '{"id":"Abc123","title":"Someone - 雨天 (Official Audio)","uploader":"Someone","channel":"someone","description":"雨天 #chords","filepath":"%s"}\\n' "$dir/$site-Abc123.m4a"
+    """
+    try script.write(to: fake, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
+    func args() throws -> [String] { try String(contentsOf: argsLog, encoding: .utf8).split(separator: "\n").map(String.init) }
+    func pair(_ a: [String], _ k: String, _ v: String) -> Bool { zip(a, a.dropFirst()).contains { $0 == k && $1 == v } }
+    tools.ytDlp = fake.path
+    tools.deno = "/bin/sh" // any executable stands in for deno
+    let ig = Pipeline.mediaLink(in: "https://www.instagram.com/reel/Abc123/")!, yt = Pipeline.mediaLink(in: "https://youtu.be/dQw4w9WgXcQ")!
+    let pipeline = Pipeline(store: try Store(url: paths.database), paths: paths, tools: tools)
+    let media = try await pipeline.downloadLink(ig)
+    eq(media.title, "雨天", "instagram title")
+    eq(media.artist, "Someone", "instagram artist")
+    eq(media.mediaId, "Abc123", "downloaded id")
+    eq(media.artwork, Data("cover".utf8), "downloaded cover")
+    check(media.audio.path.hasPrefix(paths.videoAudio.path) && media.audio.lastPathComponent.hasPrefix("instagram-Abc123-"), "audio kept in the library: \(media.audio.path)")
+    let src = try Pipeline.inspectSource(url: media.audio)
+    check(abs(src.durationSec - 2) < 0.15 && src.sampleRate == 48000, "downloaded audio readable: \(src.durationSec) s")
+    let igArgs = try args()
+    eq(Array(igArgs.suffix(2)), ["--", ig.url.absoluteString], "the link can't be read as an option")
+    check(!igArgs.contains("--cookies-from-browser"), "anonymous unless a browser is chosen")
+    check(!igArgs.contains("--js-runtimes"), "instagram needs no javascript runtime")
+    let leftovers = try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path).filter { $0.hasPrefix("musicnote-link-") }
+    check(leftovers.isEmpty, "download folder removed: \(leftovers)")
+
+    let video = try await pipeline.downloadLink(yt)
+    check(video.title == "雨天" && video.artist == "Someone", "youtube names: \(video.title) / \(video.artist)")
+    check(video.audio.lastPathComponent.hasPrefix("youtube-Abc123-"), "youtube audio named by site: \(video.audio.lastPathComponent)")
+    let ytArgs = try args()
+    check(pair(ytArgs, "--js-runtimes", "deno:/bin/sh"), "youtube runs with deno")
+    eq(Array(ytArgs.suffix(2)), ["--", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"], "youtube canonical link passed")
+
+    tools.ytDlpCookiesBrowser = "chrome"
+    _ = try await Pipeline(store: try Store(url: paths.database), paths: paths, tools: tools).downloadLink(yt)
+    let cookieArgs = try args()
+    check(pair(cookieArgs, "--cookies-from-browser", "chrome"), "chosen browser passed on")
+
+    var noDeno = tools; noDeno.deno = tmp.appendingPathComponent("nope").path
+    do { _ = try await Pipeline(store: try Store(url: paths.database), paths: paths, tools: noDeno).downloadLink(yt); check(false, "youtube without deno refused") }
+    catch let e as WorkerError { eq(e.code, "DENO_MISSING", "missing deno explained") }
+    _ = try await Pipeline(store: try Store(url: paths.database), paths: paths, tools: noDeno).downloadLink(ig)
+
+    try "#!/bin/sh\necho 'ERROR: [Instagram] Abc123: There is no video in this post' >&2\nexit 1\n".write(to: fake, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
+    do { _ = try await pipeline.downloadLink(ig); check(false, "failed download refused") }
+    catch let e as WorkerError { eq(e.code, "LINK_NO_VIDEO", "failed download explained") }
+
+    tools.ytDlp = tmp.appendingPathComponent("nope").path
+    do { _ = try await Pipeline(store: try Store(url: paths.database), paths: paths, tools: tools).downloadLink(ig); check(false, "missing yt-dlp refused") }
+    catch let e as WorkerError { eq(e.code, "YTDLP_MISSING", "missing yt-dlp explained") }
+
+    // Settings saved before this feature still decode, and old sources have no link.
+    let old = try JSONEncoder().encode(ToolSettings.defaults(projectRoot: "/x", separatorBinary: "/y"))
+    var dict = try JSONSerialization.jsonObject(with: old) as! [String: Any]
+    for k in ["ytDlpPath", "ytDlpCookiesBrowser", "denoPath"] { dict.removeValue(forKey: k) }
+    let decoded = try JSONDecoder().decode(ToolSettings.self, from: JSONSerialization.data(withJSONObject: dict))
+    eq(decoded.ytDlp, "/opt/homebrew/bin/yt-dlp", "old settings get the default yt-dlp")
+    eq(decoded.deno, "/opt/homebrew/bin/deno", "old settings get the default deno")
+    check(decoded.ytDlpCookiesBrowser == nil, "old settings stay anonymous")
+}
+
 // MCP bridge: initialize, list and call go through workers/mcp_bridge.py to the app-side socket;
 // a wrong token is refused.
 do {

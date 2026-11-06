@@ -52,6 +52,8 @@ public struct SourceRef: Codable, Hashable, Sendable {
     public var sampleRate: Double
     public var frames: Int64
     public var fingerprint: String
+    /// The post or video a downloaded source came from; its audio is in the library, not a file of the user's.
+    public var link: String?
 
     public init(fileName: String, pathHint: String, bookmark: Data?, bytes: Int64,
                 durationSec: Double, sampleRate: Double, frames: Int64, fingerprint: String) {

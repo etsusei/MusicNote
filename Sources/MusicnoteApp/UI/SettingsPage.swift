@@ -68,6 +68,8 @@ struct SettingsPage: View {
                         if !missing.isEmpty { Text("缺少：" + missing.joined(separator: "、")).font(.caption12).foregroundStyle(Theme.error) }
                         pathField("ffmpeg", \.ffmpeg)
                         pathField("ffprobe", \.ffprobe)
+                        pathField("yt-dlp", \.ytDlp)
+                        pathField("deno", \.deno)
                         pathField("Essentia Python", \.essentiaPython)
                         pathField("Musicpy Python", \.musicpyPython)
                         pathField("MuScriptor Python", \.muscriptorPython)
@@ -81,6 +83,14 @@ struct SettingsPage: View {
                                 Text("small").tag("small"); Text("medium（默认）").tag("medium"); Text("large").tag("large")
                             }.frame(width: 180)
                         }
+                        HStack {
+                            Text("网站登录").frame(width: 140, alignment: .leading)
+                            Picker("", selection: Binding(get: { model.settings.tools.ytDlpCookiesBrowser }, set: { model.settings.tools.ytDlpCookiesBrowser = $0; model.saveSettings() })) {
+                                Text("不登录（默认）").tag(String?.none)
+                                ForEach(["chrome", "safari", "firefox", "edge", "brave"], id: \.self) { Text($0.capitalized).tag(Optional($0)) }
+                            }.frame(width: 180)
+                        }
+                        Text("从链接导入遇到私密、年龄限制或要求登录时才需要：下载时让 yt-dlp 读这个浏览器的登录信息，不保存。").font(.caption12).foregroundStyle(Theme.textSecondary)
                     }
                 }
 

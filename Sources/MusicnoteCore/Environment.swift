@@ -70,7 +70,21 @@ public struct ToolSettings: Codable, Hashable, Sendable {
     /// Optional so settings saved before MT3 existed still decode.
     public var mt3PythonPath: String?
     public var mt3DirPath: String?
+    /// Optional so settings saved before link import existed still decode.
+    public var ytDlpPath: String?
+    /// The browser whose site login yt-dlp borrows; nil means anonymous, the default.
+    public var ytDlpCookiesBrowser: String?
+    public var denoPath: String?
 
+    public var ytDlp: String {
+        get { ytDlpPath ?? "/opt/homebrew/bin/yt-dlp" }
+        set { ytDlpPath = newValue }
+    }
+    /// The JavaScript runtime yt-dlp needs for YouTube.
+    public var deno: String {
+        get { denoPath ?? "/opt/homebrew/bin/deno" }
+        set { denoPath = newValue }
+    }
     /// Thin venv layered over the user's MT3 environment, adding the jax-mps GPU backend.
     public var mt3Python: String { mt3PythonPath ?? projectRoot + "/workers/mt3/.venv/bin/python" }
     /// The user's MT3 checkout (transcribe.py + checkpoints), referenced, never copied.
@@ -98,7 +112,7 @@ public struct ToolSettings: Codable, Hashable, Sendable {
     public func missing() -> [String] {
         let fm = FileManager.default
         var out: [String] = []
-        for (name, path) in [("ffmpeg", ffmpeg), ("ffprobe", ffprobe), ("Python", systemPython),
+        for (name, path) in [("ffmpeg", ffmpeg), ("ffprobe", ffprobe), ("yt-dlp", ytDlp), ("deno", deno), ("Python", systemPython),
                              ("Essentia", essentiaPython), ("Musicpy", musicpyPython), ("MuScriptor", muscriptorPython),
                              ("拆轨程序", separatorBinary), ("音色库", soundFont), ("MT3", mt3Python)] where !fm.fileExists(atPath: path) {
             out.append(name)

@@ -20,6 +20,7 @@ struct MusicnoteApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("新增歌曲…") { model.addSong() }.keyboardShortcut("n")
+                Button("从链接新增歌曲…") { model.linkImportOpen = true }.keyboardShortcut("l", modifiers: [.command, .shift])
                 Button("新建 Playground 作品") { model.newPlayground() }.keyboardShortcut("n", modifiers: [.command, .shift])
                 Button("新会话") { model.chat.newConversation(); model.showRight = true }.keyboardShortcut("t")
             }

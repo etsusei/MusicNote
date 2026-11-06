@@ -30,6 +30,7 @@ struct SidebarView: View {
                         .buttonStyle(.borderless).font(.caption12)
                         .popover(isPresented: $showTags) { TagFilterPopover().environment(model) }
                     Spacer()
+                    Button { model.linkImportOpen = true } label: { Image(systemName: "link") }.buttonStyle(.borderless).help("从 Instagram 或 YouTube 链接新增歌曲")
                     Button { model.addSong() } label: { Image(systemName: "plus") }.buttonStyle(.borderless).help("新增歌曲")
                 }
                 if !model.tagFilter.isEmpty {
