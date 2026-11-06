@@ -31,10 +31,12 @@ FRAMEWORKS = LOGIC / "Contents/Frameworks"
 ML_BINARY = FRAMEWORKS / "MAMachineLearning.framework/MAMachineLearning"
 RESOURCES = LOGIC / "Contents/Resources/MAMachineLearningResources.bundle"
 # MAMachineLearning builds checked against stored results (same API; 12.4 changed ~1% of labels,
-# e.g. Gb(maj7) -> Gb, Gm/Bb -> Gm). A new build is refused until it is checked again.
+# e.g. Gb(maj7) -> Gb, Gm/Bb -> Gm; 13.0 gives the same labels as 12.4). A new build is refused
+# until it is checked again.
 VERIFIED_SHA256 = {
     "20581918005b925b0ee2ce26e20f936848f841a8853050ab364f8cfd9c4db195": "12.3.1",
     "930cd55d602fd4750bb572d611598e6646601213fa265fda31c6aa836d3c1f10": "12.4",
+    "62cd464fd0304d49ed13798d91905aa7945eeef942a88282b75a732100234dfe": "13.0",
 }
 
 

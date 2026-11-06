@@ -1,4 +1,4 @@
-// Read-only bridge to Logic Pro Chord ID, verified on 12.3.1 and 12.4 (copied from work/logic-chord-probe/harmony_probe.m).
+// Read-only bridge to Logic Pro Chord ID, verified on 12.3.1, 12.4 and 13.0 (copied from work/logic-chord-probe/harmony_probe.m).
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>

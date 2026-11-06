@@ -16,7 +16,12 @@ import Foundation
 import Metal
 
 let logicApp = "/Applications/Logic Pro.app"
-let modelPath = logicApp + "/Contents/Resources/MAMachineLearningResources.bundle/Contents/Resources/ke77nsfms3_8024.mlmodelc"
+// Logic 13 moved the stem models into MAMLStemSplitter.framework; 12.x kept them in the
+// resource bundle. Same file name and outputs in both (checked on 13.0).
+let modelPath = [
+    logicApp + "/Contents/Frameworks/MAMLStemSplitter.framework/Versions/A/Resources/ke77nsfms3_8024.mlmodelc",
+    logicApp + "/Contents/Resources/MAMachineLearningResources.bundle/Contents/Resources/ke77nsfms3_8024.mlmodelc",
+].first { FileManager.default.fileExists(atPath: $0) } ?? "(ke77nsfms3_8024.mlmodelc not found)"
 // Model source order (verified from Logic's binary): bass, drums, other, vocals, guitar, piano.
 let stemNames = ["bass", "drums", "other", "vocals", "guitar", "piano"]
 
