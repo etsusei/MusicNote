@@ -3,7 +3,7 @@ import Foundation
 import MusicnoteCore
 
 /// Development aid, inert unless MUSICNOTE_SNAPSHOT_DIR is set: visits the routes in
-/// MUSICNOTE_ROUTES ("empty,settings,song:<uuid>,analysis:<uuid>[@tab],playground:<uuid>"),
+/// MUSICNOTE_ROUTES ("empty,settings,song:<uuid>,analysis:<uuid>[@tab],playground:<uuid>,drums:<uuid>"),
 /// renders the window to PNG for each, then quits. Lets the UI be checked without
 /// screen-recording permission.
 @MainActor
@@ -51,6 +51,8 @@ enum DebugSnapshot {
         case "firstsong": model.route = model.songs.first.map { .song($0.id) }
         case "firstitem": model.route = model.songs.first.flatMap { model.items(of: $0.id).first }.map { .analysis($0.id) }
         case "firstplayground": model.route = model.playgrounds.first.map { .playground($0.id) }
+        case "drums": model.route = UUID(uuidString: kv[1]).map { .drums($0) }
+        case "firstdrums": model.route = model.drumPatterns.first.map { .drums($0.id) }
         default: model.route = nil
         }
     }

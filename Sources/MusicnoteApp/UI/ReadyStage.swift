@@ -118,6 +118,7 @@ struct NotesStage: View {
                 } else {
                     Card { Text("\(item.selectedStem?.displayName ?? "")轨不做和弦、级数和骨架分析；可以写笔记、打标签并在聊天里引用。").foregroundStyle(Theme.textSecondary) }
                 }
+                DrumExtractSection(item: item)
                 tags
                 NotesEditor(item: item)
                 actions

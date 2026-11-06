@@ -744,7 +744,7 @@ public struct PlaygroundProject: Record, Hashable {
 
 // MARK: - Jobs
 
-public enum JobType: String, Codable, Sendable { case detect, separate, transcribe, harmony, skeleton }
+public enum JobType: String, Codable, Sendable { case detect, separate, transcribe, harmony, skeleton, drums }
 
 public struct Job: Record {
     public static let kind = "job"

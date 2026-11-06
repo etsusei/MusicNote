@@ -110,11 +110,16 @@ public struct DrumSource: Codable, Hashable, Sendable {
     public var timingRevision: Int
     /// Clip time of the pattern's first step (bar line on or before the clip start).
     public var startUs: Int64
-    /// Relative asset paths: "mix" (the clip), "drums", and one per kit piece.
+    /// Relative asset paths: "mix" (the clip), "drums", and one per kit piece; the files
+    /// start at the pattern's first step.
     public var audio: [String: String]
     public var logicVersion: String?
     /// Bars cut off the front since extraction, so the audio still lines up.
     public var cropBars: Int
+    /// What extraction found (grid, timing spread, hits per lane), shown with the pattern.
+    public var notes: [String]?
+    /// Meter at extraction; the audio only lines up while the pattern keeps it.
+    public var meter: Meter?
 
     public init(analysisId: UUID, songTitle: String, clipTitle: String, bpm: Double, trimRevision: Int, timingRevision: Int,
                 startUs: Int64, audio: [String: String], logicVersion: String?, cropBars: Int = 0) {
@@ -253,6 +258,22 @@ public enum DrumOps {
         g.bars = max(1, min(64, bars))
         let total = g.totalSteps
         for li in g.lanes.indices { g.lanes[li].steps.removeAll { $0.index >= total } }
+    }
+
+    /// Meter change: each step keeps its bar and its place in the bar; steps past the new
+    /// bar length are dropped.
+    public static func setMeter(_ g: inout DrumGroove, _ meter: Meter) {
+        let old = g.stepsPerBar
+        g.meter = meter
+        let new = g.stepsPerBar
+        guard new != old else { return }
+        for li in g.lanes.indices {
+            g.lanes[li].steps = g.lanes[li].steps.compactMap { s in
+                let pos = s.index % old
+                guard pos < new else { return nil }
+                var n = s; n.index = s.index / old * new + pos; return n
+            }
+        }
     }
 
     /// Keeps bars `range` (0-based) only.

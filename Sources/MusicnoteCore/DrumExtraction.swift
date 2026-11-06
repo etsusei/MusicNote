@@ -425,9 +425,11 @@ extension Pipeline {
         }
         for d in [stems, kit] { paths.removeOwned(d) }
 
-        let source = DrumSource(analysisId: item.id, songTitle: songTitle, clipTitle: item.title, bpm: timing.bpm,
+        var source = DrumSource(analysisId: item.id, songTitle: songTitle, clipTitle: item.title, bpm: timing.bpm,
                                 trimRevision: item.trimRevision, timingRevision: item.timingRevision, startUs: result.startUs,
                                 audio: audio, logicVersion: logicVersion)
+        source.notes = result.notes
+        source.meter = grid.meter
         let p = DrumPattern(id: patternId, title: "\(songTitle) · \(item.title)", bpm: timing.bpm, groove: result.groove, source: source)
         return (p, result.notes)
     }
@@ -446,6 +448,11 @@ extension Pipeline {
 
     /// A file's channels averaged to one, at its own rate.
     public static func monoSamples(_ url: URL) throws -> [Float] { try mono(url) }
+
+    /// Logic Pro 13's drum splitter is installed.
+    public static var drumSplitAvailable: Bool {
+        FileManager.default.fileExists(atPath: "/Applications/Logic Pro.app/Contents/Frameworks/MAMLStemSplitter.framework/Versions/A/Resources/checkpoint_277000_zeb99ngfer.mlmodelc")
+    }
 
     static func mono(_ url: URL) throws -> [Float] {
         let f = try AVAudioFile(forReading: url)

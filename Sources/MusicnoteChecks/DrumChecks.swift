@@ -62,6 +62,11 @@ func runDrumChecks() {
     DrumOps.crop(&bars, bars: 1..<2)
     eq(bars.bars, 1, "crop to one bar")
     eq(idx(bars, 38), [4, 12], "crop moves steps to the front")
+    var waltz = k
+    DrumOps.setBars(&waltz, 2)
+    DrumOps.copyBar(&waltz, from: 0, to: 1)
+    DrumOps.setMeter(&waltz, Meter(3, 4))
+    eq(idx(waltz, 38), [4, 16], "3/4 keeps beat 2 of each bar, drops beat 4")
     var dup = k
     DrumOps.duplicate(&dup)
     eq(dup.bars, 2, "duplicate doubles")

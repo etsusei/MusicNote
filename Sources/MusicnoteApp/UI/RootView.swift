@@ -87,6 +87,7 @@ struct MainView: View {
             case .song(let id): if let s = model.song(id) { SongPage(song: s).id(id) } else { EmptyState() }
             case .analysis(let id): if model.item(id) != nil { AnalysisPage(itemId: id).id(id) } else { EmptyState() }
             case .playground(let id): if let p = model.playgrounds.first(where: { $0.id == id }) { PlaygroundPage(project: p).id(id) } else { EmptyState() }
+            case .drums(let id): if let p = model.drumPattern(id) { DrumMachinePage(pattern: p).id(id) } else { EmptyState() }
             case .settings: SettingsPage()
             case .bookmarks: BookmarksPage()
             case .inspirations: InspirationCollectionPage()

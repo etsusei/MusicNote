@@ -23,6 +23,8 @@ struct ScheduledNote: Hashable, Sendable {
     var endFrame: Int64
     var pitch: UInt8
     var velocity: UInt8
+    /// Played on the drum kit (GM percussion) instead of the melodic instrument.
+    var drum = false
 }
 
 struct MetronomeConfig: Sendable {
@@ -42,13 +44,14 @@ final class AudioEngine: @unchecked Sendable {
 
     private let engine = AVAudioEngine()
     private let sampler = AVAudioUnitSampler()
+    private let drumSampler = AVAudioUnitSampler()
     private var sourceNode: AVAudioSourceNode?
     private(set) var sampleRate: Double = 44100
 
     private var lock = os_unfair_lock()
     // Render state (guarded by lock)
     private var tracks: [AudioTrack] = []
-    private var events: [(frame: Int64, pitch: UInt8, velocity: UInt8, on: Bool)] = []
+    private var events: [(frame: Int64, pitch: UInt8, velocity: UInt8, on: Bool, drum: Bool)] = []
     private var eventCursor = 0
     private var midiMuted = false
     private var midiSolo = false
@@ -62,6 +65,7 @@ final class AudioEngine: @unchecked Sendable {
     private var clickPhase = 0.0
     private var clickAccent = false
     private var activeNotes = Set<UInt8>()
+    private var activeDrums = Set<UInt8>()
     private var needsAllOff = false
 
     private(set) var instrument: Instrument = .piano
@@ -71,7 +75,10 @@ final class AudioEngine: @unchecked Sendable {
     private init() {
         engine.attach(sampler)
         engine.connect(sampler, to: engine.mainMixerNode, format: nil)
+        engine.attach(drumSampler)
+        engine.connect(drumSampler, to: engine.mainMixerNode, format: nil)
         configure(sampleRate: 44100)
+        loadDrumKit()
     }
 
     func start() {
@@ -100,6 +107,16 @@ final class AudioEngine: @unchecked Sendable {
     func loadSoundFont(_ url: URL) {
         soundFont = url
         setInstrument(instrument)
+        loadDrumKit()
+    }
+
+    /// The GM percussion bank of the sound font, else of macOS's built-in bank.
+    private func loadDrumKit() {
+        let dls = URL(fileURLWithPath: "/System/Library/Components/CoreAudio.component/Contents/Resources/gs_instruments.dls")
+        let bank = UInt8(kAUSampler_DefaultPercussionBankMSB)
+        if let sf = soundFont, FileManager.default.fileExists(atPath: sf.path),
+           (try? drumSampler.loadSoundBankInstrument(at: sf, program: 0, bankMSB: bank, bankLSB: 0)) != nil { return }
+        try? drumSampler.loadSoundBankInstrument(at: dls, program: 0, bankMSB: bank, bankLSB: 0)
     }
 
     func setInstrument(_ inst: Instrument) {
@@ -129,6 +146,7 @@ final class AudioEngine: @unchecked Sendable {
         midiSolo = false
         os_unfair_lock_unlock(&lock)
         sampler.volume = 1
+        drumSampler.volume = drumVolume
     }
 
     func updateTrack(_ id: String, muted: Bool? = nil, solo: Bool? = nil, gain: Float? = nil) {
@@ -141,19 +159,21 @@ final class AudioEngine: @unchecked Sendable {
         os_unfair_lock_unlock(&lock)
     }
 
-    func setMidi(_ notes: [ScheduledNote], enabled: Bool) {
-        var ev: [(Int64, UInt8, UInt8, Bool)] = []
+    /// `cut` silences what is sounding; editing a pattern while it plays passes false so a
+    /// ringing cymbal isn't choked on every click.
+    func setMidi(_ notes: [ScheduledNote], enabled: Bool, cut: Bool = true) {
+        var ev: [(Int64, UInt8, UInt8, Bool, Bool)] = []
         for n in notes {
-            ev.append((n.startFrame, n.pitch, n.velocity, true))
-            ev.append((max(n.endFrame, n.startFrame + 1), n.pitch, 0, false))
+            ev.append((n.startFrame, n.pitch, n.velocity, true, n.drum))
+            ev.append((max(n.endFrame, n.startFrame + 1), n.pitch, 0, false, n.drum))
         }
         // Offs before ons at the same frame so repeated notes retrigger.
         ev.sort { $0.0 != $1.0 ? $0.0 < $1.0 : (!$0.3 && $1.3) }
         os_unfair_lock_lock(&lock)
-        events = ev.map { (frame: $0.0, pitch: $0.1, velocity: $0.2, on: $0.3) }
+        events = ev.map { (frame: $0.0, pitch: $0.1, velocity: $0.2, on: $0.3, drum: $0.4) }
         midiEnabled = enabled
         eventCursor = cursorIndex(for: position)
-        needsAllOff = true
+        if cut { needsAllOff = true }
         lengthFrames = max(lengthFrames, notes.map(\.endFrame).max() ?? 0)
         os_unfair_lock_unlock(&lock)
     }
@@ -165,6 +185,23 @@ final class AudioEngine: @unchecked Sendable {
     func setMidiMix(muted: Bool, solo: Bool) {
         os_unfair_lock_lock(&lock); midiMuted = muted; midiSolo = solo; os_unfair_lock_unlock(&lock)
         sampler.volume = midiAudible ? 1 : 0
+        drumSampler.volume = midiAudible ? drumVolume : 0
+    }
+
+    private var drumVolume: Float = 1
+
+    /// Level of the drum kit against the instrument and audio tracks.
+    func setDrumVolume(_ v: Float) {
+        drumVolume = max(0, min(1, v))
+        drumSampler.volume = midiAudible ? drumVolume : 0
+    }
+
+    /// One kit hit now (clicking a lane name or a step).
+    func tapDrum(_ note: Int, velocity: Int = 100) {
+        start()
+        let n = UInt8(clamping: note)
+        drumSampler.startNote(n, withVelocity: UInt8(clamping: velocity), onChannel: 9)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.drumSampler.stopNote(n, onChannel: 9) }
     }
 
     private var midiAudible: Bool {
@@ -222,6 +259,7 @@ final class AudioEngine: @unchecked Sendable {
 
     private func allNotesOff() {
         for ch: UInt8 in 0...1 { sampler.sendController(123, withValue: 0, onChannel: ch) }
+        drumSampler.sendController(123, withValue: 0, onChannel: 9)
     }
 
     // MARK: Render (audio thread)
@@ -235,10 +273,15 @@ final class AudioEngine: @unchecked Sendable {
         defer { os_unfair_lock_unlock(&lock) }
 
         let schedule = sampler.auAudioUnit.scheduleMIDIEventBlock
+        let drumSchedule = drumSampler.auAudioUnit.scheduleMIDIEventBlock
+        func releaseAll(at i: Int) {
+            for p in activeNotes { var b: [UInt8] = [0x80, p, 0]; schedule?(AUEventSampleTimeImmediate + AUEventSampleTime(i), 0, 3, &b) }
+            for p in activeDrums { var b: [UInt8] = [0x89, p, 0]; drumSchedule?(AUEventSampleTimeImmediate + AUEventSampleTime(i), 0, 3, &b) }
+            activeNotes.removeAll(); activeDrums.removeAll()
+        }
         if needsAllOff {
             needsAllOff = false
-            for p in activeNotes { var b: [UInt8] = [0x80, p, 0]; schedule?(AUEventSampleTimeImmediate, 0, 3, &b) }
-            activeNotes.removeAll()
+            releaseAll(at: 0)
         }
         guard playing else { return }
 
@@ -247,15 +290,14 @@ final class AudioEngine: @unchecked Sendable {
         var pos = position
         for i in 0..<frameCount {
             if let loop, pos >= loop.upperBound || pos < loop.lowerBound {
-                // Loop wrap: silence hanging notes, then continue from the loop start.
+                // Loop wrap: silence hanging notes (drums ring on), then continue from the loop start.
                 for p in activeNotes { var b: [UInt8] = [0x80, p, 0]; schedule?(AUEventSampleTimeImmediate + AUEventSampleTime(i), 0, 3, &b) }
                 activeNotes.removeAll()
                 pos = loop.lowerBound
                 eventCursor = cursorIndex(for: pos)
             } else if loop == nil, pos >= lengthFrames, lengthFrames > 0 {
                 playing = false
-                for p in activeNotes { var b: [UInt8] = [0x80, p, 0]; schedule?(AUEventSampleTimeImmediate + AUEventSampleTime(i), 0, 3, &b) }
-                activeNotes.removeAll()
+                releaseAll(at: i)
                 break
             }
             var l: Float = 0, r: Float = 0
@@ -296,9 +338,16 @@ final class AudioEngine: @unchecked Sendable {
                 while eventCursor < events.count, events[eventCursor].frame <= pos {
                     let e = events[eventCursor]
                     if events[eventCursor].frame == pos {
-                        var bytes: [UInt8] = e.on ? [0x90, e.pitch, e.velocity] : [0x80, e.pitch, 0]
-                        schedule?(AUEventSampleTimeImmediate + AUEventSampleTime(i), 0, 3, &bytes)
-                        if e.on { activeNotes.insert(e.pitch) } else { activeNotes.remove(e.pitch) }
+                        let t = AUEventSampleTimeImmediate + AUEventSampleTime(i)
+                        if e.drum {
+                            var bytes: [UInt8] = e.on ? [0x99, e.pitch, e.velocity] : [0x89, e.pitch, 0]
+                            drumSchedule?(t, 0, 3, &bytes)
+                            if e.on { activeDrums.insert(e.pitch) } else { activeDrums.remove(e.pitch) }
+                        } else {
+                            var bytes: [UInt8] = e.on ? [0x90, e.pitch, e.velocity] : [0x80, e.pitch, 0]
+                            schedule?(t, 0, 3, &bytes)
+                            if e.on { activeNotes.insert(e.pitch) } else { activeNotes.remove(e.pitch) }
+                        }
                     }
                     eventCursor += 1
                 }

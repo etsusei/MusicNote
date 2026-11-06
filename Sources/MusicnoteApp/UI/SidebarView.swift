@@ -69,6 +69,16 @@ struct SidebarView: View {
                     }
                     Button { model.newPlayground() } label: { Label("新建作品", systemImage: "plus") }.buttonStyle(.borderless)
                 }
+                Section("节奏") {
+                    ForEach(model.drumPatterns) { p in
+                        Label(p.title, systemImage: "square.grid.4x3.fill").routeRow(.drums(p.id))
+                            .contextMenu {
+                                Button("复制一份") { model.duplicateDrumPattern(p) }
+                                Button("删除节奏", role: .destructive) { model.deleteDrumPattern(p) }
+                            }
+                    }
+                    Button { model.newDrumPattern() } label: { Label("新建节奏", systemImage: "plus") }.buttonStyle(.borderless)
+                }
                 Section("灵感集合") {
                     Label("灵感集合（\(model.inspirationList.count)）", systemImage: "lightbulb").routeRow(.inspirations)
                 }

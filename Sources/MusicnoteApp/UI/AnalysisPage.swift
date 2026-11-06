@@ -141,6 +141,7 @@ struct AnalysisHeader: View {
         case .transcribe: if !item.selectedStems.isEmpty { model.transcribe(item.id, stems: item.selectedStems) }
         case .harmony: model.runHarmony(item.id)
         case .skeleton: model.generateSkeleton(item.id)
+        case .drums: model.extractDrums(item.id)
         }
     }
 }

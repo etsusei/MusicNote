@@ -9,6 +9,7 @@ enum Route: Hashable {
     case song(UUID)
     case analysis(UUID)
     case playground(UUID)
+    case drums(UUID)
     case settings
     case bookmarks
     case inspirations
@@ -42,6 +43,7 @@ final class AppModel {
     var songs: [Song] = []
     var itemsBySong: [UUID: [AnalysisItem]] = [:]
     var playgrounds: [PlaygroundProject] = []
+    var drumPatterns: [DrumPattern] = []
     var route: Route?
     var showLeft = true
     var showRight = true
@@ -151,6 +153,7 @@ final class AppModel {
         for i in store.all(AnalysisItem.self) { by[i.songId, default: []].append(i) }
         itemsBySong = by
         playgrounds = store.all(PlaygroundProject.self).sorted { $0.updatedAt > $1.updatedAt }
+        drumPatterns = store.all(DrumPattern.self).sorted { $0.updatedAt > $1.updatedAt }
         dataVersion += 1
     }
 
@@ -384,7 +387,7 @@ final class AppModel {
 
     // MARK: Jobs
 
-    private func startJob(_ type: JobType, item: AnalysisItem, revision: Int,
+    func startJob(_ type: JobType, item: AnalysisItem, revision: Int,
                           body: @escaping (_ job: Job, _ progress: @escaping ProgressHandler) async throws -> Void,
                           onError: @escaping (Error) -> Void) {
         let jobId = UUID()
