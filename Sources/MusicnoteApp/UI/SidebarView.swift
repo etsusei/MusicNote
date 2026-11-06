@@ -54,7 +54,7 @@ struct SidebarView: View {
                             if reusable.isEmpty {
                                 Button("新增分析…") { model.addAnalysis(to: song) }
                             } else {
-                                Menu("新增分析") { NewClipMenuItems(song: song, sources: reusable) }
+                                Menu("新增分析") { NewClipMenuItems(song: song, clips: reusable) }
                             }
                             Button("删除歌曲", role: .destructive) { model.deleteSong(song) }
                         }
