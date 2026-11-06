@@ -29,9 +29,19 @@ struct SongPage: View {
                 .onChange(of: song) { _, s in model.save(s) }
 
                 HStack {
-                    SectionHeader(title: "分析子项", subtitle: "每个子项只分析一个连续片段；新增分析需要重新选择本地原曲。")
+                    SectionHeader(title: "分析子项", subtitle: "每个子项只分析一个连续片段；新增分析可以沿用已有片段的音频，或重新选择本地原曲。")
                     Spacer()
-                    Button("新增分析…") { model.addAnalysis(to: song) }.buttonStyle(PrimaryButtonStyle())
+                    let reusable = model.reusableSources(of: song)
+                    if reusable.isEmpty {
+                        Button("新增分析…") { model.addAnalysis(to: song) }.buttonStyle(PrimaryButtonStyle())
+                    } else {
+                        Menu {
+                            NewClipMenuItems(song: song, sources: reusable)
+                        } label: {
+                            Text("新增分析")
+                        }
+                        .menuStyle(.button).buttonStyle(PrimaryButtonStyle()).fixedSize()
+                    }
                 }
                 let items = model.items(of: song.id)
                 if items.isEmpty {
@@ -125,5 +135,24 @@ struct FlowLayout: Layout {
             v.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(s))
             x += s.width + spacing; lineH = max(lineH, s.height)
         }
+    }
+}
+
+/// 新增分析 choices: each audio file the song's clips already use, then picking a file.
+struct NewClipMenuItems: View {
+    @Environment(AppModel.self) private var model
+    var song: Song
+    var sources: [(source: SourceRef, clips: [String])]
+
+    var body: some View {
+        Section("用已截取过的音频") {
+            ForEach(sources, id: \.source.fingerprint) { s in
+                Button("\(s.source.fileName)（\(formatTime(us: Int64(s.source.durationSec * 1_000_000), millis: false))，\(s.clips.joined(separator: "、")) 用过）") {
+                    model.addAnalysis(to: song, reusing: s.source)
+                }
+            }
+        }
+        Divider()
+        Button("选择其他音频文件…") { model.addAnalysis(to: song) }
     }
 }

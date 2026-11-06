@@ -50,7 +50,12 @@ struct SidebarView: View {
                         }
                         .routeRow(.song(song.id))
                         .contextMenu {
-                            Button("新增分析…") { model.addAnalysis(to: song) }
+                            let reusable = model.reusableSources(of: song)
+                            if reusable.isEmpty {
+                                Button("新增分析…") { model.addAnalysis(to: song) }
+                            } else {
+                                Menu("新增分析") { NewClipMenuItems(song: song, sources: reusable) }
+                            }
                             Button("删除歌曲", role: .destructive) { model.deleteSong(song) }
                         }
                         if expanded.contains(song.id) || model.isSelected(in: song) {
