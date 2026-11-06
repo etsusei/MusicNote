@@ -1,8 +1,8 @@
 import MusicnoteCore
 import SwiftUI
 
-/// Right panel of the drum machine: the selected lane and step, bar tools, adding lanes and
-/// where the pattern came from.
+/// Under the drum grid: cards for the selected lane, the selected step, bar tools and where
+/// the pattern came from, side by side and wrapping in a narrow window.
 struct DrumInspector: View {
     @Environment(AppModel.self) private var model
     @Binding var pattern: DrumPattern
@@ -17,17 +17,30 @@ struct DrumInspector: View {
     private var laneIndex: Int? { g.lanes.firstIndex { $0.id == selectedLane } }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if let li = laneIndex { laneSection(li) }
+        FlowLayout(spacing: 14) {
+            card { if let li = laneIndex { laneSection(li) } else { hint("轨道", "点左边的轨道名选中一条轨道。") } }
+            card {
                 if let li = laneIndex, let si = selectedStep, let s = g.lanes[li].step(at: si) { stepSection(li, s) }
-                barSection
-                addLane
-                if let src = pattern.source { sourceSection(src) }
+                else { hint("所选的一步", "新点上的一步会被选中；⌥ 点已有的一步也能选中它，在这里改力度、微移、概率和连击。") }
             }
-            .padding(14)
+            card { barSection }
+            if let src = pattern.source { card { sourceSection(src) } }
         }
-        .background(Theme.surface)
+    }
+
+    private func card<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 8) { content() }
+            .padding(14)
+            .frame(width: 300, alignment: .topLeading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.borderSubtle))
+    }
+
+    private func hint(_ t: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            title(t)
+            Text(text).font(.caption12).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func edit(_ f: (inout DrumGroove) -> Void) { begin(); apply(f) }
@@ -77,7 +90,6 @@ struct DrumInspector: View {
                 Button { move(li, 1) } label: { Image(systemName: "arrow.down") }.disabled(li == g.lanes.count - 1).help("下移轨道")
             }
             .buttonStyle(.borderless)
-            Divider()
         }
     }
 
@@ -131,7 +143,6 @@ struct DrumInspector: View {
                 Button("删除这一步", role: .destructive) { edit { DrumOps.removeStep(&$0, lane: lane.id, index: s.index) }; selectedStep = nil }
             }
             .buttonStyle(SecondaryButtonStyle(compact: true))
-            Divider()
         }
     }
 
@@ -171,7 +182,7 @@ struct DrumInspector: View {
                 .help("在整段里找最典型的一段（与其他段最像），选中后可以「只保留这些」")
             }
             .buttonStyle(SecondaryButtonStyle(compact: true))
-            Divider()
+            addLane
         }
     }
 
@@ -209,7 +220,6 @@ struct DrumInspector: View {
 
     private func sourceSection(_ src: DrumSource) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Divider()
             title("提取说明")
             ForEach(src.notes ?? [], id: \.self) { Text($0).font(.caption12).foregroundStyle(Theme.textSecondary) }
             Text("Logic Pro \(src.logicVersion ?? "?") 鼓细分；每一步的微移是离格子的实际偏差。漏掉或多出的音直接在格子上改。")

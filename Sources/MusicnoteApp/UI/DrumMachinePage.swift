@@ -58,25 +58,25 @@ struct DrumMachinePage: View {
     private var g: DrumGroove { pattern.groove }
 
     var body: some View {
+        // Top to bottom: title, transport and settings (always in view), then the grid at full
+        // width and the editing panels under it, scrolling together.
         VStack(spacing: 0) {
             header
+            transportBar
             toolbar
             Divider()
-            HSplitView {
-                ScrollView(.vertical) {
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 18) {
                     DrumGrid(groove: g, selectedLane: $selectedLane, selectedStep: $selectedStep, bars: $bars,
                              param: $param, cellW: cellW, playStep: playStep,
                              begin: beginEdit, apply: apply, preview: { AudioEngine.shared.tapDrum($0.note, velocity: 110) },
                              setLane: { id, f in edit { gr in if let i = gr.lanes.firstIndex(where: { $0.id == id }) { f(&gr.lanes[i]) } } })
-                        .padding(.horizontal, 20).padding(.vertical, 14)
+                    Divider()
+                    DrumInspector(pattern: $pattern, selectedLane: $selectedLane, selectedStep: $selectedStep, bars: $bars,
+                                  begin: beginEdit, apply: apply, editPattern: editPattern)
                 }
-                .frame(minWidth: 480)
-                DrumInspector(pattern: $pattern, selectedLane: $selectedLane, selectedStep: $selectedStep, bars: $bars,
-                              begin: beginEdit, apply: apply, editPattern: editPattern)
-                    .frame(minWidth: 250, idealWidth: 280, maxWidth: 340)
+                .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 80) // room for the floating 灵感 button
             }
-            Divider()
-            transportBar
         }
         .onChange(of: pattern) { old, p in
             model.save(p)
@@ -110,13 +110,13 @@ struct DrumMachinePage: View {
             }
             Spacer()
         }
-        .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 8)
+        .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 6)
     }
 
     private var toolbar: some View {
-        HStack(spacing: 14) {
+        FlowLayout(spacing: 16) {
             HStack(spacing: 4) {
-                Text("BPM")
+                Text("BPM").fixedSize()
                 TextField("", value: $pattern.bpm, format: .number.precision(.fractionLength(0...1)))
                     .frame(width: 56).textFieldStyle(.roundedBorder)
                     .onSubmit { pattern.bpm = max(30, min(300, pattern.bpm)) }
@@ -126,6 +126,7 @@ struct DrumMachinePage: View {
                 }
             }
             HStack(spacing: 2) {
+                Text("拍号").fixedSize()
                 Stepper("\(g.meter.numerator)", value: Binding(get: { g.meter.numerator }, set: { n in edit { DrumOps.setMeter(&$0, Meter(n, $0.meter.denominator)) } }), in: 1...15)
                     .fixedSize()
                 Text("/")
@@ -133,48 +134,54 @@ struct DrumMachinePage: View {
                     ForEach([2, 4, 8], id: \.self) { Text("\($0)").tag($0) }
                 }.frame(width: 52)
             }
-            Picker("格子", selection: Binding(get: { g.stepsPerBeat }, set: { r in edit { DrumOps.setResolution(&$0, r) } })) {
-                ForEach(DrumGroove.resolutions, id: \.steps) { Text($0.name).tag($0.steps) }
+            HStack(spacing: 4) {
+                Text("格子").fixedSize()
+                Picker("", selection: Binding(get: { g.stepsPerBeat }, set: { r in edit { DrumOps.setResolution(&$0, r) } })) {
+                    ForEach(DrumGroove.resolutions, id: \.steps) { Text($0.name).tag($0.steps) }
+                }
+                .labelsHidden().fixedSize()
             }
-            .frame(width: 150)
             Stepper("\(g.bars) 小节", value: Binding(get: { g.bars }, set: { n in edit { DrumOps.setBars(&$0, n) } }), in: 1...64).fixedSize()
             HStack(spacing: 4) {
-                Text("摇摆")
+                Text("摇摆").fixedSize()
                 Slider(value: Binding(get: { g.swing }, set: { pattern.groove.swing = $0.rounded() }), in: 50...75) { began in if began { beginEdit() } }
                     .frame(width: 90).disabled(g.stepsPerBeat % 2 == 1)
                 Text("\(Int(g.swing))%").font(.mono13).frame(width: 34, alignment: .leading)
             }
             .help(g.stepsPerBeat % 2 == 1 ? "三连音格子不用摇摆" : "每两步里第二步的位置：50% 平直，66% 接近三连音")
             HStack(spacing: 4) {
-                Text("原律动")
+                Text("原律动").fixedSize()
                 Slider(value: $pattern.groove.feel, in: 0...1) { began in if began { beginEdit() } }.frame(width: 80)
                 Text("\(Int((g.feel * 100).rounded()))%").font(.mono13).frame(width: 38, alignment: .leading)
             }
             .help("每一步微移的保留程度：0% 完全对齐格子，100% 按提取到的（或你调的）微移演奏")
-            Spacer()
-            Slider(value: $cellW, in: 12...40).frame(width: 80).help("缩放")
+            HStack(spacing: 4) {
+                Text("格子宽度").fixedSize()
+                Slider(value: $cellW, in: 12...40).frame(width: 80)
+            }
         }
         .controlSize(.small)
         .padding(.horizontal, 20).padding(.bottom, 10)
     }
 
     private var transportBar: some View {
-        HStack(spacing: 10) {
+        FlowLayout(spacing: 10) {
             Button { togglePlay() } label: { Label(transport.isPlaying ? "停止" : "播放", systemImage: transport.isPlaying ? "stop.fill" : "play.fill") }
                 .buttonStyle(SecondaryButtonStyle(compact: true))
             Text(bars.map { $0.count == 1 ? "循环第 \($0.lowerBound + 1) 小节" : "循环第 \($0.lowerBound + 1)–\($0.upperBound + 1) 小节" } ?? "循环全部")
                 .font(.caption12).foregroundStyle(Theme.textSecondary)
             if bars != nil { Button("全部") { bars = nil }.buttonStyle(.borderless).font(.caption12) }
-            Toggle("节拍器", isOn: $metronome).toggleStyle(.checkbox)
-            Divider().frame(height: 16)
-            Picker("对照", selection: $compare) {
-                ForEach(DrumCompare.allCases, id: \.self) { c in Text(c.title).tag(c) }
+            Toggle("节拍器", isOn: $metronome).toggleStyle(.checkbox).fixedSize()
+            HStack(spacing: 4) {
+                Text("对照").fixedSize()
+                Picker("", selection: $compare) {
+                    ForEach(DrumCompare.allCases, id: \.self) { c in Text(c.title).tag(c) }
+                }
+                .labelsHidden().fixedSize()
+                .disabled(!compareAvailable)
+                .help(compareHelp)
+                if compare != .off { Slider(value: $compareGain, in: 0...1).frame(width: 70).help("原声音量") }
             }
-            .frame(width: 150)
-            .disabled(!compareAvailable)
-            .help(compareHelp)
-            if compare != .off { Slider(value: $compareGain, in: 0...1).frame(width: 70).help("原声音量") }
-            Spacer()
             Button { undo() } label: { Image(systemName: "arrow.uturn.backward") }.disabled(undoStack.isEmpty)
                 .keyboardShortcut("z", modifiers: .command).help("撤销 ⌘Z")
             Button { redo() } label: { Image(systemName: "arrow.uturn.forward") }.disabled(redoStack.isEmpty)
@@ -183,7 +190,7 @@ struct DrumMachinePage: View {
             Button("送入 Playground…") { sendOpen = true }.buttonStyle(PrimaryButtonStyle())
         }
         .buttonStyle(.borderless)
-        .padding(.leading, 20).padding(.trailing, 76).padding(.vertical, 10) // clear of the floating 灵感 button
+        .padding(.horizontal, 20).padding(.bottom, 8)
     }
 
     private var compareAvailable: Bool { pattern.source != nil && model.drumSourceAudio(pattern, "drums") != nil }
@@ -349,6 +356,8 @@ struct DrumGrid: View {
     var setLane: (UUID, (inout DrumLane) -> Void) -> Void
 
     @ViewState private var drag: Drag?
+    @ViewState private var scroll = ScrollPosition(edge: .leading)
+    @ViewState private var visible: CGRect = .zero
 
     enum Drag {
         case paint(lane: UUID, on: Bool, visited: Set<Int>)
@@ -359,6 +368,60 @@ struct DrumGrid: View {
     private let rowH: CGFloat = 30, rulerH: CGFloat = 22, stripH: CGFloat = 76, headerW: CGFloat = 176
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 0) {
+                Text("总览").font(.caption12).foregroundStyle(Theme.textSecondary).frame(width: headerW, alignment: .leading)
+                overview.frame(height: 34)
+            }
+            lanesAndGrid
+        }
+        .onChange(of: playStep) { _, p in follow(p) }
+    }
+
+    /// Keeps the playhead in view while playing.
+    private func follow(_ p: Int?) {
+        guard let p, visible.width > 0 else { return }
+        let x = CGFloat(p) * cellW
+        if x < visible.minX || x > visible.maxX - cellW { scroll.scrollTo(x: max(0, min(x - cellW, width - visible.width))) }
+    }
+
+    /// The whole pattern in miniature with the part in view framed; click or drag to move there.
+    private var overview: some View {
+        GeometryReader { geo in
+            let scale = geo.size.width / max(width, 1)
+            Canvas { ctx, size in
+                ctx.fill(Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 4), with: .color(Theme.chipFill.opacity(0.35)))
+                let rowH = (size.height - 4) / CGFloat(max(1, groove.lanes.count))
+                for bar in 0...groove.bars {
+                    let x = CGFloat(bar * groove.stepsPerBar) * cellW * scale
+                    ctx.fill(Path(CGRect(x: x, y: 0, width: 0.5, height: size.height)), with: .color(Theme.controlBorder))
+                }
+                for (r, lane) in groove.lanes.enumerated() {
+                    for st in lane.steps {
+                        ctx.fill(Path(CGRect(x: CGFloat(st.index) * cellW * scale, y: 2 + CGFloat(r) * rowH, width: max(1.5, cellW * scale - 0.5), height: max(1, rowH - 0.5))),
+                                 with: .color(Theme.accent.opacity(0.4 + 0.6 * Double(st.velocity) / 127)))
+                    }
+                }
+                if let p = playStep {
+                    ctx.fill(Path(CGRect(x: CGFloat(p) * cellW * scale, y: 0, width: 1.5, height: size.height)), with: .color(Theme.textPrimary))
+                }
+                if visible.width > 0, visible.width < width - 1 {
+                    let box = CGRect(x: visible.minX * scale, y: 0.5, width: visible.width * scale, height: size.height - 1)
+                    ctx.fill(Path(roundedRect: box, cornerRadius: 4), with: .color(Theme.accent.opacity(0.12)))
+                    ctx.stroke(Path(roundedRect: box, cornerRadius: 4), with: .color(Theme.accent), lineWidth: 1.5)
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { v in
+                guard visible.width > 0 else { return }
+                let x = v.location.x / max(scale, 0.0001) - visible.width / 2
+                scroll.scrollTo(x: max(0, min(x, width - visible.width)))
+            })
+            .help("整段总览：框住的是格子里正在看的部分，点击或拖动跳过去")
+        }
+    }
+
+    private var lanesAndGrid: some View {
         HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 Text("点格子加减，拖动连画；⌥ 拖动改力度").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
@@ -376,7 +439,11 @@ struct DrumGrid: View {
                     grid.frame(width: width, height: rowH * CGFloat(groove.lanes.count))
                     strip.frame(width: width, height: stripH).padding(.top, 10)
                 }
+                .padding(.bottom, 14) // the scroller sits under the strip, not over it
             }
+            .scrollIndicators(.visible)
+            .scrollPosition($scroll)
+            .onScrollGeometryChange(for: CGRect.self, of: { $0.visibleRect }) { _, r in visible = r }
         }
     }
 
