@@ -37,6 +37,12 @@ if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "regroup" {
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "seed" {
     exit(runSeed(Array(CommandLine.arguments.dropFirst())))
 }
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "drumwav" {
+    exit(await runDrumWav(Array(CommandLine.arguments.dropFirst())))
+}
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "drums" {
+    exit(await runDrumExtract(Array(CommandLine.arguments.dropFirst())))
+}
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "e2e" {
     let code = await runEndToEnd(Array(CommandLine.arguments.dropFirst()))
     exit(code)
@@ -680,6 +686,8 @@ do {
     let mid = InspirationExport.midi(ip)
     check(mid.prefix(4) == Data("MThd".utf8) && mid.count > 60, "MIDI file written")
 }
+
+runDrumChecks()
 
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

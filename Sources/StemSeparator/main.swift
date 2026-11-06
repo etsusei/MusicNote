@@ -3,6 +3,7 @@
 // Ported from work/separate.swift. Input is an already-trimmed 44.1 kHz stereo
 // clip; output is six float WAVs in --output-dir (vocals, drums, bass, guitar,
 // piano, other). MP3 encoding happens afterwards in workers/encode_stems.py.
+// With --drums the input is a drum stem and the output its six kit pieces (DrumSplit.swift).
 //
 // Protocol: JSON lines on stdout
 //   {"event":"started","frames":N,"chunks":C,"gpu":"Apple M5","logicVersion":"12.3.1"}
@@ -159,7 +160,7 @@ func separate() throws {
     emit(["event": "done", "frames": count, "seconds": Date().timeIntervalSince(startTime)])
 }
 
-do { try separate() } catch let e as HelperError {
+do { try CommandLine.arguments.contains("--drums") ? separateDrums() : separate() } catch let e as HelperError {
     emit(["event": "error", "code": e.code, "message": e.message]); exit(1)
 } catch {
     emit(["event": "error", "code": "SEPARATION_FAILED", "message": error.localizedDescription]); exit(1)

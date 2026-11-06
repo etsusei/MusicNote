@@ -23,9 +23,11 @@ public struct MidiFileWriter {
 
     public init(bpm: Double, meter: Meter, key: KeySignature?) { self.bpm = bpm; self.meter = meter; self.key = key }
 
-    public func data(notes: [Note]) -> Data {
+    /// Format 1: conductor, then the note track; drum notes, when given, go in a third
+    /// track on channel 10 (an empty note track stays so Logic keeps the layout).
+    public func data(notes: [Note], drumNotes: [Note] = []) -> Data {
         var file = Data("MThd".utf8)
-        file.append(be32(6)); file.append(be16(1)); file.append(be16(2)); file.append(be16(ppq))
+        file.append(be32(6)); file.append(be16(1)); file.append(be16(drumNotes.isEmpty ? 2 : 3)); file.append(be16(ppq))
 
         // Conductor track
         var meta: [(Int, [UInt8])] = []
@@ -51,10 +53,22 @@ public struct MidiFileWriter {
             events.append((n.startTick, [0x90, UInt8(n.pitch), v]))
             events.append((n.startTick + n.durationTicks, [0x80, UInt8(n.pitch), 0]))
         }
-        // Note-offs before note-ons at the same tick so repeated notes retrigger cleanly.
-        events.sort { a, b in a.0 != b.0 ? a.0 < b.0 : (a.1[0] & 0xF0) == 0x80 && (b.1[0] & 0xF0) == 0x90 }
-        file.append(track(events))
+        file.append(track(Self.ordered(events)))
+        if !drumNotes.isEmpty {
+            let name = Array("Drums".utf8)
+            var drums: [(Int, [UInt8])] = [(0, [0xFF, 0x03] + vlqBytes(name.count) + name)]
+            for n in drumNotes where n.durationTicks > 0 && (0...127).contains(n.pitch) {
+                drums.append((n.startTick, [0x99, UInt8(n.pitch), UInt8(min(127, max(1, n.velocity)))]))
+                drums.append((n.startTick + n.durationTicks, [0x89, UInt8(n.pitch), 0]))
+            }
+            file.append(track(Self.ordered(drums)))
+        }
         return file
+    }
+
+    /// Note-offs before note-ons at the same tick so repeated notes retrigger cleanly.
+    private static func ordered(_ events: [(Int, [UInt8])]) -> [(Int, [UInt8])] {
+        events.sorted { a, b in a.0 != b.0 ? a.0 < b.0 : (a.1[0] & 0xF0) == 0x80 && (b.1[0] & 0xF0) == 0x90 }
     }
 
     /// Key-signature sharps (+) / flats (−) for the MIDI meta event.
