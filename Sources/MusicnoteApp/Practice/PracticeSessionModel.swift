@@ -29,6 +29,13 @@ final class PracticeSessionModel {
     /// Bumped whenever something the stage draws changes while paused (a seek, a new loop).
     private(set) var redraw = 0
 
+    /// The MIDI keyboard being played, if one is connected.
+    let keyboard = MidiKeyboardInput()
+    /// Keys held on it, each right or wrong as it went down.
+    private(set) var judge = PracticeJudge()
+    /// Moves the picture and the judging later (positive) or earlier against the sound.
+    @ObservationIgnored var offsetSeconds = 0.0
+
     @ObservationIgnored private weak var model: AppModel?
     @ObservationIgnored private var tracks: [String: AudioTrack] = [:]
     @ObservationIgnored private var loader: Task<Void, Never>?
@@ -80,9 +87,24 @@ final class PracticeSessionModel {
         applyLoop()
         e.seek(loopOn ? frame(playRange?.lowerBound ?? 0) : 0)
         loadTracks()
+        keyboard.onKey = { [weak self] pitch, down, hostTime in self?.key(pitch, down: down, hostTime: hostTime) }
+        keyboard.start()
+    }
+
+    /// A key on the connected keyboard. It is judged against the music at the moment it was
+    /// pressed (the event's own time), not when the event reached this thread.
+    private func key(_ pitch: Int, down: Bool, hostTime: UInt64) {
+        if down {
+            let at = us(AudioEngine.shared.visualPosition(offsetSeconds: offsetSeconds, hostTime: hostTime))
+            judge.keyDown(pitch, atUs: at, rate: settings.rate, in: timeline)
+        } else {
+            judge.keyUp(pitch)
+        }
+        redraw += 1
     }
 
     func stop() {
+        keyboard.stop()
         loader?.cancel()
         persist()
         AudioEngine.shared.stopAll()

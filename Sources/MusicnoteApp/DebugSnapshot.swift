@@ -1,4 +1,5 @@
 import AppKit
+import CoreMIDI
 import Foundation
 import MusicnoteCore
 import MusicnotePractice
@@ -320,10 +321,60 @@ enum DebugPractice {
             note("key ]: loop now \(s.loop.map { "\($0.lowerBound)–\($0.upperBound)" } ?? "-")")
         } else { note("FAIL no loop to play") }
 
+        // A keyboard: a virtual MIDI source stands in for the piano. A key the music asks for
+        // is judged right, another wrong, and both are forgotten when released.
+        var midiClient = MIDIClientRef(), virtual = MIDIEndpointRef()
+        MIDIClientCreateWithBlock("Musicnote 测试键盘" as CFString, &midiClient, nil)
+        MIDISourceCreateWithProtocol(midiClient, "测试键盘" as CFString, ._1_0, &virtual)
+        func send(_ pitch: Int, down: Bool) {
+            var list = MIDIEventList()
+            let first = MIDIEventListInit(&list, ._1_0)
+            let word: UInt32 = (down ? 0x2090_0000 : 0x2080_0000) | UInt32(pitch) << 8 | (down ? 100 : 0)
+            _ = MIDIEventListAdd(&list, 1024, first, mach_absolute_time(), 1, [word])
+            MIDIReceivedEventList(virtual, &list)
+        }
+        await wait(0.8)
+        note("keyboard sources seen: \(s.keyboard.sources) \(s.keyboard.sources.contains("测试键盘") ? "OK" : "FAIL")")
+        if e.isPlaying { s.togglePlay() }
+        if s.loopOn { s.toggleLoop() }
+        // A long note whose pitch is silent for the two seconds before it, so an early press has nothing to land on.
+        if let target = s.timeline.notes.first(where: { n in
+            n.startUs > s.durationUs / 3 && n.endUs - n.startUs > 300_000
+                && !s.timeline.notes.contains { $0.pitch == n.pitch && $0.endUs > n.startUs - 2_000_000 && $0.startUs < n.startUs }
+        }) {
+            let unused = (40...90).first { p in !s.timeline.notes.contains { $0.pitch == p } } ?? 22
+            s.seek(toUs: target.startUs + 50_000)
+            await wait(0.4)
+            send(target.pitch, down: true); send(unused, down: true)
+            await wait(0.3)
+            note("paused inside a note of pitch \(target.pitch): pressing it is \(s.judge.held[target.pitch].map { "\($0)" } ?? "not seen") \(s.judge.held[target.pitch] == .hit ? "OK" : "FAIL"); pressing \(unused) is \(s.judge.held[unused].map { "\($0)" } ?? "not seen") \(s.judge.held[unused] == .wrong ? "OK" : "FAIL")")
+            await shot("4-keys-pressed")
+            send(target.pitch, down: false); send(unused, down: false)
+            await wait(0.3)
+            note("released: \(s.judge.held.count) keys held \(s.judge.held.isEmpty ? "OK" : "FAIL")")
+            // Playing: press the next long note as it arrives, and the same pitch half a second too early.
+            s.seek(toUs: max(0, target.startUs - 1_500_000))
+            s.togglePlay()
+            await wait(0.3) // the display clock catches up with the seek at the next rendered buffer
+            while s.visualUs() < target.startUs - 600_000, e.isPlaying { await wait(0.01) }
+            send(target.pitch, down: true); await wait(0.1)
+            let early = s.judge.held[target.pitch]
+            send(target.pitch, down: false)
+            while s.visualUs() < target.startUs, e.isPlaying { await wait(0.005) }
+            send(target.pitch, down: true); await wait(0.1)
+            let onTime = s.judge.held[target.pitch]
+            send(target.pitch, down: false)
+            note("playing: pitch \(target.pitch) pressed 0.6 s early is \(early.map { "\($0)" } ?? "not seen") \(early == .wrong ? "OK" : "FAIL"), pressed as it arrives is \(onTime.map { "\($0)" } ?? "not seen") \(onTime == .hit ? "OK" : "FAIL")")
+        } else { note("FAIL no long note to press") }
+        MIDIEndpointDispose(virtual); MIDIClientDispose(midiClient)
+        await wait(0.6)
+        note("keyboard unplugged: sources \(s.keyboard.sources) \(s.keyboard.sources.contains("测试键盘") ? "FAIL" : "OK")")
+        if !e.isPlaying { s.togglePlay() }
+
         // The other palette.
         UserDefaults.standard.set("cool", forKey: "practicePalette")
         await wait(0.8)
-        await shot("4-cool")
+        await shot("5-cool")
         s.togglePlay()
         if s.loopOn { s.toggleLoop() }
         s.setMidi(on: false)

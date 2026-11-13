@@ -276,12 +276,13 @@ final class AudioEngine: @unchecked Sendable {
     /// carried forward (or back) to this instant at the speed it was playing, less the time
     /// the sound takes to leave the output device. `offsetSeconds` moves it later (positive)
     /// or earlier, for a display that runs ahead of or behind the sound.
-    func visualPosition(offsetSeconds: Double = 0) -> Double {
+    /// `hostTime` asks for the position heard at another instant (a key press), 0 for now.
+    func visualPosition(offsetSeconds: Double = 0, hostTime: UInt64 = 0) -> Double {
         os_unfair_lock_lock(&lock)
         let pos = clockPosition, host = clockHostSeconds, speed = clockFramesPerSecond, range = loop
         os_unfair_lock_unlock(&lock)
         guard speed > 0 else { return pos }
-        let now = Double(mach_absolute_time()) * Self.hostTickSeconds
+        let now = Double(hostTime != 0 ? hostTime : mach_absolute_time()) * Self.hostTickSeconds
         var p = pos + (now - host - outputLatency + offsetSeconds) * speed
         if let range {
             if p >= Double(range.upperBound) { p -= Double(range.count) }

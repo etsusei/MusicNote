@@ -23,7 +23,7 @@ struct PracticePage: View {
                     PracticeTopBar(session: session, palette: palette, transport: transport, paletteName: $paletteName,
                                    lookahead: $lookahead, visualOffsetMs: $visualOffsetMs, onClose: close)
                     PracticeTimelineRow(session: session, palette: palette, positionUs: positionUs)
-                    PracticeStageView(session: session, palette: palette, lookahead: lookahead,
+                    PracticeStageView(session: session, palette: palette, lookahead: lookahead, pressed: session.judge.held,
                                       visualOffset: visualOffsetMs / 1000, playing: transport.isPlaying)
                 }
                 .background(shortcuts(session))
@@ -43,7 +43,9 @@ struct PracticePage: View {
         .onAppear {
             transport.sampleRate = PracticeSessionModel.sampleRate
             if session == nil { session = PracticeSessionModel(model: model, itemId: itemId); session?.start() }
+            session?.offsetSeconds = visualOffsetMs / 1000
         }
+        .onChange(of: visualOffsetMs) { _, ms in session?.offsetSeconds = ms / 1000 }
         .onDisappear { session?.stop(); transport.stop() }
         .onReceive(NotificationCenter.default.publisher(for: .togglePlayback)) { _ in session?.togglePlay() }
     }
@@ -82,6 +84,7 @@ private struct PracticeTopBar: View {
     @Binding var lookahead: Double
     @Binding var visualOffsetMs: Double
     var onClose: () -> Void
+    @ViewState private var showSettings = false
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -186,22 +189,15 @@ private struct PracticeTopBar: View {
                         .frame(width: 72).tint(palette.accent).accessibilityLabel("示范音音量").help("示范音音量")
                 }
             }
-            Menu {
-                Picker("配色", selection: $paletteName) {
-                    Text("琥珀").tag("amber")
-                    Text("冷白").tag("cool")
-                }
-                Picker("提前看到多少", selection: $lookahead) {
-                    Text("2 秒").tag(2.0)
-                    Text("3.5 秒").tag(3.5)
-                    Text("5 秒").tag(5.0)
-                    Text("7 秒").tag(7.0)
-                }
-            } label: {
-                Image(systemName: "slider.horizontal.3").font(.system(size: 15)).foregroundStyle(palette.secondary)
+            Button { showSettings.toggle() } label: {
+                Image(systemName: "slider.horizontal.3").font(.system(size: 15))
+                    .foregroundStyle(session.keyboard.sources.isEmpty ? palette.secondary : palette.accent)
                     .frame(width: 36, height: 36).contentShape(Rectangle())
             }
-            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().help("配色和画面").accessibilityLabel("配色和画面")
+            .buttonStyle(.plain).help("配色、画面、MIDI 键盘和延迟校准").accessibilityLabel("画面和键盘设置")
+            .popover(isPresented: $showSettings, arrowEdge: .bottom) {
+                PracticeSettingsPanel(session: session, palette: palette, paletteName: $paletteName, lookahead: $lookahead, visualOffsetMs: $visualOffsetMs)
+            }
         }
     }
 
@@ -230,6 +226,72 @@ private struct PracticeTopBar: View {
         case .stem: "这个片段没有保留分轨"
         case .backing: "还没有合成伴奏：回到片段页的「练琴」标签，点「重新拆轨生成伴奏」"
         case .off: ""
+        }
+    }
+}
+
+// MARK: - Settings panel
+
+/// Colours, how far ahead the notes show, the connected keyboard, and the delay calibration.
+private struct PracticeSettingsPanel: View {
+    var session: PracticeSessionModel
+    var palette: PracticePalette
+    @Binding var paletteName: String
+    @Binding var lookahead: Double
+    @Binding var visualOffsetMs: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            row("配色") {
+                Picker("配色", selection: $paletteName) {
+                    Text("琥珀").tag("amber")
+                    Text("冷白").tag("cool")
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 150)
+            }
+            row("提前看到") {
+                Picker("提前看到", selection: $lookahead) {
+                    Text("2 秒").tag(2.0)
+                    Text("3.5 秒").tag(3.5)
+                    Text("5 秒").tag(5.0)
+                    Text("7 秒").tag(7.0)
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 230)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("MIDI 键盘").font(.system(size: 13, weight: .semibold)).foregroundStyle(palette.text)
+                if session.keyboard.sources.isEmpty {
+                    Text("没有检测到。电钢琴连上电脑后会自动出现，声音照常从 Logic 出。")
+                        .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("已连接：" + session.keyboard.sources.joined(separator: "、"))
+                        .font(.system(size: 12)).foregroundStyle(palette.accent).fixedSize(horizontal: false, vertical: true)
+                    Text("按对的键变亮，按错的键变色。声音照常从 Logic 出。")
+                        .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("延迟校准").font(.system(size: 13, weight: .semibold)).foregroundStyle(palette.text)
+                    Spacer()
+                    Text(visualOffsetMs == 0 ? "0 毫秒" : String(format: "%+.0f 毫秒", visualOffsetMs))
+                        .font(.system(size: 13).monospacedDigit()).foregroundStyle(palette.text)
+                    Button("归零") { visualOffsetMs = 0 }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(palette.accent)
+                        .disabled(visualOffsetMs == 0).opacity(visualOffsetMs == 0 ? 0.4 : 1)
+                }
+                Slider(value: $visualOffsetMs, in: -250...250, step: 5).tint(palette.accent).accessibilityLabel("延迟校准")
+                Text("音符碰到线比听到的声音早，或者明明弹在点上却总被判错，就往左调；反过来往右调。用蓝牙耳机时通常要往左调很多。")
+                    .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(18).frame(width: 340)
+        .background(palette.surface)
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func row<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack {
+            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(palette.text)
+            Spacer()
+            content()
         }
     }
 }

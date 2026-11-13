@@ -400,3 +400,30 @@ func runPracticePageChecks() {
     eq(line.sounding(atUs: 1_200_000), [60, 64], "sounding together")
     eq(line.sounding(atUs: 1_500_000), [60], "a note is over at its end")
 }
+
+/// Keys pressed on the connected keyboard: right or wrong.
+func runPracticeJudgeChecks() {
+    let line = NoteTimeline([
+        MidiNote(pitch: 60, startUs: 1_000_000, endUs: 3_000_000),
+        MidiNote(pitch: 64, startUs: 1_000_000, endUs: 1_200_000),
+        MidiNote(pitch: 67, startUs: 5_000_000, endUs: 5_100_000),
+    ])
+    var judge = PracticeJudge()
+    check(judge.keyDown(60, atUs: 1_050_000, rate: 1, in: line) == .hit, "on time")
+    check(judge.keyDown(64, atUs: 880_000, rate: 1, in: line) == .hit, "120 ms early still counts")
+    check(judge.keyDown(62, atUs: 1_000_000, rate: 1, in: line) == .wrong, "a pitch the music does not have")
+    eq(judge.held.count, 3, "three keys held")
+    judge.keyUp(62)
+    check(judge.held[62] == nil && judge.held[60] == .hit, "a released key is forgotten, the others keep their verdict")
+    check(judge.keyDown(60, atUs: 2_500_000, rate: 1, in: line) == .hit, "late into a held note still counts")
+    check(judge.keyDown(64, atUs: 1_500_000, rate: 1, in: line) == .wrong, "but not after a short note is over")
+    check(judge.keyDown(67, atUs: 4_700_000, rate: 1, in: line) == .wrong, "300 ms early is too early")
+    check(judge.keyDown(67, atUs: 5_150_000, rate: 1, in: line) == .hit, "150 ms after a short note's start still counts")
+    // At half speed 180 ms of real time reaches only 90 ms of the music.
+    check(judge.keyDown(67, atUs: 4_880_000, rate: 0.5, in: line) == .wrong, "120 ms of music early is 240 ms real at half speed")
+    check(judge.keyDown(67, atUs: 4_930_000, rate: 0.5, in: line) == .hit, "70 ms of music early is 140 ms real at half speed")
+    eq(judge.hits, 5, "hits counted")
+    eq(judge.wrongs, 4, "wrong presses counted")
+    judge.releaseAll()
+    check(judge.held.isEmpty, "all released")
+}

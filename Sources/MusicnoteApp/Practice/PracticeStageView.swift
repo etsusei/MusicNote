@@ -10,8 +10,8 @@ struct PracticeStageView: View {
     var palette: PracticePalette
     /// Seconds of music between the top of the stage and the play line.
     var lookahead: Double
-    /// Keys held on the connected keyboard (empty when none is connected).
-    var pressed: Set<Int> = []
+    /// Keys held on the connected keyboard, each right or wrong (empty when none is connected).
+    var pressed: [Int: PracticeJudge.Verdict] = [:]
     /// Moves the picture later (positive) or earlier against the sound, in seconds.
     var visualOffset: Double = 0
     var playing: Bool
@@ -103,22 +103,38 @@ struct PracticeStageView: View {
             layer.fill(Path(CGRect(x: 0, y: stageHeight - 2, width: width, height: 2)), with: .color(palette.accent))
         }
 
+        // A right key answers with a spark on the play line above it.
+        var sparks = Path()
+        for (pitch, verdict) in pressed where verdict == .hit {
+            guard let f = PianoKeys.frame(pitch) else { continue }
+            sparks.addPath(Path(roundedRect: CGRect(x: CGFloat(f.x) * width, y: stageHeight - 5, width: CGFloat(f.width) * width, height: 6), cornerRadius: 3))
+        }
+        if !sparks.isEmpty {
+            ctx.drawLayer { layer in
+                layer.addFilter(.shadow(color: palette.glow, radius: 12))
+                layer.fill(sparks, with: .color(palette.sounding))
+            }
+        }
+
         drawKeys(&ctx, CGRect(x: 0, y: stageHeight, width: width, height: keysHeight), sounding: sounding)
     }
 
-    /// The keyboard. A key is lit while its note sounds; with a keyboard connected, a key held
-    /// that should not be shows in the wrong colour.
+    /// The keyboard. A key is lit while its note sounds. With a keyboard connected, a key held
+    /// shows how it was judged when it went down: brighter when right, the wrong colour when not.
     private func drawKeys(_ ctx: inout GraphicsContext, _ frame: CGRect, sounding: Set<Int>) {
         ctx.fill(Path(frame), with: .color(palette.keyBed))
         func colour(_ pitch: Int, plain: Color) -> Color {
-            if pressed.contains(pitch), !sounding.contains(pitch) { return palette.wrong }
-            return sounding.contains(pitch) ? palette.lit : plain
+            switch pressed[pitch] {
+            case .wrong?: return palette.wrong
+            case .hit?: return palette.sounding
+            case nil: return sounding.contains(pitch) ? palette.lit : plain
+            }
         }
         for pitch in PianoKeys.lowest...PianoKeys.highest where !PianoKeys.isBlack(pitch) {
             guard let f = PianoKeys.frame(pitch) else { continue }
             let rect = CGRect(x: frame.minX + CGFloat(f.x) * frame.width, y: frame.minY, width: CGFloat(f.width) * frame.width - 1, height: frame.height)
             let path = Path(roundedRect: rect, cornerSize: CGSize(width: 3, height: 3))
-            let lit = sounding.contains(pitch) || pressed.contains(pitch)
+            let lit = sounding.contains(pitch) || pressed[pitch] != nil
             ctx.fill(path, with: .color(colour(pitch, plain: palette.whiteKey)))
             if let label = PianoKeys.cLabel(pitch), rect.width >= 16 {
                 ctx.draw(Text(label).font(.system(size: 10)).foregroundColor(lit ? palette.litLabel : palette.keyLabel),
