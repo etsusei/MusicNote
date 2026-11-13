@@ -27,6 +27,9 @@ struct ConfirmStage: View {
     @ViewState private var fromSongGrid = false
     @ViewState private var songGridUnsteady = false
     @ViewState private var startsOnBar = false
+    @ViewState private var tapTempo = TapTempo()
+    @ViewState private var tapping = false
+    @ViewState private var tapEnd: Task<Void, Never>?
 
     private var rate: Double { item.source.sampleRate }
     private var trimStartFrame: Int64 { Int64((Double(item.trimStartUs) * rate / 1_000_000).rounded()) }
@@ -77,6 +80,8 @@ struct ConfirmStage: View {
         .onChange(of: bpmText) { _, _ in updateMetronome() }
         .onChange(of: offsetMs) { _, _ in updateMetronome() }
         .onChange(of: metronomeOn) { _, _ in updateMetronome() }
+        .onChange(of: tapping) { _, _ in updateMetronome() }
+        .onDisappear { tapEnd?.cancel() }
         .onChange(of: volume) { _, _ in updateMetronome() }
         .onChange(of: barAnchorUs) { _, _ in updateMetronome() }
         .onChange(of: numerator) { _, _ in updateMetronome() }
@@ -130,6 +135,11 @@ struct ConfirmStage: View {
                     Button("÷2") { scale(0.5) }.buttonStyle(SecondaryButtonStyle(compact: true))
                 }
                 if let b = bpm { Text("确认值：\(String(format: "%.1f", b))").font(.caption12).foregroundStyle(Theme.textSecondary) }
+                HStack(spacing: 8) {
+                    TapPad(title: "跟着点", active: tapping, onTap: tap)
+                    Text(tapStatus).font(.caption12).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                }
+                .help("播放时跟着拍子点这里或按 T 键：点满 4 下算出 BPM 和拍点位置。点的时候节拍器先静音，停 2 秒后恢复")
                 Text("拍点偏移 \(Int(offsetMs)) ms").font(.system(size: 13, weight: .semibold))
                 HStack {
                     Button("−10") { offsetMs -= 10 }.buttonStyle(SecondaryButtonStyle(compact: true))
@@ -270,7 +280,7 @@ struct ConfirmStage: View {
     private func updateMetronome() {
         guard let b = bpm else { AudioEngine.shared.setMetronome(MetronomeConfig()); return }
         var m = MetronomeConfig()
-        m.enabled = metronomeOn
+        m.enabled = metronomeOn && !tapping
         m.bpm = b
         m.volume = Float(volume)
         m.originFrame = trimStartFrame + Int64(Double(originUs) * rate / 1_000_000)
@@ -284,6 +294,39 @@ struct ConfirmStage: View {
         if e.isPlaying { e.pause() } else {
             let p = transport.positionFrame
             e.play(from: (trimStartFrame..<trimEndFrame).contains(p) ? p : trimStartFrame)
+        }
+    }
+
+    private var tapStatus: String {
+        let n = tapTempo.taps.count
+        guard tapping, n > 0 else { return "播放时跟着拍子点，或按 T 键" }
+        if n < TapTempo.minimumTaps { return "再点 \(TapTempo.minimumTaps - n) 下" }
+        return "已点 \(n) 下" + (tapTempo.bpm.map { " · \(String(format: "%.1f", $0)) BPM" } ?? "")
+    }
+
+    /// One tap along with the music. From the fourth tap on, the BPM follows the taps' spacing
+    /// and the beat moves onto where they landed; the click stays silent meanwhile so it cannot
+    /// pull the tapping, and comes back two seconds after the last tap for checking by ear.
+    private func tap() {
+        let e = AudioEngine.shared
+        let local = Int64(Double(e.positionFrames - trimStartFrame) / rate * 1_000_000)
+        // A stopped transport gives the tempo only: every tap lands on the same position.
+        tapTempo.add(wallSec: ProcessInfo.processInfo.systemUptime, clipUs: local)
+        tapping = true
+        tapEnd?.cancel()
+        tapEnd = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(TapTempo.resetGapSec * 1e9))
+            if !Task.isCancelled { tapping = false }
+        }
+        guard let b = tapTempo.bpm else { return }
+        bpmText = String(format: "%.1f", b)
+        guard let origin = tapTempo.beatOriginUs(bpm: b) else { return }
+        detectedOriginUs = origin
+        offsetMs = 0
+        // Bar 1 stays on the beat it was on, now at that beat's new position.
+        if let a = barAnchorUs {
+            let g = BeatGrid(bpm: b, beatOriginUs: origin)
+            barAnchorUs = g.us(atQ: g.q(atUs: a).rounded())
         }
     }
 
@@ -304,5 +347,33 @@ struct ConfirmStage: View {
                                         meter: Meter(numerator, denominator), meterConfirmed: meterConfirmed,
                                         barAnchorUs: barAnchorUs, key: KeySignature(tonic: tonic, tonicName: name, mode: mode))
         model.confirmAndSeparate(item.id, timing: timing)
+    }
+}
+
+/// A pad that fires on press, not on release, so the tap's moment is the finger's. T taps too.
+private struct TapPad: View {
+    var title: String
+    var active: Bool
+    var onTap: () -> Void
+    @ViewState private var pressed = false
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 13, weight: .medium))
+            .padding(.horizontal, 14).frame(height: 32)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(pressed ? Theme.keyActive : (active ? Theme.selectionFill : Theme.surface)))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(active ? Theme.accent : Theme.controlBorder, lineWidth: 1))
+            .foregroundStyle(Theme.textPrimary)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { _ in if !pressed { pressed = true; onTap() } }
+                .onEnded { _ in pressed = false })
+            .background(Button("", action: onTap).keyboardShortcut("t", modifiers: []).opacity(0).accessibilityHidden(true))
+            .accessibilityElement()
+            .accessibilityLabel(title)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { onTap() }
     }
 }

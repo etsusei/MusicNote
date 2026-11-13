@@ -18,6 +18,69 @@ public enum Tempo {
     public static func microsecondsPerQuarter(_ bpm: Double) -> Int { Int((60_000_000 / bpm).rounded()) }
 }
 
+/// Tempo and beat phase from tapping along to the playing clip. Each tap carries the wall
+/// clock (for the tempo, which survives the loop wrapping) and the clip position it landed on
+/// (for the phase). A pause longer than `resetGapSec` starts a new run.
+public struct TapTempo: Sendable {
+    public struct Tap: Sendable, Hashable {
+        public var wallSec: Double
+        public var clipUs: Int64
+    }
+
+    public static let resetGapSec = 2.0
+    public static let minimumTaps = 4
+
+    public private(set) var taps: [Tap] = []
+
+    public init() {}
+
+    public mutating func add(wallSec: Double, clipUs: Int64) {
+        if let last = taps.last, wallSec - last.wallSec > Self.resetGapSec || wallSec <= last.wallSec { taps = [] }
+        taps.append(Tap(wallSec: wallSec, clipUs: clipUs))
+    }
+
+    /// Least-squares beat period over all taps of the run, so one early or late tap moves the
+    /// result far less than it would in an average of intervals.
+    public var rawBpm: Double? {
+        let n = taps.count
+        guard n >= Self.minimumTaps else { return nil }
+        let meanI = Double(n - 1) / 2
+        let meanT = taps.reduce(0) { $0 + $1.wallSec } / Double(n)
+        var num = 0.0, den = 0.0
+        for (i, t) in taps.enumerated() {
+            num += (Double(i) - meanI) * (t.wallSec - meanT)
+            den += (Double(i) - meanI) * (Double(i) - meanI)
+        }
+        guard den > 0, num > 0 else { return nil }
+        let bpm = 60 / (num / den)
+        return (20...400).contains(bpm) ? bpm : nil
+    }
+
+    public var bpm: Double? { rawBpm.flatMap(Tempo.roundToHalf) }
+
+    /// Where the beat sits in the clip: the circular mean of the tapped positions modulo the
+    /// beat. Only the taps since the loop last wrapped count (the loop need not be a whole
+    /// number of beats); nil when playback was stopped or fewer than three of them remain.
+    public func beatOriginUs(bpm: Double) -> Int64? {
+        guard bpm > 0, taps.count >= Self.minimumTaps else { return nil }
+        var run: [Int64] = []
+        for t in taps.reversed() {
+            if let earliest = run.last, t.clipUs >= earliest { break }
+            run.append(t.clipUs)
+        }
+        guard run.count >= 3 else { return nil }
+        let beat = 60_000_000 / bpm
+        var sx = 0.0, sy = 0.0
+        for p in run {
+            let a = 2 * Double.pi * Double(p).truncatingRemainder(dividingBy: beat) / beat
+            sx += cos(a); sy += sin(a)
+        }
+        var phase = atan2(sy, sx) / (2 * .pi) * beat
+        if phase < 0 { phase += beat }
+        return Int64(phase.rounded())
+    }
+}
+
 /// Clip-local beat grid derived from the confirmed BPM and beat origin.
 /// BPM is always quarter-note based.
 public struct BeatGrid: Hashable, Sendable {

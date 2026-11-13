@@ -66,6 +66,38 @@ check(Tempo.roundToHalf(0) == nil && Tempo.roundToHalf(-3) == nil, "non-positive
 eq(Tempo.parseUserBpm("94.3"), 94.5, "typed 94.3")
 check(Tempo.parseUserBpm("abc") == nil, "non-numeric rejected")
 
+// Tap tempo: BPM from the taps' spacing, beat phase from where they landed in the clip.
+do {
+    var tap = TapTempo()
+    for i in 0..<3 { tap.add(wallSec: 10 + Double(i) * 0.5, clipUs: 130_000 + Int64(i) * 500_000) }
+    check(tap.bpm == nil, "three taps are not enough")
+    // Human scatter of ±15 ms around a 120 BPM beat that starts 130 ms into the clip.
+    let jitter = [0.0, 0.012, -0.015, 0.008, -0.004, 0.015, -0.010, 0.003]
+    tap = TapTempo()
+    for (i, j) in jitter.enumerated() {
+        tap.add(wallSec: 10 + Double(i) * 0.5 + j, clipUs: 130_000 + Int64((Double(i) * 0.5 + j) * 1e6))
+    }
+    eq(tap.bpm, 120.0, "tapped 120")
+    let origin = tap.beatOriginUs(bpm: 120) ?? -1
+    check(abs(origin - 130_000) < 10_000, "tapped phase near 130 ms, got \(origin)")
+    // The loop wrapped after the fifth tap: the tempo keeps all taps, the phase only the last three.
+    tap = TapTempo()
+    for i in 0..<8 {
+        let clip: Int64 = i < 5 ? 3_000_000 + Int64(i) * 500_000 : 70_000 + Int64(i - 5) * 500_000
+        tap.add(wallSec: Double(i) * 0.5, clipUs: clip)
+    }
+    eq(tap.bpm, 120.0, "tempo across a loop wrap")
+    eq(tap.beatOriginUs(bpm: 120), 70_000, "phase from the taps after the wrap")
+    // Paused playback: every tap on the same position gives a tempo but no phase.
+    tap = TapTempo()
+    for i in 0..<5 { tap.add(wallSec: Double(i) * 0.6, clipUs: 2_000_000) }
+    eq(tap.bpm, 100.0, "tempo while paused")
+    check(tap.beatOriginUs(bpm: 100) == nil, "no phase while paused")
+    // A pause of more than two seconds starts over.
+    tap.add(wallSec: 10, clipUs: 2_000_000)
+    eq(tap.taps.count, 1, "long gap resets")
+}
+
 // Q and tempo conversions.
 let grid = BeatGrid(bpm: 94.5, beatOriginUs: 0)
 eq(grid.us(atQ: 2), 1_269_841, "2 beats at 94.5")
