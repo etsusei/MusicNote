@@ -22,7 +22,8 @@ struct PracticePage: View {
                 VStack(spacing: 0) {
                     PracticeTopBar(session: session, palette: palette, transport: transport, paletteName: $paletteName,
                                    lookahead: $lookahead, visualOffsetMs: $visualOffsetMs, onClose: close)
-                    PracticeTimelineRow(session: session, palette: palette, positionUs: positionUs)
+                    PracticeTimelineRow(session: session, palette: palette, positionUs: positionUs,
+                                        playing: transport.isPlaying, visualOffset: visualOffsetMs / 1000)
                     PracticeStageView(session: session, palette: palette, lookahead: lookahead, pressed: session.judge.held,
                                       visualOffset: visualOffsetMs / 1000, playing: transport.isPlaying)
                 }
@@ -76,7 +77,7 @@ struct PracticePage: View {
 
 // MARK: - Top bar
 
-private struct PracticeTopBar: View {
+struct PracticeTopBar: View {
     var session: PracticeSessionModel
     var palette: PracticePalette
     var transport: TransportModel
@@ -85,6 +86,8 @@ private struct PracticeTopBar: View {
     @Binding var visualOffsetMs: Double
     var onClose: () -> Void
     @ViewState private var showSettings = false
+    /// Where the speed slider is in the window (top-left origin), for the debug driver to drag it.
+    nonisolated(unsafe) static var debugSpeedFrame = CGRect.zero
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -138,6 +141,10 @@ private struct PracticeTopBar: View {
                 Slider(value: Binding(get: { session.settings.rate }, set: { session.setRate($0, save: false) }),
                        in: PracticeSettings.rateRange) { editing in if !editing { session.persist() } }
                     .frame(width: 132).tint(palette.accent).accessibilityLabel("速度")
+                    .background(GeometryReader { g in
+                        Color.clear.onAppear { Self.debugSpeedFrame = g.frame(in: .global) }
+                            .onChange(of: g.frame(in: .global)) { _, f in Self.debugSpeedFrame = f }
+                    })
                     .help("拖动改变速度，播放中立即生效（− 和 + 每次 5%）")
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("\(Int((rate * 100).rounded()))%").font(.system(size: 16, weight: .semibold).monospacedDigit()).foregroundStyle(palette.text)
@@ -302,6 +309,8 @@ private struct PracticeTimelineRow: View {
     var session: PracticeSessionModel
     var palette: PracticePalette
     var positionUs: Int64
+    var playing: Bool
+    var visualOffset: Double
 
     var body: some View {
         HStack(spacing: 18) {
@@ -313,7 +322,7 @@ private struct PracticeTimelineRow: View {
             }
             .buttonStyle(.plain)
             .help(session.loop == nil ? "从当前小节起循环四小节（L）。[ 和 ] 把 A、B 设在当前位置" : "循环开关（L）。拖进度条上的两端改范围，[ 和 ] 设在当前位置")
-            PracticeTimeline(session: session, palette: palette, positionUs: positionUs).frame(height: 44)
+            PracticeTimeline(session: session, palette: palette, positionUs: positionUs, playing: playing, visualOffset: visualOffset).frame(height: 44)
             Button { session.togglePreroll() } label: {
                 Text("预备 1 小节").font(.system(size: 13, weight: session.preroll ? .medium : .regular))
                     .foregroundStyle(session.preroll && session.loopOn ? palette.text : palette.secondary.opacity(session.preroll ? 1 : 0.55))
@@ -328,13 +337,19 @@ private struct PracticeTimelineRow: View {
 
 /// The whole clip as a rail: the loop as a tinted stretch with a handle at each end, the
 /// playhead, bar numbers underneath. Click or drag to move; drag a handle to resize the loop.
-private struct PracticeTimeline: View {
+struct PracticeTimeline: View {
     var session: PracticeSessionModel
     var palette: PracticePalette
+    /// The position as the 30 Hz transport has it, for the accessibility value only; the
+    /// playhead itself is drawn every frame from the engine.
     var positionUs: Int64
+    var playing: Bool
+    var visualOffset: Double
 
     private enum Grab { case a, b, seek }
     @ViewState private var grab: Grab?
+    /// Where the timeline is in the window (top-left origin), for the debug driver to drag it.
+    nonisolated(unsafe) static var debugFrame = CGRect.zero
 
     var body: some View {
         GeometryReader { geo in
@@ -351,13 +366,27 @@ private struct PracticeTimeline: View {
                     Rectangle().fill(tint).frame(width: 2, height: 20).offset(x: left, y: 5)
                     Rectangle().fill(tint).frame(width: 2, height: 20).offset(x: max(left + 2, right - 2), y: 5)
                 }
-                Capsule().fill(palette.text).frame(width: 2, height: 24).offset(x: min(w - 2, max(0, x(positionUs) - 1)), y: 3)
+                // The playhead, drawn every frame from the engine's clock like the stage, so it
+                // glides while playing and sits under the mouse while the timeline is dragged.
+                let _ = session.redraw
+                TimelineView(.animation(paused: !playing)) { timeline in
+                    let frame = timeline.date
+                    Canvas { ctx, size in
+                        _ = frame
+                        let px = min(size.width - 2, max(0, x(session.visualUs(offsetSeconds: visualOffset)) - 1))
+                        ctx.fill(Path(roundedRect: CGRect(x: px, y: 3, width: 2, height: 24), cornerRadius: 1), with: .color(palette.text))
+                    }
+                }
+                .frame(width: w, height: 30)
+                .allowsHitTesting(false)
                 ForEach(labels(width: w), id: \.number) { line in
                     Text("\(line.number)").font(.system(size: 11).monospacedDigit()).foregroundStyle(palette.secondary)
                         .fixedSize().offset(x: x(line.us), y: 29)
                 }
             }
             .frame(width: w, height: geo.size.height, alignment: .topLeading)
+            .onAppear { Self.debugFrame = geo.frame(in: .global) }
+            .onChange(of: geo.frame(in: .global)) { _, f in Self.debugFrame = f }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { v in

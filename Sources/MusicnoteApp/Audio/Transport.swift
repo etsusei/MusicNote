@@ -78,12 +78,21 @@ final class TransportModel {
     private var timer: Timer?
 
     init() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+        // In the common modes, not only the default one: while a mouse button is held down the
+        // run loop is in its event-tracking mode, and a default-mode timer would stand still for
+        // the whole drag (the time and the playhead froze while a slider was dragged).
+        let t = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
     }
 
+    /// Ticks so far across all transports, for the debug driver.
+    nonisolated(unsafe) static var ticks = 0
+
     func tick() {
+        Self.ticks += 1
         let e = AudioEngine.shared
         let p = e.positionFrames
         if p != positionFrame { positionFrame = p }

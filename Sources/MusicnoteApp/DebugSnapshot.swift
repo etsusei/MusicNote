@@ -325,6 +325,102 @@ enum DebugPractice {
             note("key ]: loop now \(s.loop.map { "\($0.lowerBound)–\($0.upperBound)" } ?? "-")")
         } else { note("FAIL no loop to play") }
 
+        // Real mouse drags, posted to the app as the system would: the speed slider dragged from
+        // full speed to half over a second and a half, then the timeline dragged across four bars.
+        if let w = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }), let content = w.contentView {
+            func mouse(_ type: NSEvent.EventType, _ p: CGPoint) {
+                if let ev = NSEvent.mouseEvent(with: type, location: p, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                               windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1) {
+                    NSApp.postEvent(ev, atStart: false)
+                }
+            }
+            func sliders(_ v: NSView) -> [NSSlider] { (v as? NSSlider).map { [$0] } ?? v.subviews.flatMap(sliders) }
+            if s.loopOn { s.toggleLoop() }
+            s.setRate(1)
+            s.seek(toUs: s.durationUs / 8)
+            if !e.isPlaying { s.togglePlay() }
+            await wait(0.8)
+            let sf = PracticeTopBar.debugSpeedFrame
+            note("speed slider at \(sf), AppKit sliders in the window: \(sliders(content).count)")
+            if sf.width > 10 {
+                let y = content.bounds.height - sf.midY, right = sf.maxX - 8, left = sf.minX + 8
+                mouse(.leftMouseDown, CGPoint(x: right, y: y))
+                await wait(0.1)
+                var line: [String] = []
+                var last = s.positionUs, lastT = Date()
+                let frames = PracticeStageView.framesDrawn
+                let dragTicks = TransportModel.ticks
+                let dragBegan = Date()
+                defer {
+                    let perSecond = Double(TransportModel.ticks - dragTicks) / Date().timeIntervalSince(dragBegan)
+                    note("during the speed drag the time display's timer ticked \(String(format: "%.0f", perSecond)) times a second \(perSecond >= 20 ? "OK" : "FAIL: it stands still while a mouse button is down")")
+                }
+                // 150 small moves, 10 ms apart, as a hand would drag; a reading every tenth of a second.
+                for step in 1...150 {
+                    mouse(.leftMouseDragged, CGPoint(x: right + (left - right) * CGFloat(step) / 150, y: y))
+                    await wait(0.01)
+                    if step % 10 == 0 {
+                        let p = s.positionUs, t = Date()
+                        line.append(String(format: "%.2f→%.2f", s.settings.rate, Double(p - last) / 1e6 / t.timeIntervalSince(lastT)))
+                        last = p; lastT = t
+                    }
+                }
+                let fps = Double(PracticeStageView.framesDrawn - frames) / Date().timeIntervalSince(lastT.addingTimeInterval(-0.1 * Double(line.count) + 0.1)).magnitude
+                let endRate = s.settings.rate
+                await wait(0.5)
+                let held = await measure(0.5)
+                mouse(.leftMouseUp, CGPoint(x: left, y: y))
+                await wait(0.3)
+                note("speed slider dragged 1.0 → 0.5, each 0.1 s as (setting→measured speed): \(line.joined(separator: " "))")
+                note("  at the end of the drag: setting \(endRate), measured \(String(format: "%.2f", held)) with the button still down \(abs(endRate - 0.5) < 0.03 && abs(held - 0.5) < 0.05 ? "OK" : "FAIL"); stage redrew about \(String(format: "%.0f", fps)) times a second during the drag")
+            } else { note("FAIL speed slider not found") }
+            // The engine's own response to one jump in speed, read every 50 ms.
+            s.setRate(1); await wait(1)
+            s.setRate(0.5)
+            var response: [String] = []
+            var p0 = s.positionUs, t0 = Date()
+            for _ in 1...12 {
+                await wait(0.05)
+                let p = s.positionUs, t = Date()
+                response.append(String(format: "%.2f", Double(p - p0) / 1e6 / t.timeIntervalSince(t0)))
+                p0 = p; t0 = t
+            }
+            note("one jump 1.0 → 0.5, speed every 50 ms after it: \(response.joined(separator: " "))")
+            // How long a seek holds the main thread.
+            let began = Date()
+            for i in 0..<100 { s.seek(toUs: s.durationUs / 3 + Int64(i) * 10_000) }
+            note("100 seeks took \(String(format: "%.1f", Date().timeIntervalSince(began) * 1000)) ms on the main thread")
+            s.setRate(1)
+            let f = PracticeTimeline.debugFrame
+            if f.width > 10 {
+                func point(_ us: Int64) -> CGPoint {
+                    CGPoint(x: f.minX + CGFloat(Double(us) / Double(s.durationUs)) * f.width, y: content.bounds.height - (f.minY + 34))
+                }
+                let from = s.durationUs / 2, to = s.durationUs / 2 + Int64(s.bars.barUs * 2)
+                mouse(.leftMouseDown, point(from))
+                await wait(0.15)
+                var line: [String] = []
+                var frames = PracticeStageView.framesDrawn
+                let dragBegan = Date()
+                for step in 1...100 {
+                    let target = from + (to - from) * Int64(step) / 100
+                    mouse(.leftMouseDragged, point(target))
+                    await wait(0.01)
+                    if step % 10 == 0 { line.append(String(format: "%.2f/%.2f", Double(target) / 1e6, Double(s.positionUs) / 1e6)) }
+                }
+                let dragFps = Double(PracticeStageView.framesDrawn - frames) / Date().timeIntervalSince(dragBegan)
+                note("timeline drag of 100 moves 10 ms apart took \(String(format: "%.2f", Date().timeIntervalSince(dragBegan))) s")
+                // Held still at the end of the drag: playback should carry on from there.
+                frames = PracticeStageView.framesDrawn
+                let heldSpeed = await measure(1)
+                let heldFps = Double(PracticeStageView.framesDrawn - frames)
+                mouse(.leftMouseUp, point(to))
+                await wait(0.3)
+                note("timeline dragged, each 0.1 s as (mouse at/position, seconds): \(line.joined(separator: " "))")
+                note("  stage redrew \(String(format: "%.0f", dragFps)) times a second while dragging; held still with the button down, playback ran at \(String(format: "%.2f", heldSpeed)) × and the stage redrew \(String(format: "%.0f", heldFps)) times a second \(abs(heldSpeed - 1) < 0.1 && heldFps >= 20 ? "OK" : "FAIL")")
+            } else { note("FAIL timeline not found") }
+        }
+
         // A keyboard: a virtual MIDI source stands in for the piano. A key the music asks for
         // is judged right, another wrong, and both are forgotten when released.
         var midiClient = MIDIClientRef(), virtual = MIDIEndpointRef()

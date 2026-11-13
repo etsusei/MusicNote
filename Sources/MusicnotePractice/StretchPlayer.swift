@@ -28,8 +28,10 @@ public final class StretchPlayer {
     }
 
     public static let rateRange = 0.25...2.0
-    /// Speed changes glide over about this long instead of jumping.
-    public static let glideSeconds = 0.06
+    /// Speed changes glide instead of jumping: this is the time constant, so a change is nine
+    /// tenths done in a little over twice as long. Short, so dragging the speed is heard at once
+    /// (the stretcher itself adds its 46 ms lead on top).
+    public static let glideSeconds = 0.02
     /// Fade on each side of the loop splice, in source frames.
     static let spliceFrames = 128
     static let block = 1024
