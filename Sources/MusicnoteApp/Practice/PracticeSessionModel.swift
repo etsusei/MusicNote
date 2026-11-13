@@ -113,7 +113,7 @@ final class PracticeSessionModel {
 
     func persist() { try? model?.store.save(settings) }
 
-    /// Asks the stage to draw again now (it draws by itself only while playing and on screen).
+    /// Asks the stage to draw again now (it draws by itself only while playing).
     func refreshStage() { redraw += 1 }
 
     /// Loads the three backings off the main thread, the chosen one first, and hands each to

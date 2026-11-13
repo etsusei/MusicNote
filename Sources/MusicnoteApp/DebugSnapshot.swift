@@ -235,7 +235,7 @@ enum DebugPractice {
         var log: [String] = []
         func note(_ s: String) { log.append(s); try? log.joined(separator: "\n").write(toFile: dir + "/practice.txt", atomically: true, encoding: .utf8) }
         func wait(_ seconds: Double) async { try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9)) }
-        // The stage redraws itself only while its window is on a lit display; ask before each picture.
+        // A paused stage redraws only when asked; ask before each picture so it shows the position just set.
         func shot(_ name: String) async {
             PracticeSessionModel.current?.refreshStage()
             try? await Task.sleep(nanoseconds: 150_000_000)
@@ -277,7 +277,11 @@ enum DebugPractice {
         }
         s.togglePlay()
         await wait(0.5)
+        let drawnBefore = PracticeStageView.framesDrawn
         let full = await measure(2)
+        // Nothing changes any view state during these two seconds: the stage has to redraw by itself.
+        let fps = Double(PracticeStageView.framesDrawn - drawnBefore) / 2
+        note("stage redrew \(String(format: "%.0f", fps)) times a second while playing, with no other change on the page \(fps >= 20 ? "OK" : "FAIL: the stage is not redrawing by itself")")
         note("speed 1.0: position moved at \(String(format: "%.3f", full)) × real time \(abs(full - 1) < 0.03 ? "OK" : "FAIL")")
         let lead = Double(s.visualUs() - s.positionUs) / 1000
         note("drawn position against the engine's: \(String(format: "%+.1f", lead)) ms (negative: the picture waits for the sound to come out)")

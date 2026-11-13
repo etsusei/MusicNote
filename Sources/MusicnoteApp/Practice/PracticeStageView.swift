@@ -19,13 +19,24 @@ struct PracticeStageView: View {
     var body: some View {
         // Read here so a seek or a new loop redraws the stage while paused.
         let _ = session.redraw
-        TimelineView(.animation(paused: !playing)) { _ in
-            Canvas(opaque: true) { ctx, size in draw(&ctx, size) }
+        TimelineView(.animation(paused: !playing)) { timeline in
+            // The frame's date has to be an input of the canvas: SwiftUI redraws a canvas only
+            // when what its closure captures has changed, and nothing else here changes
+            // from frame to frame (the position is read from the engine while drawing).
+            let frame = timeline.date
+            Canvas(opaque: true) { ctx, size in
+                _ = frame
+                draw(&ctx, size)
+            }
         }
         .accessibilityLabel("下落音符和键盘")
     }
 
+    /// Frames drawn so far, for the debug driver to check that the stage animates by itself.
+    nonisolated(unsafe) static var framesDrawn = 0
+
     private func draw(_ ctx: inout GraphicsContext, _ size: CGSize) {
+        Self.framesDrawn += 1
         let keysHeight = min(160, max(96, size.height * 0.2))
         let stageHeight = size.height - keysHeight
         let width = size.width
