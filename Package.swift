@@ -13,16 +13,21 @@ let package = Package(
             name: "MusicnoteCore",
             linkerSettings: [.linkedLibrary("sqlite3")]
         ),
+        // Practice mode's own logic (MIDI back from Logic, alignment); the pages are in MusicnoteApp.
+        .target(
+            name: "MusicnotePractice",
+            dependencies: ["MusicnoteCore"]
+        ),
         .executableTarget(
             name: "MusicnoteApp",
-            dependencies: ["MusicnoteCore"]
+            dependencies: ["MusicnoteCore", "MusicnotePractice"]
         ),
         .executableTarget(name: "StemSeparator"),
         // The command line tools ship without XCTest or the swift-testing
         // macro plugin, so checks run as an executable: `swift run MusicnoteChecks`.
         .executableTarget(
             name: "MusicnoteChecks",
-            dependencies: ["MusicnoteCore"]
+            dependencies: ["MusicnoteCore", "MusicnotePractice"]
         ),
     ],
     swiftLanguageModes: [.v5]

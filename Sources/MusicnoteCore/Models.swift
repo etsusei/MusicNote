@@ -160,6 +160,8 @@ public struct SeparationRecord: Codable, Hashable, Sendable {
     /// Several selected stems mixed into one (with a mixed lead-in), and which ones.
     public var mix: StemAsset?
     public var mixKinds: [StemKind]?
+    /// Everything but the selected stems, summed: the backing to practise the selected part over.
+    public var backing: StemAsset?
 
     public func stem(_ kind: StemKind) -> StemAsset? { stems.first { $0.kind == kind } }
 
@@ -748,7 +750,7 @@ public struct PlaygroundProject: Record, Hashable {
 
 // MARK: - Jobs
 
-public enum JobType: String, Codable, Sendable { case detect, separate, transcribe, harmony, skeleton, drums }
+public enum JobType: String, Codable, Sendable { case detect, separate, transcribe, harmony, skeleton, drums, backing }
 
 public struct Job: Record {
     public static let kind = "job"

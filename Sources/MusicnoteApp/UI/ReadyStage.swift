@@ -11,7 +11,7 @@ struct ReadyStage: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                PillTabs(titles: [item.isHarmonic ? "笔记与和弦" : "笔记", "MIDI 校对", "速度网格"], selection: $tab)
+                PillTabs(titles: [item.isHarmonic ? "笔记与和弦" : "笔记", "MIDI 校对", "速度网格", "练琴"], selection: $tab)
                 Spacer()
             }
             .padding(.horizontal, 28).padding(.bottom, 12)
@@ -19,6 +19,7 @@ struct ReadyStage: View {
             switch tab {
             case 1: MidiStage(item: item, transport: transport, embedded: true)
             case 2: TimingEditor(item: item)
+            case 3: PracticeSetupStage(item: item)
             default: NotesStage(item: item)
             }
         }

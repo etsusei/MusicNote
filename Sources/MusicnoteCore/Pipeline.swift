@@ -154,7 +154,9 @@ public final class Pipeline: @unchecked Sendable {
 
     // MARK: Separation
 
-    public func separate(_ item: AnalysisItem, jobDir: URL, progress: @escaping ProgressHandler) async throws -> SeparationRecord {
+    /// `publishTo` puts the stems somewhere other than the clip's own stem folder (which a new
+    /// separation replaces), for a run that must leave the clip's current stems alone.
+    public func separate(_ item: AnalysisItem, jobDir: URL, publishTo: URL? = nil, progress: @escaping ProgressHandler) async throws -> SeparationRecord {
         guard item.hasValidTiming else {
             throw WorkerError(code: "TEMPO_KEY_UNCONFIRMED", message: "需要先确认速度与调性", retryable: false)
         }
@@ -221,7 +223,7 @@ public final class Pipeline: @unchecked Sendable {
         paths.removeOwned(wavDir)
 
         // Publish: move validated MP3s into the asset tree.
-        let dest = paths.analysisAssets(item.id).appendingPathComponent("stems-r\(item.trimRevision)", isDirectory: true)
+        let dest = publishTo ?? paths.analysisAssets(item.id).appendingPathComponent("stems-r\(item.trimRevision)", isDirectory: true)
         paths.removeOwned(dest)
         try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.moveItem(at: mp3Dir, to: dest)
@@ -290,6 +292,47 @@ public final class Pipeline: @unchecked Sendable {
         sep.mix = m
         sep.mixKinds = kinds
         return sep
+    }
+
+    /// The clip without the selected stems: every other stem summed into one MP3 beside the
+    /// kept ones, the backing to practise the selected part over. Made from `others` (the stems
+    /// about to be removed, or those of a fresh separation) at the level they were separated at.
+    public func mixBacking(_ others: [StemAsset], frames: Int64, into dir: URL) async throws -> StemAsset? {
+        let inputs = others.filter { $0.level != .silent }.map { paths.url(relative: $0.relativePath).path }
+            .filter { FileManager.default.fileExists(atPath: $0) }
+        guard !inputs.isEmpty else { return nil }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let out = dir.appendingPathComponent("backing.mp3")
+        var args = ["-v", "error", "-nostdin", "-y"]
+        for i in inputs { args += ["-i", i] }
+        let sum = inputs.count > 1 ? "amix=inputs=\(inputs.count):duration=longest:normalize=0," : ""
+        args += ["-filter_complex", "\(sum)alimiter=limit=0.97:level=false", "-map_metadata", "-1", "-ar", "44100", "-ac", "2",
+                 "-c:a", "libmp3lame", "-b:a", "192k", "-write_xing", "1", out.path]
+        let r = try await WorkerProcess(tools.ffmpeg, args).run()
+        guard r.status == 0 else { throw WorkerError(code: "ENCODE_FAILED", message: "合成伴奏失败：\(r.stderr.suffix(200))") }
+        return StemAsset(kind: others[0].kind, relativePath: paths.relative(out),
+                         bytes: (try? FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int64) ?? 0,
+                         decodedFrames: frames, peakDbfs: nil, level: .normal)
+    }
+
+    /// One audio file for a Logic project: 44.1 kHz 24-bit WAV with `padUs` of silence in front,
+    /// so several files exported with the same pad start at the same moment. `clipOf` cuts the
+    /// clip out of its source first; without it the input is taken whole (a stem).
+    public func exportWav(_ input: URL, clipOf item: AnalysisItem? = nil, padUs: Int64, to out: URL) async throws {
+        var filters: [String] = []
+        if let item {
+            let sr = item.source.sampleRate
+            let s = Int64((Double(item.trimStartUs) * sr / 1_000_000).rounded())
+            let e = Int64((Double(item.trimEndUs) * sr / 1_000_000).rounded())
+            filters.append("atrim=start_sample=\(s):end_sample=\(e),asetpts=PTS-STARTPTS")
+        }
+        filters.append("aresample=44100")
+        let pad = Int64((Double(padUs) * 44_100 / 1_000_000).rounded())
+        if pad > 0 { filters.append("adelay=delays=\(pad)S:all=1") }
+        let w = WorkerProcess(tools.ffmpeg, ["-v", "error", "-nostdin", "-y", "-i", input.path, "-map", "0:a:0",
+                                             "-af", filters.joined(separator: ","), "-ac", "2", "-c:a", "pcm_s24le", out.path])
+        let r = try await w.run()
+        guard r.status == 0 else { throw WorkerError(code: "EXPORT_FAILED", message: "导出音频失败：\(r.stderr.suffix(300))") }
     }
 
     /// Removes the unselected stems once MIDI is confirmed (every selected stem and the mix stay).

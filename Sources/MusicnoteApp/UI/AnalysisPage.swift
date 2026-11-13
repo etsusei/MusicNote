@@ -142,6 +142,7 @@ struct AnalysisHeader: View {
         case .harmony: model.runHarmony(item.id)
         case .skeleton: model.generateSkeleton(item.id)
         case .drums: model.extractDrums(item.id)
+        case .backing: model.rebuildBacking(item.id)
         }
     }
 }

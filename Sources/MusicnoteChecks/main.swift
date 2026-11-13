@@ -43,6 +43,9 @@ if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "drumwav" {
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "drums" {
     exit(await runDrumExtract(Array(CommandLine.arguments.dropFirst())))
 }
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "practice" {
+    exit(await runPracticeFiles(Array(CommandLine.arguments.dropFirst())))
+}
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "e2e" {
     let code = await runEndToEnd(Array(CommandLine.arguments.dropFirst()))
     exit(code)
@@ -870,6 +873,7 @@ do {
 }
 
 runDrumChecks()
+runPracticeChecks()
 
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

@@ -680,7 +680,6 @@ final class AppModel {
         }
         try? store.save(draft)
         item.confirmedMidiRevision = draft.revision
-        if !(item.separation?.candidatesDeleted ?? true) { item = pipeline.deleteUnselectedStems(item) }
         if item.isHarmonic {
             item.state = .harmonizing
             save(item)
@@ -689,6 +688,8 @@ final class AppModel {
             item.state = .ready
             save(item)
         }
+        // The unselected stems go now, summed into the practice backing first.
+        keepBackingThenTrimStems(itemId)
     }
 
     // MARK: Stage 4 – harmony
