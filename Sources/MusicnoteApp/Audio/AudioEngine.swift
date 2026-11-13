@@ -75,6 +75,16 @@ final class AudioEngine: @unchecked Sendable {
     /// drives the position, the MIDI events and the metronome (see `setStretching`).
     private var stretch: StretchPlayer?
     private var stretchRate = 1.0
+    // Where playback stood at the end of the last rendered buffer, and when that buffer ends
+    // on the host clock: lets a display work out the position at any instant between buffers.
+    private var clockPosition = 0.0
+    private var clockHostSeconds = 0.0
+    private var clockFramesPerSecond = 0.0
+    private static let hostTickSeconds: Double = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return Double(info.numer) / Double(info.denom) / 1e9
+    }()
     private var previewing = Set<UInt8>()
 
     private init() {
@@ -89,6 +99,16 @@ final class AudioEngine: @unchecked Sendable {
     func start() {
         guard !engine.isRunning else { return }
         try? engine.start()
+        outputLatency = engine.outputNode.presentationLatency
+    }
+
+    /// Time the sound takes from the engine to the listener's ears through the output device.
+    private var outputLatency = 0.0
+
+    /// Master level of everything the engine plays (1 by default).
+    var outputVolume: Float {
+        get { engine.mainMixerNode.outputVolume }
+        set { engine.mainMixerNode.outputVolume = newValue }
     }
 
     /// Rebuilds the source node for a sample rate (song files may be 48 kHz; stems are 44.1 kHz).
@@ -153,7 +173,7 @@ final class AudioEngine: @unchecked Sendable {
         midiMuted = false
         midiSolo = false
         os_unfair_lock_unlock(&lock)
-        sampler.volume = 1
+        sampler.volume = instrumentVolume
         drumSampler.volume = drumVolume
     }
 
@@ -192,7 +212,7 @@ final class AudioEngine: @unchecked Sendable {
 
     func setMidiMix(muted: Bool, solo: Bool) {
         os_unfair_lock_lock(&lock); midiMuted = muted; midiSolo = solo; os_unfair_lock_unlock(&lock)
-        sampler.volume = midiAudible ? 1 : 0
+        sampler.volume = midiAudible ? instrumentVolume : 0
         drumSampler.volume = midiAudible ? drumVolume : 0
     }
 
@@ -252,6 +272,32 @@ final class AudioEngine: @unchecked Sendable {
         os_unfair_lock_unlock(&lock)
     }
 
+    /// The position being heard right now, for drawing: the last rendered buffer's position
+    /// carried forward (or back) to this instant at the speed it was playing, less the time
+    /// the sound takes to leave the output device. `offsetSeconds` moves it later (positive)
+    /// or earlier, for a display that runs ahead of or behind the sound.
+    func visualPosition(offsetSeconds: Double = 0) -> Double {
+        os_unfair_lock_lock(&lock)
+        let pos = clockPosition, host = clockHostSeconds, speed = clockFramesPerSecond, range = loop
+        os_unfair_lock_unlock(&lock)
+        guard speed > 0 else { return pos }
+        let now = Double(mach_absolute_time()) * Self.hostTickSeconds
+        var p = pos + (now - host - outputLatency + offsetSeconds) * speed
+        if let range {
+            if p >= Double(range.upperBound) { p -= Double(range.count) }
+            p = max(p, Double(range.lowerBound))
+        }
+        return max(0, p)
+    }
+
+    /// Level of the built-in instrument that plays the MIDI (0–1).
+    func setInstrumentVolume(_ v: Float) {
+        instrumentVolume = max(0, min(1, v))
+        sampler.volume = midiAudible ? instrumentVolume : 0
+    }
+
+    private var instrumentVolume: Float = 1
+
     /// The exact source position being heard (fractional while stretching).
     var positionExact: Double {
         os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }
@@ -280,6 +326,8 @@ final class AudioEngine: @unchecked Sendable {
         }
         playing = true
         os_unfair_lock_unlock(&lock)
+        // The output device may have changed since the engine started.
+        outputLatency = engine.outputNode.presentationLatency
     }
 
     func pause() {
@@ -300,6 +348,7 @@ final class AudioEngine: @unchecked Sendable {
     func stopAll() {
         pause()
         setStretching(false)
+        setInstrumentVolume(1)
         setTracks([]); setMidi([], enabled: false); setLoop(nil)
         setMetronome(MetronomeConfig())
     }
@@ -335,6 +384,17 @@ final class AudioEngine: @unchecked Sendable {
         if needsAllOff {
             needsAllOff = false
             releaseAll(at: 0)
+        }
+        // The display clock: this buffer ends `frameCount` frames after its host time.
+        let host = timestamp.pointee.mHostTime != 0 ? timestamp.pointee.mHostTime : mach_absolute_time()
+        let bufferEnd = Double(host) * Self.hostTickSeconds + Double(frameCount) / sampleRate
+        let before = stretch?.position ?? Double(position)
+        defer {
+            let after = stretch?.position ?? Double(position)
+            clockPosition = after
+            clockHostSeconds = bufferEnd
+            // Across a loop wrap the difference is not the speed; keep the last one then.
+            if !playing { clockFramesPerSecond = 0 } else if after >= before { clockFramesPerSecond = (after - before) / Double(frameCount) * sampleRate }
         }
         guard playing else { return }
 
@@ -571,6 +631,33 @@ final class AudioEngine: @unchecked Sendable {
 
 /// Loads an audio file into memory as float PCM at its own sample rate.
 enum AudioLoader {
+    /// A stretch of a file at `sampleRate`, resampled when the file runs at another rate, so
+    /// it can share the engine's frame axis with tracks of that rate. `startUs`…`endUs` are
+    /// times in the file.
+    static func loadClip(_ url: URL, startUs: Int64, endUs: Int64, sampleRate: Double) throws -> AVAudioPCMBuffer {
+        let file = try AVAudioFile(forReading: url)
+        let rate = file.processingFormat.sampleRate
+        let start = Int64((Double(startUs) * rate / 1_000_000).rounded())
+        let count = Int64((Double(endUs - startUs) * rate / 1_000_000).rounded())
+        let raw = try load(url, startFrame: max(0, start), frames: max(0, count))
+        guard rate != sampleRate else { return raw }
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: raw.format.channelCount),
+              let converter = AVAudioConverter(from: raw.format, to: format),
+              let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(Double(raw.frameLength) * sampleRate / rate) + 64) else {
+            throw WorkerError(code: "SOURCE_MISSING", message: "无法转换音频采样率")
+        }
+        nonisolated(unsafe) var fed = false
+        var failure: NSError?
+        let status = converter.convert(to: out, error: &failure) { _, state in
+            if fed { state.pointee = .endOfStream; return nil }
+            fed = true
+            state.pointee = .haveData
+            return raw
+        }
+        if status == .error { throw failure ?? WorkerError(code: "SOURCE_MISSING", message: "音频采样率转换失败") }
+        return out
+    }
+
     static func load(_ url: URL, startFrame: Int64 = 0, frames: Int64? = nil) throws -> AVAudioPCMBuffer {
         let file = try AVAudioFile(forReading: url)
         let total = frames ?? (file.length - startFrame)

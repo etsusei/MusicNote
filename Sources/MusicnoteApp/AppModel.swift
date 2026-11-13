@@ -45,6 +45,8 @@ final class AppModel {
     var playgrounds: [PlaygroundProject] = []
     var drumPatterns: [DrumPattern] = []
     var route: Route?
+    /// The clip being practised: its page takes over the whole window.
+    var practicing: UUID?
     var showLeft = true
     var showRight = true
     var search = ""

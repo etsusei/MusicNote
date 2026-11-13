@@ -339,3 +339,64 @@ func runStretchChecks() {
         check(found >= 9 && worst < 12, "loop: \(found) clicks within 12 ms of the clock, worst \(worst)")
     }
 }
+
+/// The practice page's own logic: bar lines and the loop, the keyboard layout, the notes on screen.
+func runPracticePageChecks() {
+    let key = KeySignature(tonic: 0, tonicName: "C", mode: .major)
+    // 120 BPM in 4/4: a bar is 2 s. Bar 1 starts 0.5 s into a 21 s clip.
+    let timing = TimingConfirmation(trimRevision: 1, bpm: 120, beatOriginUs: 500_000, meter: .fourFour, meterConfirmed: true,
+                                    barAnchorUs: 500_000, key: key)
+    let bars = PracticeBars(timing: timing, durationUs: 21_000_000)
+    eq(bars.lines.first, PracticeBars.Line(us: 500_000, number: 1), "first bar line")
+    eq(bars.lines.count, 11, "bar lines at 0.5, 2.5 … 20.5 s")
+    eq(bars.barNumber(at: 0), 0, "the pickup is bar 0")
+    eq(bars.barNumber(at: 2_500_000), 2, "bar 2 starts at 2.5 s")
+    eq(bars.start(ofBar: 3), 4_500_000, "bar 3")
+    eq(bars.snap(3_300_000), 2_500_000, "snaps to the nearest bar line")
+    eq(bars.snap(100_000), 0, "the clip start is a place to snap to")
+    eq(bars.snap(20_900_000), 21_000_000, "so is its end")
+    eq(bars.loop(8_400_000, 2_600_000), 2_500_000..<8_500_000, "a loop from two points in either order")
+    eq(bars.loop(4_400_000, 4_600_000), 4_500_000..<6_500_000, "never shorter than a bar")
+    eq(bars.loop(20_900_000, 20_950_000), 18_500_000..<21_000_000, "at the end it reaches back to the bar line a bar before")
+    eq(bars.defaultLoop(at: 5_000_000), 4_500_000..<12_500_000, "four bars from the bar being played")
+    eq(bars.playRange(4_500_000..<8_500_000, preroll: true), 2_500_000..<8_500_000, "the lead-in starts a bar early")
+    eq(bars.playRange(500_000..<4_500_000, preroll: true), 0..<4_500_000, "but not before the clip")
+    eq(bars.playRange(4_500_000..<8_500_000, preroll: false), 4_500_000..<8_500_000, "no lead-in")
+    eq(bars.label(4_500_000..<12_500_000), "3–6", "loop label")
+    eq(bars.label(4_500_000..<6_500_000), "3", "one-bar loop label")
+    eq(bars.label(0..<4_500_000), "1–2", "a loop from the clip start is named from bar 1, not the half-second pickup")
+    // No bar 1 set: bars count from the beat origin.
+    let loose = PracticeBars(timing: TimingConfirmation(trimRevision: 1, bpm: 120, beatOriginUs: 130_000, meter: .fourFour,
+                                                        meterConfirmed: false, barAnchorUs: nil, key: key), durationUs: 5_000_000)
+    eq(loose.lines.map(\.us), [130_000, 2_130_000, 4_130_000], "bars from the beat origin")
+
+    // Speed steps.
+    eq(PracticeSettings.steppedRate(0.75, by: -1), 0.7, "one step slower")
+    eq(PracticeSettings.steppedRate(0.73, by: 1), 0.8, "an odd speed steps from its nearest 5%")
+    eq(PracticeSettings.steppedRate(1.0, by: 1), 1.0, "not past original speed")
+    eq(PracticeSettings.steppedRate(0.5, by: -1), 0.5, "not below half speed")
+
+    // The keyboard: 52 white keys; A0 first, C8 last; black keys straddle their neighbours.
+    eq((PianoKeys.lowest...PianoKeys.highest).filter { !PianoKeys.isBlack($0) }.count, 52, "52 white keys")
+    check(PianoKeys.frame(21).map { $0.x == 0 } ?? false, "A0 at the left edge")
+    check(PianoKeys.frame(108).map { abs($0.x + $0.width - 1) < 1e-9 } ?? false, "C8 ends at the right edge")
+    if let c4 = PianoKeys.frame(60), let cs4 = PianoKeys.frame(61), let d4 = PianoKeys.frame(62) {
+        check(abs(c4.x - 23 * PianoKeys.whiteWidth) < 1e-9, "middle C is the 24th white key")
+        check(abs(cs4.x + cs4.width / 2 - d4.x) < 1e-9, "C♯4 is centred on the line between C4 and D4")
+    } else { check(false, "middle C has a place") }
+    check(PianoKeys.frame(20) == nil && PianoKeys.frame(109) == nil, "nothing off the keyboard")
+    eq(PianoKeys.cLabel(60), "C4", "middle C label")
+    check(PianoKeys.cLabel(62) == nil, "only C keys are labelled")
+
+    // The notes on screen.
+    let line = NoteTimeline([
+        MidiNote(pitch: 60, startUs: 0, endUs: 9_000_000),          // a long held note
+        MidiNote(pitch: 64, startUs: 1_000_000, endUs: 1_500_000),
+        MidiNote(pitch: 67, startUs: 4_000_000, endUs: 4_500_000),
+        MidiNote(pitch: 72, startUs: 8_000_000, endUs: 8_200_000),
+    ])
+    eq(line.visible(fromUs: 3_000_000, toUs: 6_000_000).map { line.notes[$0].pitch }, [60, 67], "the held note and the one in the window")
+    eq(line.visible(fromUs: 9_000_000, toUs: 12_000_000), [], "nothing after the last note")
+    eq(line.sounding(atUs: 1_200_000), [60, 64], "sounding together")
+    eq(line.sounding(atUs: 1_500_000), [60], "a note is over at its end")
+}

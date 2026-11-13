@@ -1,9 +1,10 @@
 import AppKit
 import Foundation
 import MusicnoteCore
+import MusicnotePractice
 
 /// Development aid, inert unless MUSICNOTE_SNAPSHOT_DIR is set: visits the routes in
-/// MUSICNOTE_ROUTES ("empty,settings,song:<uuid>,analysis:<uuid>[@tab],playground:<uuid>,drums:<uuid>"),
+/// MUSICNOTE_ROUTES ("empty,settings,song:<uuid>,analysis:<uuid>[@tab],playground:<uuid>,drums:<uuid>,practice:<uuid>"),
 /// renders the window to PNG for each, then quits. Lets the UI be checked without
 /// screen-recording permission.
 @MainActor
@@ -21,6 +22,7 @@ enum DebugSnapshot {
             if env["MUSICNOTE_HIDE_CHAT"] != nil { model.showRight = false }
             for (i, r) in routes.enumerated() {
                 apply(r, model)
+                if model.practicing != nil, env["MUSICNOTE_PRACTICE_DRIVE"] != nil { await DebugPractice.drive(dir: dir) }
                 // MUSICNOTE_LIGHT=<n>: light chord n of the clip's harmony (chord n-1 as the shadow).
                 if let n = env["MUSICNOTE_LIGHT"].flatMap(Int.init), case .analysis(let id)? = model.route,
                    let item = model.item(id), let h = model.latestHarmony(id), n >= 1, n < h.events.count {
@@ -41,7 +43,9 @@ enum DebugSnapshot {
         let route = String(parts[0])
         if parts.count > 1 { UserDefaults.standard.set(Int(parts[1]) ?? 0, forKey: "readyTab") }
         let kv = route.split(separator: ":", maxSplits: 1).map(String.init)
+        model.practicing = nil
         switch kv[0] {
+        case "practice": model.practicing = UUID(uuidString: kv[1])
         case "settings": model.route = .settings
         case "bookmarks": model.route = .bookmarks
         case "inspirations": model.route = .inspirations
@@ -83,9 +87,11 @@ enum DebugSnapshot {
         }
         let fr = window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
         try? fr.write(to: url.deletingPathExtension().appendingPathExtension("responder.txt"), atomically: true, encoding: .utf8)
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        // MUSICNOTE_SNAPSHOT_FRAME: the whole window frame, title bar and its buttons included.
+        let target = ProcessInfo.processInfo.environment["MUSICNOTE_SNAPSHOT_FRAME"] != nil ? (view.superview ?? view) : view
+        guard let rep = target.bitmapImageRepForCachingDisplay(in: target.bounds) else { return }
         // Resolve dynamic colors under the window's appearance, not the process default.
-        window.effectiveAppearance.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: rep) }
+        window.effectiveAppearance.performAsCurrentDrawingAppearance { target.cacheDisplay(in: target.bounds, to: rep) }
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
 }
@@ -215,5 +221,112 @@ enum DebugFlow {
             NSApp.terminate(nil)
         }
         return true
+    }
+}
+
+/// MUSICNOTE_PRACTICE_DRIVE (with a `practice:<uuid>` route and MUSICNOTE_SNAPSHOT_DIR) plays the
+/// practice page for real, with the output muted: it checks that the position moves at the
+/// speed set, that a speed change takes, that the loop holds the position and that the keys
+/// work, saves pictures along the way and writes practice.txt.
+@MainActor
+enum DebugPractice {
+    static func drive(dir: String) async {
+        var log: [String] = []
+        func note(_ s: String) { log.append(s); try? log.joined(separator: "\n").write(toFile: dir + "/practice.txt", atomically: true, encoding: .utf8) }
+        func wait(_ seconds: Double) async { try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9)) }
+        // The stage redraws itself only while its window is on a lit display; ask before each picture.
+        func shot(_ name: String) async {
+            PracticeSessionModel.current?.refreshStage()
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            DebugSnapshot.snapshot(to: URL(fileURLWithPath: dir + "/practice-\(name).png"))
+        }
+        func key(_ chars: String, code: UInt16) {
+            guard let w = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }) else { return }
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                if let e = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: w.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                                            isARepeat: false, keyCode: code) { NSApp.sendEvent(e) }
+            }
+        }
+        let e = AudioEngine.shared
+        e.outputVolume = 0
+        defer { e.outputVolume = 1; UserDefaults.standard.set("amber", forKey: "practicePalette") }
+        await wait(1)
+        guard let s = PracticeSessionModel.current else { note("FAIL no practice session"); return }
+        let t0 = Date()
+        while s.loading, Date().timeIntervalSince(t0) < 30 { await wait(0.2) }
+        note("clip \(Double(s.durationUs) / 1e6) s, \(s.timeline.notes.count) notes, \(s.pedals.count) pedal spans, \(s.bars.lines.count) bar lines, calibrated \(s.calibrated)")
+        note("backings loaded: \(PracticeBacking.allCases.filter { s.available.contains($0) }.map(\.rawValue)) in \(String(format: "%.1f", Date().timeIntervalSince(t0))) s; chosen \(s.settings.backing.rawValue)")
+        if s.loopOn { s.toggleLoop() }
+        s.setRate(1)
+        s.setMidi(on: true)
+
+        // Paused at a quarter of the way in.
+        let quarter = s.durationUs / 4
+        s.seek(toUs: quarter)
+        await wait(0.6)
+        note("seek while paused: asked \(quarter), at \(s.positionUs), drawn at \(s.visualUs())")
+        await shot("1-paused")
+
+        // Playing at full speed, then at half.
+        func measure(_ seconds: Double) async -> Double {
+            let a = s.positionUs, t = Date()
+            await wait(seconds)
+            return Double(s.positionUs - a) / 1e6 / Date().timeIntervalSince(t)
+        }
+        s.togglePlay()
+        await wait(0.5)
+        let full = await measure(2)
+        note("speed 1.0: position moved at \(String(format: "%.3f", full)) × real time \(abs(full - 1) < 0.03 ? "OK" : "FAIL")")
+        let lead = Double(s.visualUs() - s.positionUs) / 1000
+        note("drawn position against the engine's: \(String(format: "%+.1f", lead)) ms (negative: the picture waits for the sound to come out)")
+        s.setRate(0.5)
+        await wait(0.6)
+        let half = await measure(2)
+        note("speed 0.5 set while playing: position moved at \(String(format: "%.3f", half)) × real time \(abs(half - 0.5) < 0.03 ? "OK" : "FAIL")")
+        await shot("2-playing-half-speed")
+
+        // Keys: − and = step the speed, L the loop, [ and ] its ends, space play/pause.
+        key("-", code: 27); await wait(0.2)
+        note("key −: speed \(s.settings.rate) \(abs(s.settings.rate - 0.5) < 1e-9 ? "OK (already at the slowest)" : "FAIL")")
+        key("=", code: 24); await wait(0.2)
+        note("key =: speed \(s.settings.rate) \(abs(s.settings.rate - 0.55) < 1e-9 ? "OK" : "FAIL")")
+        key("=", code: 24); key("=", code: 24); await wait(0.2)
+        key("-", code: 27); await wait(0.2)
+        note("keys = = −: speed \(s.settings.rate) \(abs(s.settings.rate - 0.6) < 1e-9 ? "OK" : "FAIL")")
+        key("l", code: 37); await wait(0.3)
+        note("key L: loop \(s.loopOn ? "on" : "off") \(s.loop.map { "\($0.lowerBound)–\($0.upperBound) (bars \(s.bars.label($0)))" } ?? "-") \(s.loopOn ? "OK" : "FAIL")")
+        key(" ", code: 49); await wait(0.3)
+        note("key space: \(e.isPlaying ? "playing FAIL" : "paused OK")")
+        key(" ", code: 49); await wait(0.3)
+        note("key space again: \(e.isPlaying ? "playing OK" : "paused FAIL")")
+
+        // The loop holds the position: one bar of lead-in before A, never past B.
+        s.setRate(1)
+        if let range = s.playRange, let loop = s.loop {
+            var lowest = Int64.max, highest = Int64.min, wraps = 0, last = s.positionUs
+            let span = Double(range.upperBound - range.lowerBound) / 1e6
+            let t = Date()
+            while Date().timeIntervalSince(t) < min(span * 1.6 + 1, 25) {
+                await wait(0.05)
+                let p = s.positionUs
+                if p < last - 500_000 { wraps += 1 }
+                last = p; lowest = min(lowest, p); highest = max(highest, p)
+            }
+            let inside = lowest >= range.lowerBound - 50_000 && highest <= range.upperBound + 50_000
+            note("loop A–B \(loop.lowerBound)–\(loop.upperBound), played \(range.lowerBound)–\(range.upperBound): position stayed in \(lowest)–\(highest), wrapped \(wraps)× \(inside && wraps >= 1 ? "OK" : "FAIL")")
+            await shot("3-looping")
+            key("]", code: 30); await wait(0.3)
+            note("key ]: loop now \(s.loop.map { "\($0.lowerBound)–\($0.upperBound)" } ?? "-")")
+        } else { note("FAIL no loop to play") }
+
+        // The other palette.
+        UserDefaults.standard.set("cool", forKey: "practicePalette")
+        await wait(0.8)
+        await shot("4-cool")
+        s.togglePlay()
+        if s.loopOn { s.toggleLoop() }
+        s.setMidi(on: false)
+        note("done")
     }
 }

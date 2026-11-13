@@ -19,11 +19,30 @@ struct PracticeSetupStage: View {
         let takes = model.practiceTakes(item.id)
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                begin(takes)
                 toLogic
                 fromLogic(takes)
                 backing
             }
             .padding(.horizontal, 28).padding(.vertical, 24)
+        }
+    }
+
+    // MARK: Begin
+
+    private func begin(_ takes: [PracticeMidi]) -> some View {
+        Card {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("练琴").font(.sectionTitle).foregroundStyle(Theme.textPrimary)
+                    Text(takes.isEmpty ? "音符从上面落下来，落到键盘时弹。现在用的是转录结果；在 Logic 里校准后放回来会更准。"
+                                       : "音符从上面落下来，落到键盘时弹。用的是校准后的 MIDI「\(takes.last?.fileName ?? "")」。")
+                        .font(.caption12).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button { model.practicing = item.id } label: { Label("开始练琴", systemImage: "pianokeys") }
+                    .buttonStyle(PrimaryButtonStyle()).disabled(model.practiceNotes(item) == nil || item.timing == nil)
+            }
         }
     }
 

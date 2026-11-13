@@ -11,6 +11,19 @@ struct RootView: View {
 
     var body: some View {
         @Bindable var model = model
+        if let id = model.practicing {
+            // Practice takes the whole window; the alert still has to reach the user.
+            PracticePage(itemId: id).id(id)
+                .alert(item: $model.alert) { a in
+                    Alert(title: Text(a.title), message: Text(a.message + (a.code.map { "\n（\($0)）" } ?? "")), dismissButton: .default(Text("好")))
+                }
+        } else {
+            columns
+        }
+    }
+
+    @ViewBuilder private var columns: some View {
+        @Bindable var model = model
         GeometryReader { geo in
             let total = geo.size.width
             let left = model.showLeft ? leftWidth : 0
