@@ -13,10 +13,21 @@ let package = Package(
             name: "MusicnoteCore",
             linkerSettings: [.linkedLibrary("sqlite3")]
         ),
-        // Practice mode's own logic (MIDI back from Logic, alignment); the pages are in MusicnoteApp.
+        // Rubber Band Library 4.0.0 (GPL), built from its single-file compilation unit; Swift
+        // uses the C interface in include/. See Sources/RubberBand/README.md.
+        .target(
+            name: "RubberBand",
+            exclude: ["README.md", "vendor/COPYING", "vendor/README.md", "vendor/CHANGELOG", "vendor/src", "vendor/rubberband"],
+            sources: ["vendor/single/RubberBandSingle.cpp"],
+            // Optimised in debug builds too: the stretcher has to keep up with real time.
+            cxxSettings: [.unsafeFlags(["-O2", "-w"])],
+            linkerSettings: [.linkedFramework("Accelerate")]
+        ),
+        // Practice mode's own logic (MIDI back from Logic, alignment, time-stretched playback);
+        // the pages are in MusicnoteApp.
         .target(
             name: "MusicnotePractice",
-            dependencies: ["MusicnoteCore"]
+            dependencies: ["MusicnoteCore", "RubberBand"]
         ),
         .executableTarget(
             name: "MusicnoteApp",
@@ -30,5 +41,6 @@ let package = Package(
             dependencies: ["MusicnoteCore", "MusicnotePractice"]
         ),
     ],
-    swiftLanguageModes: [.v5]
+    swiftLanguageModes: [.v5],
+    cxxLanguageStandard: .cxx17
 )

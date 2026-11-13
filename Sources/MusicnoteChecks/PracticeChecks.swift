@@ -201,3 +201,141 @@ func runPracticeFiles(_ args: [String]) async -> Int32 {
         print("FAIL", error.localizedDescription); return 1
     }
 }
+
+/// Time-stretched playback: the clock must say where the audio really is. A click every half
+/// second is played at several speeds, through speed changes and around a loop; each click's
+/// place in the output is compared with where the clock says that source moment is heard.
+func runStretchChecks() {
+    let sr = 44_100.0
+    let clickEvery = Int(sr / 2), clickLength = 220
+    // The source: 5 ms bursts of a 2 kHz tone, silence between.
+    let source: StretchPlayer.Source = { start, count, l, r in
+        for i in 0..<count {
+            let f = Int(start) + i
+            let k = f % clickEvery
+            var v: Float = 0
+            if f >= 0, k < clickLength {
+                let env = sin(Double.pi * Double(k) / Double(clickLength))
+                v = Float(0.8 * env * sin(2 * Double.pi * 2000 * Double(k) / sr))
+            }
+            l[i] = v; r[i] = v
+        }
+    }
+
+    /// Plays `seconds` of output in 512-frame buffers; `speed` gives the speed asked for at
+    /// each output time. Returns the output and, for every buffer, what the clock said.
+    func play(_ player: StretchPlayer, seconds: Double, speed: (Double) -> Double) -> (out: [Float], map: [StretchPlayer.Rendered]) {
+        let n = 512, buffers = Int(seconds * sr) / n
+        var out = [Float](repeating: 0, count: buffers * n), right = [Float](repeating: 0, count: n)
+        var map: [StretchPlayer.Rendered] = []
+        for b in 0..<buffers {
+            player.rate = speed(Double(b * n) / sr)
+            out.withUnsafeMutableBufferPointer { o in
+                right.withUnsafeMutableBufferPointer { rr in
+                    map.append(player.render(frames: n, left: o.baseAddress! + b * n, right: rr.baseAddress!, source: source))
+                }
+            }
+        }
+        return (out, map)
+    }
+
+    /// Output frame at which the clock says source frame `f` is heard (first time after `from`).
+    func outputFrame(of f: Double, in map: [StretchPlayer.Rendered], from: Int = 0) -> Double? {
+        for (b, r) in map.enumerated() {
+            for s in r.wrapped ? [r.first, r.second] : [r.first] where s.outCount > 0 && b * 512 + s.outOffset >= from {
+                if f >= s.sourceStart, f < s.sourceEnd {
+                    return Double(b * 512 + s.outOffset) + (f - s.sourceStart) / (s.sourceEnd - s.sourceStart) * Double(s.outCount)
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Centre of the click nearest an expected output frame: the energy centroid around it.
+    func clickCentre(_ out: [Float], near: Double, width: Int) -> Double? {
+        let a = max(0, Int(near) - width), b = min(out.count, Int(near) + width)
+        guard b > a else { return nil }
+        var e = 0.0, m = 0.0
+        for i in a..<b { let p = Double(out[i] * out[i]); e += p; m += p * Double(i) }
+        return e > 1e-4 ? m / e : nil
+    }
+
+    /// Worst distance (ms of output time) between where clicks are heard and where the clock
+    /// puts them, over the clicks whose centres lie in `sourceRange`.
+    func worstError(_ out: [Float], _ map: [StretchPlayer.Rendered], clicks: [Int], label: String) -> Double {
+        var worst = 0.0, found = 0
+        for c in clicks {
+            let centre = Double(c * clickEvery + clickLength / 2)
+            guard let expected = outputFrame(of: centre, in: map) else { continue }
+            guard let heard = clickCentre(out, near: expected, width: Int(sr * 0.12)) else {
+                check(false, "\(label): click \(c) is missing from the output"); continue
+            }
+            found += 1
+            worst = max(worst, abs(heard - expected) / sr * 1000)
+            if ProcessInfo.processInfo.environment["STRETCH_VERBOSE"] != nil {
+                print(String(format: "    %@ click %d: %+.1f ms", label, c, (heard - expected) / sr * 1000))
+            }
+        }
+        check(found >= clicks.count - 1, "\(label): \(found) of \(clicks.count) clicks found")
+        return worst
+    }
+
+    // Steady speeds.
+    for speed in [1.0, 0.75, 0.5] {
+        let player = StretchPlayer(sampleRate: sr)
+        player.rate = speed
+        player.seek(to: 0)
+        let began = Date()
+        let (out, map) = play(player, seconds: 6, speed: { _ in speed })
+        let cost = Date().timeIntervalSince(began) / 6 * 100
+        let clicks = Array(1...Int(6 * speed * 2 - 1))
+        let worst = worstError(out, map, clicks: clicks, label: "speed \(speed)")
+        print(String(format: "  stretch: speed %.2f, clock off by at most %.1f ms over %d clicks, %.1f%% of one core", speed, worst, clicks.count, cost))
+        check(cost < 50, "speed \(speed): rendering takes \(cost)% of real time")
+        check(worst < 12, "speed \(speed): clicks within 12 ms of the clock, worst \(worst)")
+    }
+
+    // The speed dragged around while playing: 1 → 0.6 → 0.85 → 0.5 → 1, a change every 2 s.
+    do {
+        let player = StretchPlayer(sampleRate: sr)
+        let steps = [1.0, 0.6, 0.85, 0.5, 1.0, 0.7]
+        let (out, map) = play(player, seconds: 12, speed: { steps[min(steps.count - 1, Int($0 / 2))] })
+        let heardSeconds = map.last.map { $0.first.sourceEnd / sr } ?? 0
+        let clicks = Array(1...Int(heardSeconds * 2 - 1))
+        let worst = worstError(out, map, clicks: clicks, label: "changing speed")
+        print(String(format: "  stretch: speed changed five times, clock off by at most %.1f ms over %d clicks", worst, clicks.count))
+        check(worst < 15, "changing speed: clicks within 15 ms of the clock, worst \(worst)")
+        // The glide: one buffer after a change the speed has moved, but not all the way.
+        let p2 = StretchPlayer(sampleRate: sr)
+        _ = play(p2, seconds: 0.5, speed: { _ in 1 })
+        p2.rate = 0.5
+        _ = play(p2, seconds: 512 / sr, speed: { _ in 0.5 })
+        check(p2.currentRate < 1 && p2.currentRate > 0.5, "the speed glides, got \(p2.currentRate) one buffer after the change")
+        _ = play(p2, seconds: 0.5, speed: { _ in 0.5 })
+        eq(p2.currentRate, 0.5, "and arrives")
+    }
+
+    // A loop from 1.0 s to 3.0 s at 0.75 speed: the clock stays inside it and the clicks at
+    // 1.0, 1.5, 2.0 and 2.5 s come round again where the clock says.
+    do {
+        let player = StretchPlayer(sampleRate: sr)
+        player.rate = 0.75
+        player.setLoop(Int64(sr)..<Int64(3 * sr))
+        let (out, map) = play(player, seconds: 9, speed: { _ in 0.75 })
+        check(map.allSatisfy { $0.first.sourceStart >= sr - 1 && $0.first.sourceEnd <= 3 * sr + 1 }, "the clock stays inside the loop")
+        let wraps = map.enumerated().filter { $0.element.wrapped }.map { $0.offset * 512 + $0.element.second.outOffset }
+        check(wraps.count == 3, "three times round in 9 s, got \(wraps.count)")
+        var worst = 0.0, found = 0
+        for pass in [0] + wraps {
+            for c in [3, 4, 5] {
+                let centre = Double(c * clickEvery + clickLength / 2)
+                guard let expected = outputFrame(of: centre, in: map, from: pass), expected < Double(out.count) - sr * 0.2,
+                      let heard = clickCentre(out, near: expected, width: Int(sr * 0.12)) else { continue }
+                found += 1
+                worst = max(worst, abs(heard - expected) / sr * 1000)
+            }
+        }
+        print(String(format: "  stretch: looping, clock off by at most %.1f ms over %d clicks", worst, found))
+        check(found >= 9 && worst < 12, "loop: \(found) clicks within 12 ms of the clock, worst \(worst)")
+    }
+}

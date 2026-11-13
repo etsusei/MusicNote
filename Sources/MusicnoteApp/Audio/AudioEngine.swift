@@ -2,6 +2,7 @@ import AudioToolbox
 import AVFoundation
 import Foundation
 import MusicnoteCore
+import MusicnotePractice
 import os
 
 /// One playable audio source (whole song, clip or stem) held in memory.
@@ -70,6 +71,10 @@ final class AudioEngine: @unchecked Sendable {
 
     private(set) var instrument: Instrument = .piano
     private var soundFont: URL?
+    /// Practice playback: when set, the tracks go through the time stretcher and its clock
+    /// drives the position, the MIDI events and the metronome (see `setStretching`).
+    private var stretch: StretchPlayer?
+    private var stretchRate = 1.0
     private var previewing = Set<UInt8>()
 
     private init() {
@@ -91,6 +96,9 @@ final class AudioEngine: @unchecked Sendable {
         if sourceNode != nil, rate == sampleRate { return }
         if let n = sourceNode { engine.detach(n) }
         sampleRate = rate
+        os_unfair_lock_lock(&lock)
+        if stretch != nil { stretch = makeStretch(at: Double(position)) }
+        os_unfair_lock_unlock(&lock)
         let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2)!
         let node = AVAudioSourceNode(format: format) { [unowned self] _, timestamp, frameCount, abl in
             self.render(frameCount: Int(frameCount), abl: abl, timestamp: timestamp)
@@ -214,7 +222,49 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     func setLoop(_ range: Range<Int64>?) {
-        os_unfair_lock_lock(&lock); loop = range; os_unfair_lock_unlock(&lock)
+        os_unfair_lock_lock(&lock)
+        loop = range
+        if let s = stretch {
+            s.setLoop(range)
+            position = Int64(s.position); eventCursor = cursorIndex(for: position); needsAllOff = true
+        }
+        os_unfair_lock_unlock(&lock)
+    }
+
+    // MARK: Time stretching (practice)
+
+    /// Turns time-stretched playback on or off. While on, the tracks play at `setRate`'s speed
+    /// without changing pitch, and MIDI notes and the metronome follow at the same speed.
+    func setStretching(_ on: Bool) {
+        os_unfair_lock_lock(&lock)
+        if on, stretch == nil { stretch = makeStretch(at: Double(position)) }
+        if !on { stretch = nil }
+        needsAllOff = true
+        os_unfair_lock_unlock(&lock)
+    }
+
+    /// Playback speed while stretching: 1 is the original tempo. Takes effect while playing,
+    /// gliding over a few hundredths of a second.
+    func setRate(_ rate: Double) {
+        os_unfair_lock_lock(&lock)
+        stretchRate = min(max(rate, StretchPlayer.rateRange.lowerBound), StretchPlayer.rateRange.upperBound)
+        stretch?.rate = stretchRate
+        os_unfair_lock_unlock(&lock)
+    }
+
+    /// The exact source position being heard (fractional while stretching).
+    var positionExact: Double {
+        os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }
+        return stretch?.position ?? Double(position)
+    }
+
+    /// Call with the lock held.
+    private func makeStretch(at frame: Double) -> StretchPlayer {
+        let s = StretchPlayer(sampleRate: sampleRate)
+        s.rate = stretchRate
+        s.setLoop(loop)
+        s.seek(to: frame)
+        return s
     }
 
     // MARK: Transport
@@ -222,10 +272,11 @@ final class AudioEngine: @unchecked Sendable {
     func play(from frame: Int64? = nil) {
         start()
         os_unfair_lock_lock(&lock)
-        if let frame { position = max(0, frame); eventCursor = cursorIndex(for: position); needsAllOff = true }
+        if let frame { position = max(0, frame); eventCursor = cursorIndex(for: position); needsAllOff = true; stretch?.seek(to: Double(position)) }
         // A position left over from a longer source (e.g. the whole song) restarts at the top.
         if lengthFrames > 0, position >= lengthFrames {
             position = loop?.lowerBound ?? 0; eventCursor = cursorIndex(for: position); needsAllOff = true
+            stretch?.seek(to: Double(position))
         }
         playing = true
         os_unfair_lock_unlock(&lock)
@@ -239,6 +290,7 @@ final class AudioEngine: @unchecked Sendable {
     func seek(_ frame: Int64) {
         os_unfair_lock_lock(&lock)
         position = max(0, frame); eventCursor = cursorIndex(for: position); needsAllOff = true
+        stretch?.seek(to: Double(position))
         os_unfair_lock_unlock(&lock)
     }
 
@@ -247,6 +299,7 @@ final class AudioEngine: @unchecked Sendable {
 
     func stopAll() {
         pause()
+        setStretching(false)
         setTracks([]); setMidi([], enabled: false); setLoop(nil)
         setMetronome(MetronomeConfig())
     }
@@ -287,6 +340,11 @@ final class AudioEngine: @unchecked Sendable {
 
         let anySolo = tracks.contains { $0.solo } || midiSolo
         let beatFrames = metronome.bpm > 0 ? sampleRate * 60 / metronome.bpm : 0
+        if let stretch {
+            renderStretched(stretch, frameCount: frameCount, left: left, right: right, anySolo: anySolo, beatFrames: beatFrames,
+                            schedule: schedule, drumSchedule: drumSchedule)
+            return
+        }
         var pos = position
         for i in 0..<frameCount {
             if let loop, pos >= loop.upperBound || pos < loop.lowerBound {
@@ -355,6 +413,83 @@ final class AudioEngine: @unchecked Sendable {
             pos += 1
         }
         position = pos
+    }
+
+    /// The stretched path: the tracks are mixed at the source positions the stretcher asks for,
+    /// and what it hands back is heard at the positions its clock gives. Metronome clicks and
+    /// MIDI events are placed on those positions, so they stay with the audio at any speed
+    /// (the click and the instrument themselves are not stretched).
+    private func renderStretched(_ stretch: StretchPlayer, frameCount: Int, left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>,
+                                 anySolo: Bool, beatFrames: Double, schedule: AUScheduleMIDIEventBlock?, drumSchedule: AUScheduleMIDIEventBlock?) {
+        let rendered = stretch.render(frames: frameCount, left: left, right: right) { start, count, l, r in
+            for i in 0..<count { l[i] = 0; r[i] = 0 }
+            for t in tracks {
+                let audible = !t.muted && (!anySolo || t.solo)
+                let target: Float = audible ? t.gain : 0
+                if t.current < 0.0001 && target == 0 { t.current = 0; continue }
+                let d = t.buffer.floatChannelData!
+                let c0 = d[0], c1 = d[t.buffer.format.channelCount > 1 ? 1 : 0]
+                for i in 0..<count {
+                    t.current += (target - t.current) * 0.003
+                    let f = start + Int64(i)
+                    if f >= 0, f < t.frames { l[i] += c0[Int(f)] * t.current; r[i] += c1[Int(f)] * t.current }
+                }
+            }
+        }
+        for (index, seg) in [rendered.first, rendered.second].enumerated() where seg.outCount > 0 && (index == 0 || rendered.wrapped) {
+            if index == 1 {
+                // Loop wrap: silence hanging notes (drums ring on), then continue from the loop start.
+                for p in activeNotes { var b: [UInt8] = [0x80, p, 0]; schedule?(AUEventSampleTimeImmediate + AUEventSampleTime(seg.outOffset), 0, 3, &b) }
+                activeNotes.removeAll()
+                eventCursor = cursorIndex(for: Int64(seg.sourceStart))
+            }
+            let perFrame = (seg.sourceEnd - seg.sourceStart) / Double(seg.outCount)
+            for k in 0..<seg.outCount {
+                let i = seg.outOffset + k
+                let pos = seg.sourceStart + Double(k) * perFrame, next = pos + perFrame
+                if metronome.enabled, beatFrames > 0 {
+                    let origin = Double(metronome.originFrame)
+                    if floor((next - origin) / beatFrames) > floor((pos - origin) / beatFrames) {
+                        clickRemaining = Int(sampleRate * 0.03); clickPhase = 0
+                        if let anchor = metronome.barAnchorFrame {
+                            let m = ((next - Double(anchor)) / beatFrames).rounded().truncatingRemainder(dividingBy: metronome.beatsPerBar)
+                            clickAccent = abs(m) < 0.5
+                        } else { clickAccent = false }
+                    }
+                    if clickRemaining > 0 {
+                        let env = Float(clickRemaining) / Float(sampleRate * 0.03)
+                        let s = Float(sin(clickPhase)) * env * env * metronome.volume * 0.5
+                        clickPhase += 2 * .pi * (clickAccent ? 1760.0 : 1100.0) / sampleRate
+                        left[i] += s; right[i] += s; clickRemaining -= 1
+                    }
+                }
+                if midiEnabled {
+                    while eventCursor < events.count, Double(events[eventCursor].frame) < next {
+                        let e = events[eventCursor]
+                        if Double(e.frame) >= pos {
+                            let t = AUEventSampleTimeImmediate + AUEventSampleTime(i)
+                            if e.drum {
+                                var bytes: [UInt8] = e.on ? [0x99, e.pitch, e.velocity] : [0x89, e.pitch, 0]
+                                drumSchedule?(t, 0, 3, &bytes)
+                                if e.on { activeDrums.insert(e.pitch) } else { activeDrums.remove(e.pitch) }
+                            } else {
+                                var bytes: [UInt8] = e.on ? [0x90, e.pitch, e.velocity] : [0x80, e.pitch, 0]
+                                schedule?(t, 0, 3, &bytes)
+                                if e.on { activeNotes.insert(e.pitch) } else { activeNotes.remove(e.pitch) }
+                            }
+                        }
+                        eventCursor += 1
+                    }
+                }
+            }
+        }
+        position = Int64(stretch.position)
+        if loop == nil, lengthFrames > 0, position >= lengthFrames {
+            playing = false
+            for p in activeNotes { var b: [UInt8] = [0x80, p, 0]; schedule?(AUEventSampleTimeImmediate, 0, 3, &b) }
+            for p in activeDrums { var b: [UInt8] = [0x89, p, 0]; drumSchedule?(AUEventSampleTimeImmediate, 0, 3, &b) }
+            activeNotes.removeAll(); activeDrums.removeAll()
+        }
     }
 
     // MARK: Previews (main thread)
