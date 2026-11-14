@@ -29,13 +29,47 @@ func runPracticeChecks() {
             check(false, "exported MIDI reads back"); continue
         }
         eq(file.ppq, 960, "ppq")
-        check(abs(file.initialBpm - t.bpm) < 0.01, "tempo in the file, got \(file.initialBpm)")
+        check(abs(file.initialBpm - t.bpm / 2) < 0.01, "the file carries half the tempo, got \(file.initialBpm)")
+        // A note keeps its beat: twice as late in seconds at half the tempo.
+        if let first = file.tracks.flatMap(\.notes).min(by: { $0.startTick < $1.startTick }) {
+            let want = Double(notes[0].startUs - LogicRoundTrip.startUs(t)) / 1e6 * 2
+            check(abs(file.seconds(atTick: first.startTick) - want) < 0.001, "first note \(file.seconds(atTick: first.startTick)) s into the half-speed file, want \(want)")
+        }
         let back = LogicRoundTrip.fit(LogicRoundTrip.notes(from: file, timing: t), durationUs: 8_000_000)
         eq(back.notes.count, notes.count, "note count after the round trip")
         eq(back.dropped, 0, "nothing dropped")
         for (a, b) in zip(notes, back.notes) {
             check(a.pitch == b.pitch && a.velocity == b.velocity && abs(a.startUs - b.startUs) < 1_000 && abs(a.endUs - b.endUs) < 1_000,
                   "round trip \(a.pitch) \(a.startUs)–\(a.endUs) → \(b.pitch) \(b.startUs)–\(b.endUs)")
+        }
+    }
+
+    // Which speed a returned file is at is told from the notes: the half-speed files of now,
+    // a full-speed file of before, and the exported speed when there is nothing to tell by.
+    let longer = (0..<24).map { i in MidiNote(pitch: 48 + (i * 7) % 24, startUs: Int64(i) * 430_000 + 300_000, endUs: Int64(i) * 430_000 + 650_000) }
+    for t in [timing(), timing(bpm: 93.5, origin: 130_000, anchor: nil)] {
+        for speed in [0.5, 1.0] {
+            guard let file = try? MidiFileReader.read(LogicRoundTrip.midiData(notes: longer, timing: t, speed: speed)) else {
+                check(false, "exported MIDI reads back"); continue
+            }
+            let read = LogicRoundTrip.read(file, timing: t, reference: longer)
+            eq(read.speed, speed, "a file exported at \(speed) is read at \(speed)")
+            eq(read.report.verdict, .aligned, "and its notes are in place")
+            // To within a tick of the file.
+            check(zip(read.take.notes, longer).allSatisfy { abs($0.startUs - $1.startUs) < 1_000 && $0.pitch == $1.pitch } && read.take.notes.count == longer.count,
+                  "at their own times, got \(read.take.notes.map(\.startUs))")
+        }
+        if let file = try? MidiFileReader.read(LogicRoundTrip.midiData(notes: longer, timing: t)) {
+            eq(LogicRoundTrip.read(file, timing: t, reference: []).speed, 0.5, "nothing to compare with: the exported speed")
+            // The whole take a bar late in the half-speed project (two bars of its seconds).
+            let barUs = Int64(t.grid.beatUs * 4)
+            let late = LogicRoundTrip.midiData(notes: longer.map { var n = $0; n.startUs += barUs; n.endUs += barUs; return n }, timing: t)
+            if let f = try? MidiFileReader.read(late) {
+                let read = LogicRoundTrip.read(f, timing: t, reference: longer)
+                eq(read.speed, 0.5, "a shifted half-speed take is still read at half speed")
+                if case .shifted(let us) = read.report.verdict { check(abs(us - barUs) < 2_000, "and found a bar late, got \(us)") }
+                else { check(false, "a bar late is found, got \(read.report.verdict)") }
+            }
         }
     }
 
@@ -81,14 +115,15 @@ func runPracticeChecks() {
         eq(file.tracks[1].notes.count, 3, "three notes read")
         check(abs(file.seconds(atTick: 960) - 1.2) < 1e-9, "two beats at 100 BPM")
         check(abs(file.seconds(atTick: 1440) - 2.4) < 1e-9, "the third beat runs at 50 BPM")
-        let take = LogicRoundTrip.fit(LogicRoundTrip.notes(from: file, timing: timing()), durationUs: 10_000_000)
+        let take = LogicRoundTrip.fit(LogicRoundTrip.notes(from: file, timing: timing(), speed: 1), durationUs: 10_000_000)
+        eq(LogicRoundTrip.notes(from: file, timing: timing(), speed: 0.5).notes.last?.endUs, 1_200_000, "a half-speed project's times are halved")
         eq(take.notes.map(\.pitch), [60, 64], "the drum-channel note is left out")
         eq(take.notes.first?.endUs, 1_200_000, "C4 ends where the tempo changes")
         eq(take.notes.last?.startUs, 600_000, "E4 starts on the second beat")
         eq(take.notes.last?.endUs, 2_400_000, "E4 ends after a slow beat")
         eq(take.pedals, [PedalSpan(startUs: 0, endUs: 1_200_000)], "pedal span")
         // Cut to a shorter clip: E4 is shortened, nothing is lost.
-        let cut = LogicRoundTrip.fit(LogicRoundTrip.notes(from: file, timing: timing()), durationUs: 1_000_000)
+        let cut = LogicRoundTrip.fit(LogicRoundTrip.notes(from: file, timing: timing(), speed: 1), durationUs: 1_000_000)
         eq(cut.notes.last?.endUs, 1_000_000, "note cut at the clip end")
         eq(cut.pedals.first?.endUs, 1_000_000, "pedal cut at the clip end")
     } else { check(false, "hand-written MIDI file reads") }
@@ -165,6 +200,13 @@ func runPracticeFiles(_ args: [String]) async -> Int32 {
         try await pipeline.exportWav(source, clipOf: item, padUs: padUs, to: original)
         let a = await seconds(original)
         print("original \(a) s, want \(want)"); ok = ok && abs(a - want) < 0.002
+        // The half-speed file that goes to Logic: twice as long, to the sample.
+        let slow = out.appendingPathComponent("1 原曲（半速）.wav")
+        let t0 = Date()
+        try OfflineStretch.stretchFile(original, to: slow, timeRatio: 1 / LogicRoundTrip.speed)
+        let a2 = await seconds(slow)
+        print("original at half speed \(a2) s, want \(a * 2), made in \(String(format: "%.1f", Date().timeIntervalSince(t0))) s")
+        ok = ok && abs(a2 - a * 2) < 0.0005
 
         if let stem = item.separation.flatMap({ $0.mix ?? item.selectedStem.flatMap($0.stem) }) {
             let file = out.appendingPathComponent("2 分轨.wav")
@@ -180,9 +222,12 @@ func runPracticeFiles(_ args: [String]) async -> Int32 {
             } else { print("FAIL no backing written"); ok = false }
         } else { print("no stem kept for this clip") }
 
-        let mid = out.appendingPathComponent("3 MIDI.mid")
+        let mid = out.appendingPathComponent("3 MIDI（半速）.mid")
         try LogicRoundTrip.midiData(notes: midi.notes, timing: timing).write(to: mid)
-        let back = LogicRoundTrip.fit(LogicRoundTrip.notes(from: try MidiFileReader.read(Data(contentsOf: mid)), timing: timing), durationUs: item.durationUs)
+        let read = LogicRoundTrip.read(try MidiFileReader.read(Data(contentsOf: mid)), timing: timing, reference: midi.notes)
+        print("MIDI file at \(String(format: "%.2f", timing.bpm * LogicRoundTrip.speed)) BPM, read back at speed \(read.speed)")
+        ok = ok && read.speed == LogicRoundTrip.speed
+        let back = LogicRoundTrip.fit(read.take, durationUs: item.durationUs)
         // Each note against the returned note of its pitch that starts nearest.
         var worst: Int64 = 0
         let sent = LogicRoundTrip.withoutOverlaps(midi.notes)
@@ -200,6 +245,40 @@ func runPracticeFiles(_ args: [String]) async -> Int32 {
     } catch {
         print("FAIL", error.localizedDescription); return 1
     }
+}
+
+/// The half-speed audio for Logic: every moment of the source must land at twice its time.
+/// Clicks at uneven places are stretched and looked for again.
+func runOfflineStretchChecks() {
+    let sr = 44_100.0
+    let frames = Int(sr * 12)
+    let clicks = [0.31, 0.9, 1.75, 2.02, 3.4, 4.87, 5.5, 6.66, 8.01, 9.3, 10.45, 11.6]
+    var left = [Float](repeating: 0, count: frames), right = left
+    // A quiet steady tone under the clicks, so the stretcher has something to hold on to.
+    for i in 0..<frames { left[i] = Float(0.05 * sin(2 * Double.pi * 220 * Double(i) / sr)); right[i] = left[i] }
+    for c in clicks {
+        let at = Int(c * sr)
+        for k in 0..<220 {
+            let v = Float(0.8 * sin(Double.pi * Double(k) / 220) * sin(2 * Double.pi * 2000 * Double(k) / sr))
+            left[at + k] += v; right[at + k] += v
+        }
+    }
+    let out = OfflineStretch.stretch(left: left, right: right, sampleRate: sr, timeRatio: 2)
+    eq(out.left.count, frames * 2, "half speed is exactly twice as long")
+    eq(out.right.count, frames * 2, "both channels")
+    // Each click: the loudest moment within 100 ms of where it should be.
+    var worst = 0.0
+    for c in clicks {
+        let want = Int(c * 2 * sr) + 220
+        let lo = max(0, want - 4410), hi = min(out.left.count, want + 4410)
+        guard lo < hi else { continue }
+        var peak = lo
+        for i in lo..<hi where abs(out.left[i]) > abs(out.left[peak]) { peak = i }
+        check(abs(out.left[peak]) > 0.2, "click at \(c) s is still a click, peak \(abs(out.left[peak]))")
+        worst = max(worst, abs(Double(peak - want)) / sr)
+    }
+    check(worst < 0.012, "clicks land at twice their time, worst \(String(format: "%.1f", worst * 1000)) ms off (of half-speed time)")
+    eq(OfflineStretch.stretch(left: [], right: [], sampleRate: sr, timeRatio: 2).left.count, 0, "nothing in, nothing out")
 }
 
 /// Time-stretched playback: the clock must say where the audio really is. A click every half

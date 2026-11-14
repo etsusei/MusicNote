@@ -274,8 +274,8 @@ enum DebugPractice {
             s.setRate(0.5)
             await wait(0.5)
             let half = await speed(1.5)
-            let st = e.speedState()
-            note("time stretching \(st.stretching ? "on" : "OFF") \(st.stretching ? "OK" : "FAIL")")
+            let stretching = e.isStretching
+            note("time stretching \(stretching ? "on" : "OFF") \(stretching ? "OK" : "FAIL")")
             note("speed 1.0: played at \(String(format: "%.2f", full)) × \(abs(full - 1) < 0.05 ? "OK" : "FAIL")")
             note("speed set to 0.5 while playing: played at \(String(format: "%.2f", half)) × \(abs(half - 0.5) < 0.05 ? "OK" : "FAIL")")
             s.togglePlay()

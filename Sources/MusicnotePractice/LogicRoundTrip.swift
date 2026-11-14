@@ -37,7 +37,15 @@ public struct PracticeMidi: Record {
 /// the same moment, `startUs`: the bar line at or just before the clip start (a beat line when
 /// bar 1 is not set). Dropped together at bar 1 of a Logic project at the MIDI file's tempo,
 /// they line up with each other and Logic's bar lines fall on the music's.
+///
+/// The files are for checking the MIDI against the audio by ear and eye, so they play at
+/// `speed`, half the music's: the audio is stretched to twice its length at the same pitch and
+/// the MIDI file carries half the tempo, its notes on the same beats. Times read back from the
+/// project are scaled to the music's speed again.
 public enum LogicRoundTrip {
+    /// How fast the exported files play, as a fraction of the music's speed.
+    public static let speed = 0.5
+
     /// Clip time of the files' first sample and of tick 0: zero or negative (silence in front).
     public static func startUs(_ timing: TimingConfirmation) -> Int64 {
         let grid = timing.anchoredOnBeat.grid
@@ -67,8 +75,10 @@ public enum LogicRoundTrip {
         return out.indices.filter { !drop.contains($0) }.map { out[$0] }
     }
 
-    /// The MIDI file for Logic: tick 0 is `startUs`, the tempo is the confirmed one throughout.
-    public static func midiData(notes: [MidiNote], timing: TimingConfirmation, trackName: String = "Musicnote") -> Data {
+    /// The MIDI file for Logic: tick 0 is `startUs`, the tempo is the confirmed one times
+    /// `speed` throughout. The notes sit on the beats they are on in the music.
+    public static func midiData(notes: [MidiNote], timing: TimingConfirmation, speed: Double = LogicRoundTrip.speed,
+                                trackName: String = "Musicnote") -> Data {
         let notes = withoutOverlaps(notes)
         let start = startUs(timing)
         let beatUs = timing.grid.beatUs
@@ -77,7 +87,7 @@ public enum LogicRoundTrip {
             let s = tick(n.startUs)
             return .init(pitch: n.pitch, velocity: n.velocity, startTick: s, durationTicks: max(1, tick(n.endUs) - s))
         }
-        var writer = MidiFileWriter(bpm: timing.bpm, meter: timing.meter, key: timing.key)
+        var writer = MidiFileWriter(bpm: timing.bpm * speed, meter: timing.meter, key: timing.key)
         writer.trackName = trackName
         return writer.data(notes: out)
     }
@@ -91,11 +101,12 @@ public enum LogicRoundTrip {
 
     /// The notes of a file exported from that Logic project, in clip time and not yet cut to
     /// the clip (see `fit`). Times come from the file's own tempo map, so the project may run
-    /// at another tempo than the clip's as long as the audio still sits at bar 1. Drum-channel
-    /// notes are left out.
-    public static func notes(from file: MidiFileContents, timing: TimingConfirmation) -> Imported {
+    /// at another tempo than the exported one as long as the audio still sits at bar 1. `speed`
+    /// is how fast that audio plays (see `read` when it is not known). Drum-channel notes are
+    /// left out.
+    public static func notes(from file: MidiFileContents, timing: TimingConfirmation, speed: Double = LogicRoundTrip.speed) -> Imported {
         let start = startUs(timing)
-        func us(_ tick: Int) -> Int64 { Int64((file.seconds(atTick: tick) * 1_000_000).rounded()) + start }
+        func us(_ tick: Int) -> Int64 { Int64((file.seconds(atTick: tick) * speed * 1_000_000).rounded()) + start }
         var notes: [MidiNote] = []
         var pedals: [PedalSpan] = []
         for track in file.tracks {
@@ -120,6 +131,28 @@ public enum LogicRoundTrip {
         notes.sort { ($0.startUs, $0.pitch) < ($1.startUs, $1.pitch) }
         pedals.sort { $0.startUs < $1.startUs }
         return Imported(notes: notes, pedals: pedals)
+    }
+
+    public struct Read: Sendable {
+        public var take: Imported
+        public var report: AlignmentCheck.Report
+        /// The speed the take was read at: `speed`, or 1 for a project made from full-speed files.
+        public var speed: Double
+    }
+
+    /// A file from the clip's Logic project, read at the speed that puts its notes on the
+    /// transcription's. Files exported before the half-speed ones were made at full speed, and
+    /// a project may have been brought back to full speed by hand; read at the wrong speed the
+    /// notes drift ever further from the transcription and nothing matches. Where neither
+    /// speed can be told from the notes, the exported files' speed is taken.
+    public static func read(_ file: MidiFileContents, timing: TimingConfirmation, reference: [MidiNote]) -> Read {
+        let reads = [speed, 1].map { s -> Read in
+            let take = notes(from: file, timing: timing, speed: s)
+            return Read(take: take, report: AlignmentCheck.compare(take: take.notes, reference: reference), speed: s)
+        }
+        if reads[1].report.verdict != .unknown,
+           reads[0].report.verdict == .unknown || reads[1].report.matched > reads[0].report.matched { return reads[1] }
+        return reads[0]
     }
 
     /// A take moved earlier by `shiftUs` (0 keeps it in place) and cut to the clip. `dropped`

@@ -12,6 +12,8 @@ struct PracticeImportPreview: Identifiable {
     var take: LogicRoundTrip.Imported
     var report: AlignmentCheck.Report
     var durationUs: Int64
+    /// The speed the file turned out to be at: half (the exported files) or full.
+    var speed: Double
 
     var shiftUs: Int64? { if case .shifted(let us) = report.verdict { us } else { nil } }
 }
@@ -40,15 +42,14 @@ extension AppModel {
         guard let item = item(itemId), let timing = item.timing else { return nil }
         do {
             let file = try MidiFileReader.read(Data(contentsOf: url))
-            let take = LogicRoundTrip.notes(from: file, timing: timing)
-            guard !take.notes.isEmpty else {
+            let reference = confirmedMidi(item)?.notes ?? workingMidi(itemId)?.notes ?? []
+            let read = LogicRoundTrip.read(file, timing: timing, reference: reference)
+            guard !read.take.notes.isEmpty else {
                 alert = AppAlert(title: "这个 MIDI 文件里没有音符", message: "请在 Logic 里选中钢琴的 MIDI 片段，再用「文件 › 导出 › 所选内容为 MIDI 文件」导出。")
                 return nil
             }
-            let reference = confirmedMidi(item)?.notes ?? workingMidi(itemId)?.notes ?? []
-            return PracticeImportPreview(fileName: url.lastPathComponent, take: take,
-                                         report: AlignmentCheck.compare(take: take.notes, reference: reference),
-                                         durationUs: item.durationUs)
+            return PracticeImportPreview(fileName: url.lastPathComponent, take: read.take, report: read.report,
+                                         durationUs: item.durationUs, speed: read.speed)
         } catch {
             alert = AppAlert(title: "读不了这个 MIDI 文件", message: error.localizedDescription)
             return nil
@@ -79,7 +80,8 @@ extension AppModel {
     // MARK: To Logic
 
     /// Writes the clip, the selected stem and the MIDI into a new folder the user places, all
-    /// three starting at the same moment (see LogicRoundTrip). Returns the folder.
+    /// three starting at the same moment and playing at half speed (see LogicRoundTrip).
+    /// Returns the folder.
     func exportLogicBundle(_ itemId: UUID) async -> URL? {
         guard let item = item(itemId), let timing = item.timing, let notes = practiceNotes(item) else { return nil }
         guard let source = Pipeline.resolve(item.source) else {
@@ -88,7 +90,7 @@ extension AppModel {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
         panel.prompt = "导出到这里"
-        panel.message = "会在这里新建一个文件夹，放原曲片段、分轨和 MIDI"
+        panel.message = "会在这里新建一个文件夹，放半速的原曲片段、分轨和 MIDI"
         guard panel.runModal() == .OK, let parent = panel.url else { return nil }
         let base = "\(song(item.songId)?.title ?? "Musicnote") - \(item.title)".replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
         var folder = parent.appendingPathComponent(base + "（Logic）", isDirectory: true)
@@ -97,16 +99,28 @@ extension AppModel {
             folder = parent.appendingPathComponent("\(base)（Logic）\(n)", isDirectory: true); n += 1
         }
         let padUs = -LogicRoundTrip.startUs(timing)
+        // The audio is first written at full speed beside the result, then slowed down.
+        let scratch = folder.appendingPathComponent(".full-speed.wav")
+        func slowed(_ name: String, _ write: (URL) async throws -> Void) async throws {
+            try await write(scratch)
+            let out = folder.appendingPathComponent(name)
+            try await Task.detached(priority: .userInitiated) {
+                try OfflineStretch.stretchFile(scratch, to: out, timeRatio: 1 / LogicRoundTrip.speed)
+            }.value
+        }
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: scratch) }
             try LogicRoundTrip.midiData(notes: notes, timing: timing, trackName: item.stemLabel.isEmpty ? "Musicnote" : item.stemLabel)
-                .write(to: folder.appendingPathComponent("3 MIDI.mid"), options: .atomic)
-            try await pipeline.exportWav(source, clipOf: item, padUs: padUs, to: folder.appendingPathComponent("1 原曲.wav"))
+                .write(to: folder.appendingPathComponent("3 MIDI（半速）.mid"), options: .atomic)
+            try await slowed("1 原曲（半速）.wav") { try await self.pipeline.exportWav(source, clipOf: item, padUs: padUs, to: $0) }
             if let stem = item.separation.flatMap({ $0.mix ?? item.selectedStem.flatMap($0.stem) }) {
-                try await pipeline.exportWav(paths.url(relative: stem.relativePath), padUs: padUs,
-                                             to: folder.appendingPathComponent("2 \(item.stemLabel.isEmpty ? "分轨" : item.stemLabel).wav"))
+                try await slowed("2 \(item.stemLabel.isEmpty ? "分轨" : item.stemLabel)（半速）.wav") {
+                    try await self.pipeline.exportWav(self.paths.url(relative: stem.relativePath), padUs: padUs, to: $0)
+                }
             }
         } catch {
+            try? FileManager.default.removeItem(at: folder)
             report(error); return nil
         }
         NSWorkspace.shared.activateFileViewerSelecting([folder])

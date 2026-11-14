@@ -875,6 +875,7 @@ do {
 runDrumChecks()
 runPracticeChecks()
 runStretchChecks()
+runOfflineStretchChecks()
 runPracticePageChecks()
 runPracticeJudgeChecks()
 

@@ -52,11 +52,11 @@ struct PracticeSetupStage: View {
         Card {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeader(title: "1　送到 Logic 校准",
-                              subtitle: "导出一个文件夹：原曲片段、\(item.stemLabel.isEmpty ? "分轨" : item.stemLabel)分轨和 MIDI。三个文件从同一时刻开始，MIDI 里带着确认过的速度。")
+                              subtitle: "导出一个文件夹：原曲片段、\(item.stemLabel.isEmpty ? "分轨" : item.stemLabel)分轨和 MIDI，都是半速，音高不变，方便听清每个音。三个文件从同一时刻开始，MIDI 里带着减半后的速度。")
                 VStack(alignment: .leading, spacing: 4) {
                     step("把三个文件一起拖到 Logic 第 1 小节的开头，问是否导入速度时选「导入」。")
-                    step("对照分轨改 MIDI。不要移动音频片段的位置。")
-                    step("选中 MIDI 片段，用「文件 › 导出 › 所选内容为 MIDI 文件」导出，再拖回下面。")
+                    step("对照分轨改 MIDI。不要移动音频片段的位置，也不用把速度改回去。")
+                    step("选中 MIDI 片段，用「文件 › 导出 › 所选内容为 MIDI 文件」导出，再拖回下面。放回来时会自动换回原速。")
                 }
                 HStack(spacing: 10) {
                     Button {
@@ -64,15 +64,16 @@ struct PracticeSetupStage: View {
                         Task { exported = await model.exportLogicBundle(item.id); exporting = false }
                     } label: { Label("导出到 Logic…", systemImage: "square.and.arrow.up") }
                         .buttonStyle(PrimaryButtonStyle()).disabled(exporting || model.practiceNotes(item) == nil || item.timing == nil)
-                    if exporting { ProgressView().controlSize(.small); Text("正在导出音频").font(.caption12).foregroundStyle(Theme.textSecondary) }
+                    if exporting { ProgressView().controlSize(.small); Text("正在导出并放慢音频，长片段要等一会儿").font(.caption12).foregroundStyle(Theme.textSecondary) }
                     else if let exported {
                         Label("已导出到「\(exported.lastPathComponent)」", systemImage: "checkmark.circle").font(.caption12).foregroundStyle(Theme.success)
                     }
                     Spacer()
                     if let t = item.timing {
                         let pad = Double(-LogicRoundTrip.startUs(t)) / 1e6
-                        Text(pad > 0.0005 ? "\(String(format: "%.1f", t.bpm)) BPM · 开头垫了 \(String(format: "%.2f", pad)) 秒静音，让 Logic 的小节线对上音乐"
-                                          : "\(String(format: "%.1f", t.bpm)) BPM · 片段开头就是小节线")
+                        let tempo = String(format: "%.2f", t.bpm * LogicRoundTrip.speed)
+                        Text(pad > 0.0005 ? "Logic 里是 \(tempo) BPM · 开头垫了静音，让小节线对上音乐"
+                                          : "Logic 里是 \(tempo) BPM · 片段开头就是小节线")
                             .font(.caption12).foregroundStyle(Theme.textSecondary)
                     }
                 }
@@ -197,6 +198,7 @@ struct PracticeSetupStage: View {
         guard let take = model.savePracticeMidi(item.id, p, undoShift: undoShift) else { return }
         let dropped = p.take.notes.count - take.notes.count
         lastImport = "已导入 \(take.notes.count) 个音符" + (p.report.verdict == .aligned ? "，位置和转录一致" : undoShift ? "，已移回原位" : "")
+            + (p.speed == 1 ? "（这个文件是原速的，按原速读入）" : "")
             + (dropped > 0 ? "（\(dropped) 个在片段之外，没有导入）" : "")
     }
 

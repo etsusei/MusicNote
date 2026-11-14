@@ -10,7 +10,7 @@ Musicnote 是一个自用的 macOS 音乐学习与和弦知识库。从喜欢的
 
 另外可以把片段的鼓用 Logic 13 拆成单个鼓件、转成步进节奏型，在鼓机里修改，再放到 Playground 的和弦下面一起播放。
 
-还有一个练琴模式：把钢琴分轨转出的 MIDI 送到 Logic 手动校准，再放回来，看着下落的音符跟着原曲练，可以变速不变调、循环某几个小节；接上电钢琴后会显示按对还是按错。
+还有一个练琴模式：把钢琴分轨转出的 MIDI 和音频以半速送到 Logic 手动校准，再放回来，看着下落的音符跟着原曲练，可以变速不变调、循环某几个小节；接上电钢琴后会显示按对还是按错。
 
 设计文档：[docs/开发文档.md](docs/开发文档.md)、[docs/待定事项.md](docs/待定事项.md)、[docs/练琴模式.md](docs/练琴模式.md)。
 
@@ -54,7 +54,7 @@ swift run MusicnoteChecks     # 核心逻辑检查（命令行工具没有 XCTes
 | --- | --- |
 | `Sources/MusicnoteCore` | 数据模型、SQLite 存储、时间与乐理、和弦分组、MIDI 写出、流水线、provider 适配、Playground 规则 |
 | `Sources/MusicnoteApp` | SwiftUI 三栏界面、AppKit 钢琴卷帘、AVAudioEngine 共享时钟、聊天 |
-| `Sources/MusicnotePractice` | 练琴模式不依赖界面的部分：读 MIDI 文件、往返 Logic 的时间换算和位置比对、变速播放和它的时钟 |
+| `Sources/MusicnotePractice` | 练琴模式不依赖界面的部分：读 MIDI 文件、往返 Logic 的时间换算和位置比对、给 Logic 用的半速音频、变速播放和它的时钟 |
 | `Sources/RubberBand` | Rubber Band Library 4.0.0 的源码（第三方，GPL），变速不变调用 |
 | `Sources/MusicnoteChecks` | 核心检查；`e2e` / `seed` 子命令用真实歌曲跑后端，`practice` 子命令对做完的片段跑一遍 Logic 导出和导回 |
 | `Sources/StemSeparator` | Logic 模型拆轨 helper（JSONL 进度） |
