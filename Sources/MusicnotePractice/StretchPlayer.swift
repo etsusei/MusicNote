@@ -41,6 +41,8 @@ public final class StretchPlayer {
     public var rate: Double = 1 { didSet { rate = min(max(rate, Self.rateRange.lowerBound), Self.rateRange.upperBound) } }
     /// Speed in effect right now, gliding toward `rate`.
     public private(set) var currentRate: Double = 1
+    /// Speed of what is being heard right now: `currentRate` once it has passed through the stretcher.
+    public var heardRate: Double { clockRate }
     /// Source frame heard at the next output frame.
     public private(set) var position: Double = 0
     /// The source range repeated while playing. Set it through `setLoop`.

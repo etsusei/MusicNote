@@ -75,8 +75,12 @@ final class PracticeSessionModel {
 
     func start() {
         Self.current = self
+        if let model { PracticeLog.shared.open(at: model.paths.root.appendingPathComponent("logs/practice.log")) }
+        log("—— practice opened: \(title) / \(item.title), \(String(format: "%.1f", Double(durationUs) / 1e6)) s, \(timeline.notes.count) notes, \(String(format: "%g", bpm)) BPM; last speed \(settings.rate), backing \(settings.backing.rawValue)")
         let e = AudioEngine.shared
-        e.stopAll()
+        // Hold the engine first: pages still on their way out clear it as they go.
+        e.hold(for: self)
+        e.reset()
         e.configure(sampleRate: Self.sampleRate)
         e.setMetronome(MetronomeConfig())
         e.setTracks([])
@@ -89,6 +93,56 @@ final class PracticeSessionModel {
         loadTracks()
         keyboard.onKey = { [weak self] pitch, down, hostTime in self?.key(pitch, down: down, hostTime: hostTime) }
         keyboard.start()
+        logState("after setup")
+        watch()
+    }
+
+    // MARK: Log
+
+    @ObservationIgnored private var watcher: Timer?
+    @ObservationIgnored private var watchUntil = Date.distantPast
+    @ObservationIgnored private var lastSample: (position: Double, time: Date, renders: Int, misses: Int)?
+
+    func log(_ line: String) { PracticeLog.shared.write(line) }
+
+    /// One line of what the engine is doing about speed right now, with how fast the position
+    /// really moved since the line before.
+    private func logState(_ label: String) {
+        let st = AudioEngine.shared.speedState()
+        let now = Date()
+        var measured = "-"
+        var since = ""
+        if let last = lastSample, now.timeIntervalSince(last.time) > 0.02 {
+            measured = String(format: "%.2f×", (st.position - last.position) / st.sampleRate / now.timeIntervalSince(last.time))
+            since = " buffers+\(st.renders - last.renders) skipped+\(st.lockMisses - last.misses)"
+        }
+        lastSample = (st.position, now, st.renders, st.lockMisses)
+        log(String(format: "  %@: %@ %@ | slider %.3f | engine asked %.3f target %.3f gliding %.3f heard %.3f | measured %@ | at %.2f s | buffer %d frames, %d tracks%@",
+                   label, st.playing ? "playing" : "paused", st.stretching ? "stretching ON" : "stretching OFF (speed cannot change)",
+                   settings.rate, st.asked, st.target, st.gliding, st.heard, measured, st.position / st.sampleRate, st.bufferFrames, st.tracks, since))
+    }
+
+    /// Samples the engine ten times a second for the next three seconds (longer if called again).
+    private func watch() {
+        watchUntil = Date().addingTimeInterval(3)
+        guard watcher == nil else { return }
+        lastSample = nil
+        let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.logState("sample")
+                if Date() > self.watchUntil { self.watcher?.invalidate(); self.watcher = nil; self.log("  (sampling stops; it starts again at the next change)") }
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        watcher = t
+    }
+
+    /// The speed slider is grabbed or let go.
+    func sliderEditing(_ editing: Bool) {
+        log(editing ? "speed slider: grabbed at \(settings.rate)" : "speed slider: released at \(settings.rate)")
+        watch()
+        if !editing { persist() }
     }
 
     /// A key on the connected keyboard. It is judged against the music at the moment it was
@@ -107,7 +161,11 @@ final class PracticeSessionModel {
         keyboard.stop()
         loader?.cancel()
         persist()
-        AudioEngine.shared.stopAll()
+        watcher?.invalidate(); watcher = nil
+        logState("closing")
+        log("—— practice closed")
+        AudioEngine.shared.release(from: self)
+        AudioEngine.shared.reset()
         if Self.current === self { Self.current = nil }
     }
 
@@ -155,6 +213,7 @@ final class PracticeSessionModel {
         e.setTracks(Array(tracks.values))
         e.setLength(frame(durationUs))
         e.setInstrumentVolume(settings.midiGain)
+        log("backing loaded: \(kind.rawValue), \(track.frames) frames\(kind == settings.backing ? " (the one playing)" : "")")
     }
 
     // MARK: Transport
@@ -163,15 +222,19 @@ final class PracticeSessionModel {
 
     func togglePlay() {
         let e = AudioEngine.shared
-        if e.isPlaying { e.pause(); redraw += 1; return }
+        if e.isPlaying { e.pause(); redraw += 1; log("pause"); watch(); return }
         // At the end of the clip, start over (the loop's lead-in when looping).
         if positionUs >= durationUs - 20_000 { e.seek(frame(playRange?.lowerBound ?? 0)) }
         e.play()
+        log("play")
+        watch()
     }
 
     func seek(toUs target: Int64) {
         AudioEngine.shared.seek(frame(min(max(0, target), durationUs)))
         redraw += 1
+        // A jump is not speed: the next sample measures from here.
+        lastSample = nil
     }
 
     /// Moves by whole bars from the bar line at or before the position.
@@ -184,12 +247,20 @@ final class PracticeSessionModel {
     // MARK: Speed
 
     func setRate(_ rate: Double, save: Bool = true) {
+        let before = settings.rate
         settings.rate = min(max(rate, PracticeSettings.rateRange.lowerBound), PracticeSettings.rateRange.upperBound)
         AudioEngine.shared.setRate(settings.rate)
+        if settings.rate != before {
+            log(String(format: "speed: %.3f → %.3f (asked %.3f)", before, settings.rate, rate))
+            watch()
+        }
         if save { persist() }
     }
 
-    func stepRate(_ steps: Int) { setRate(PracticeSettings.steppedRate(settings.rate, by: steps)) }
+    func stepRate(_ steps: Int) {
+        log("key: speed \(steps > 0 ? "up" : "down") one step")
+        setRate(PracticeSettings.steppedRate(settings.rate, by: steps))
+    }
 
     // MARK: Backing and the MIDI aloud
 
@@ -197,6 +268,7 @@ final class PracticeSessionModel {
         guard available.contains(kind) else { return }
         settings.backing = kind
         for (id, _) in tracks { AudioEngine.shared.updateTrack(id, muted: id != kind.rawValue) }
+        log("backing: \(kind.rawValue)")
         persist()
     }
 
@@ -245,6 +317,7 @@ final class PracticeSessionModel {
     private func applyLoop() {
         AudioEngine.shared.setLoop(playRange.map { frame($0.lowerBound)..<frame($0.upperBound) })
         redraw += 1
+        log("loop: " + (playRange.map { String(format: "playing %.2f–%.2f s", Double($0.lowerBound) / 1e6, Double($0.upperBound) / 1e6) } ?? "off"))
     }
 
     func toggleLoop() {

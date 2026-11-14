@@ -256,6 +256,7 @@ final class AudioEngine: @unchecked Sendable {
     /// Turns time-stretched playback on or off. While on, the tracks play at `setRate`'s speed
     /// without changing pitch, and MIDI notes and the metronome follow at the same speed.
     func setStretching(_ on: Bool) {
+        if on != (stretch != nil) { PracticeLog.shared.write("engine: time stretching turned \(on ? "on" : "off")") }
         os_unfair_lock_lock(&lock)
         if on, stretch == nil { stretch = makeStretch(at: Double(position)) }
         if !on { stretch = nil }
@@ -346,13 +347,58 @@ final class AudioEngine: @unchecked Sendable {
     var isPlaying: Bool { os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }; return playing }
     var positionFrames: Int64 { os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }; return position }
 
+    /// A page that is going away clears the engine. While the practice page holds the engine
+    /// this does nothing: the page being left says goodbye after the practice page has already
+    /// set the engine up, and would otherwise switch its time stretching off again (the speed
+    /// control then did nothing at all).
     func stopAll() {
+        if holder != nil {
+            PracticeLog.shared.write("engine: a leaving page asked to clear the engine; ignored, practice holds it")
+            return
+        }
+        reset()
+    }
+
+    /// Clears everything: tracks, MIDI, loop, metronome, time stretching.
+    func reset() {
         pause()
         setStretching(false)
         setInstrumentVolume(1)
         setTracks([]); setMidi([], enabled: false); setLoop(nil)
         setMetronome(MetronomeConfig())
     }
+
+    /// The practice sitting that holds the engine, if any (see `stopAll`).
+    private weak var holder: AnyObject?
+    func hold(for owner: AnyObject) { holder = owner }
+    func release(from owner: AnyObject) { if holder === owner { holder = nil } }
+
+    /// What the engine is doing about speed, for the practice log.
+    struct SpeedState {
+        var stretching = false
+        var playing = false
+        var asked = 1.0      // the speed last given to setRate
+        var target = 1.0     // what the stretcher is heading for
+        var gliding = 1.0    // what it is being told this buffer
+        var heard = 1.0      // what is coming out now
+        var position = 0.0   // source frames
+        var renders = 0      // buffers rendered so far
+        var stretchedRenders = 0
+        var lockMisses = 0   // buffers skipped because the engine was being changed
+        var bufferFrames = 0
+        var tracks = 0
+        var sampleRate = 0.0
+    }
+
+    func speedState() -> SpeedState {
+        os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }
+        return SpeedState(stretching: stretch != nil, playing: playing, asked: stretchRate, target: stretch?.rate ?? 1,
+                          gliding: stretch?.currentRate ?? 1, heard: stretch?.heardRate ?? 1,
+                          position: stretch?.position ?? Double(position), renders: renderCount, stretchedRenders: stretchedRenderCount,
+                          lockMisses: lockMissCount, bufferFrames: lastBufferFrames, tracks: tracks.count, sampleRate: sampleRate)
+    }
+
+    private var renderCount = 0, stretchedRenderCount = 0, lockMissCount = 0, lastBufferFrames = 0
 
     private func cursorIndex(for frame: Int64) -> Int {
         var lo = 0, hi = events.count
@@ -372,8 +418,9 @@ final class AudioEngine: @unchecked Sendable {
         let left = buffers[0].mData!.assumingMemoryBound(to: Float.self)
         let right = buffers.count > 1 ? buffers[1].mData!.assumingMemoryBound(to: Float.self) : left
         for i in 0..<frameCount { left[i] = 0; right[i] = 0 }
-        guard os_unfair_lock_trylock(&lock) else { return }
+        guard os_unfair_lock_trylock(&lock) else { lockMissCount += 1; return }
         defer { os_unfair_lock_unlock(&lock) }
+        renderCount += 1; lastBufferFrames = frameCount
 
         let schedule = sampler.auAudioUnit.scheduleMIDIEventBlock
         let drumSchedule = drumSampler.auAudioUnit.scheduleMIDIEventBlock
@@ -402,6 +449,7 @@ final class AudioEngine: @unchecked Sendable {
         let anySolo = tracks.contains { $0.solo } || midiSolo
         let beatFrames = metronome.bpm > 0 ? sampleRate * 60 / metronome.bpm : 0
         if let stretch {
+            stretchedRenderCount += 1
             renderStretched(stretch, frameCount: frameCount, left: left, right: right, anySolo: anySolo, beatFrames: beatFrames,
                             schedule: schedule, drumSchedule: drumSchedule)
             return

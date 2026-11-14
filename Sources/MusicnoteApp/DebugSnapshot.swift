@@ -260,6 +260,29 @@ enum DebugPractice {
         note("backings loaded: \(PracticeBacking.allCases.filter { s.available.contains($0) }.map(\.rawValue)) in \(String(format: "%.1f", Date().timeIntervalSince(t0))) s; chosen \(s.settings.backing.rawValue)")
         if s.loopOn { s.toggleLoop() }
         s.setRate(1)
+        // MUSICNOTE_PRACTICE_DRIVE=speed: only whether the speed control works, in a few seconds.
+        if ProcessInfo.processInfo.environment["MUSICNOTE_PRACTICE_DRIVE"] == "speed" {
+            func speed(_ seconds: Double) async -> Double {
+                let a = s.positionUs, t = Date()
+                await wait(seconds)
+                return Double(s.positionUs - a) / 1e6 / Date().timeIntervalSince(t)
+            }
+            s.seek(toUs: s.durationUs / 8)
+            s.togglePlay()
+            await wait(0.5)
+            let full = await speed(1.5)
+            s.setRate(0.5)
+            await wait(0.5)
+            let half = await speed(1.5)
+            let st = e.speedState()
+            note("time stretching \(st.stretching ? "on" : "OFF") \(st.stretching ? "OK" : "FAIL")")
+            note("speed 1.0: played at \(String(format: "%.2f", full)) × \(abs(full - 1) < 0.05 ? "OK" : "FAIL")")
+            note("speed set to 0.5 while playing: played at \(String(format: "%.2f", half)) × \(abs(half - 0.5) < 0.05 ? "OK" : "FAIL")")
+            s.togglePlay()
+            s.setRate(1)
+            note("done")
+            return
+        }
         s.setMidi(on: true)
 
         // Paused at a quarter of the way in.

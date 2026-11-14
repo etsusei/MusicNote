@@ -139,7 +139,7 @@ struct PracticeTopBar: View {
             HStack(spacing: 10) {
                 Text("速度").font(.system(size: 14)).foregroundStyle(palette.secondary)
                 Slider(value: Binding(get: { session.settings.rate }, set: { session.setRate($0, save: false) }),
-                       in: PracticeSettings.rateRange) { editing in if !editing { session.persist() } }
+                       in: PracticeSettings.rateRange) { editing in session.sliderEditing(editing) }
                     .frame(width: 132).tint(palette.accent).accessibilityLabel("速度")
                     .background(GeometryReader { g in
                         Color.clear.onAppear { Self.debugSpeedFrame = g.frame(in: .global) }
@@ -287,6 +287,17 @@ private struct PracticeSettingsPanel: View {
                 Slider(value: $visualOffsetMs, in: -250...250, step: 5).tint(palette.accent).accessibilityLabel("延迟校准")
                 Text("音符碰到线比听到的声音早，或者明明弹在点上却总被判错，就往左调；反过来往右调。用蓝牙耳机时通常要往左调很多。")
                     .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("运行记录").font(.system(size: 13, weight: .semibold)).foregroundStyle(palette.text)
+                    Text("速度、播放、循环的每次变化和引擎的实际反应").font(.system(size: 12)).foregroundStyle(palette.secondary)
+                }
+                Spacer()
+                Button("在访达中显示") {
+                    if let url = PracticeLog.shared.url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                }
+                .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(palette.accent)
             }
         }
         .padding(18).frame(width: 340)
