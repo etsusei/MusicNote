@@ -164,7 +164,7 @@ private struct ConfirmedPanel: View {
                 HStack(spacing: 4) {
                     Image(systemName: originalGain == 0 ? "speaker.slash" : "speaker.wave.2").font(.system(size: 11))
                         .foregroundStyle(Theme.textSecondary)
-                    Slider(value: $originalGain, in: 0...1).frame(width: 90)
+                    Slider(value: $originalGain, in: 0...1).tint(Theme.accent).frame(width: 90)
                         .onChange(of: originalGain) { _, g in model.setPlayAlongOriginalGain(Float(g)) }
                 }
                 .help("原曲音量（和弦音量不变）")

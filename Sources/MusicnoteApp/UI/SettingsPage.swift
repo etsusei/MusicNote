@@ -7,6 +7,8 @@ struct SettingsPage: View {
     @ViewState private var refURL = ""
     @ViewState private var refSection = ""
     @ViewState private var refContent = ""
+    /// Shared with the practice page.
+    @AppStorage(Theme.paletteKey) private var palette = "amber"
 
     var body: some View {
         @Bindable var model = model
@@ -19,6 +21,9 @@ struct SettingsPage: View {
                         SectionHeader(title: "外观与音色")
                         Picker("主题", selection: Binding(get: { model.settings.theme }, set: { model.settings.theme = $0; model.saveSettings() })) {
                             Text("跟随系统").tag("system"); Text("浅色").tag("light"); Text("深色").tag("dark")
+                        }.pickerStyle(.segmented).frame(width: 260)
+                        Picker("配色", selection: $palette) {
+                            Text("琥珀").tag("amber"); Text("冷白").tag("cool")
                         }.pickerStyle(.segmented).frame(width: 260)
                         InstrumentPicker()
                         Text("试听音色：钢琴、电钢琴、吉他，所有页面共用。音源为 MuseScore General（MIT）。").font(.caption12).foregroundStyle(Theme.textSecondary)

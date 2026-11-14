@@ -33,7 +33,6 @@ struct DrumInspector: View {
             .padding(14)
             .frame(width: 300, alignment: .topLeading)
             .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.borderSubtle))
     }
 
     private func hint(_ t: String, _ text: String) -> some View {
@@ -61,7 +60,7 @@ struct DrumInspector: View {
             if let piece = lane.piece { Text("对应原曲的\(piece.displayName)轨（对照选「本轨原声」）").font(.caption12).foregroundStyle(Theme.textSecondary) }
             HStack {
                 Text("音量").font(.caption12)
-                Slider(value: Binding(get: { lane.volume }, set: { pattern.groove.lanes[li].volume = $0 }), in: 0...1) { if $0 { begin() } }
+                Slider(value: Binding(get: { lane.volume }, set: { pattern.groove.lanes[li].volume = $0 }), in: 0...1) { if $0 { begin() } }.tint(Theme.accent)
                 Text("\(Int((lane.volume * 100).rounded()))%").font(.mono13).frame(width: 40, alignment: .trailing)
             }
             Text("快速填充（替换本轨）").font(.caption12).foregroundStyle(Theme.textSecondary)
@@ -125,11 +124,11 @@ struct DrumInspector: View {
         return VStack(alignment: .leading, spacing: 8) {
             title("所选的一步")
             Text("\(lane.name) · 第 \(bar) 小节第 \(beat) 拍" + (g.stepsPerBeat > 1 ? " 第 \(sub) 格" : "")).font(.caption12).foregroundStyle(Theme.textSecondary)
-            row("力度", "\(s.velocity)") { Slider(value: Binding(get: { Double(s.velocity) }, set: { v in set { $0.velocity = Int(v) } }), in: 1...127) { if $0 { begin() } } }
+            row("力度", "\(s.velocity)") { Slider(value: Binding(get: { Double(s.velocity) }, set: { v in set { $0.velocity = Int(v) } }), in: 1...127) { if $0 { begin() } }.tint(Theme.accent) }
             row("微移", String(format: "%+.0f%% · %+.0f ms", s.nudge * 100, s.nudge * stepMs)) {
-                Slider(value: Binding(get: { s.nudge }, set: { v in set { $0.nudge = (v * 100).rounded() / 100 } }), in: -0.5...0.5) { if $0 { begin() } }
+                Slider(value: Binding(get: { s.nudge }, set: { v in set { $0.nudge = (v * 100).rounded() / 100 } }), in: -0.5...0.5) { if $0 { begin() } }.tint(Theme.accent)
             }
-            row("概率", "\(s.chance)%") { Slider(value: Binding(get: { Double(s.chance) }, set: { v in set { $0.chance = Int(v) } }), in: 0...100, step: 5) { if $0 { begin() } } }
+            row("概率", "\(s.chance)%") { Slider(value: Binding(get: { Double(s.chance) }, set: { v in set { $0.chance = Int(v) } }), in: 0...100, step: 5) { if $0 { begin() } }.tint(Theme.accent) }
             HStack {
                 Text("连击").font(.caption12).frame(width: 34, alignment: .leading)
                 Picker("", selection: Binding(get: { s.repeats }, set: { n in begin(); set { $0.repeats = n } })) {

@@ -54,7 +54,7 @@ struct ConfirmStage: View {
                         Label(transport.isPlaying ? "暂停" : "原速循环播放", systemImage: transport.isPlaying ? "pause.fill" : "play.fill")
                     }.buttonStyle(SecondaryButtonStyle())
                     Toggle("节拍器", isOn: $metronomeOn).toggleStyle(.checkbox)
-                    Slider(value: $volume, in: 0...1).frame(width: 100)
+                    Slider(value: $volume, in: 0...1).tint(Theme.accent).frame(width: 100)
                     Text("一直早一点或晚一点，调整拍点偏移；越播越偏，调整 BPM。").font(.caption12).foregroundStyle(Theme.textSecondary)
                 }
                 HStack(alignment: .top, spacing: 24) {
@@ -143,7 +143,7 @@ struct ConfirmStage: View {
                 Text("拍点偏移 \(Int(offsetMs)) ms").font(.system(size: 13, weight: .semibold))
                 HStack {
                     Button("−10") { offsetMs -= 10 }.buttonStyle(SecondaryButtonStyle(compact: true))
-                    Slider(value: $offsetMs, in: -halfBeatMs...halfBeatMs).frame(width: 140)
+                    Slider(value: $offsetMs, in: -halfBeatMs...halfBeatMs).tint(Theme.accent).frame(width: 140)
                     Button("+10") { offsetMs += 10 }.buttonStyle(SecondaryButtonStyle(compact: true))
                 }
             }

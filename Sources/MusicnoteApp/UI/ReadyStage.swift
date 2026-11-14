@@ -327,7 +327,6 @@ struct ChordKeyboardSection: View {
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.borderSubtle))
         .accessibilityElement(children: .combine)
     }
 
@@ -729,8 +728,7 @@ struct KeyCorrectionCard: View {
             Spacer()
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.warning.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.warning.opacity(0.4)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.warning.opacity(0.1)))
     }
 }
 
@@ -818,7 +816,6 @@ struct BarShiftCard: View {
             if let dismiss { Button("保持现状") { dismiss() }.buttonStyle(SecondaryButtonStyle(compact: true)) }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.warning.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.warning.opacity(0.4)))
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.warning.opacity(0.1)))
     }
 }

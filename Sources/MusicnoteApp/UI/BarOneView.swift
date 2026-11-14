@@ -180,7 +180,6 @@ struct BarOneView: View {
                 })
         }
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.borderSubtle))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 

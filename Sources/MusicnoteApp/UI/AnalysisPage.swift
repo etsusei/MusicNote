@@ -320,7 +320,6 @@ struct SelectionStage: View {
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.borderSubtle))
     }
 
     /// Whole-song bar lines: snapping, half-time, meter, nudging, and whether the edges sit on bar lines.
@@ -369,7 +368,6 @@ struct SelectionStage: View {
             }
             .padding(12)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.borderSubtle))
         } else if model.songGridRunning.contains(item.id) {
             HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在分析整曲的拍子和小节线…").font(.caption12) }
         } else if let e = model.songGridError[item.id] {
@@ -502,7 +500,6 @@ struct StemStage: View {
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.borderSubtle))
                 HStack(spacing: 8) {
                     Button { toggle() } label: { Label(transport.isPlaying ? "暂停" : "播放", systemImage: transport.isPlaying ? "pause.fill" : "play.fill") }
                         .buttonStyle(SecondaryButtonStyle())

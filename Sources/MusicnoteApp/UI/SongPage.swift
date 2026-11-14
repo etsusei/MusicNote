@@ -12,7 +12,6 @@ struct SongPage: View {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(alignment: .center, spacing: 20) {
                     CoverView(song: song, size: 112)
-                        .shadow(color: .black.opacity(0.10), radius: 10, y: 4)
                         .onTapGesture { pickCover() }
                         .help("点击从图片导入封面")
                     VStack(alignment: .leading, spacing: 6) {

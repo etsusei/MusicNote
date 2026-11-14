@@ -20,7 +20,6 @@ struct SidebarView: View {
                     }
                     .padding(.horizontal, 8).frame(height: 28)
                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Theme.borderSubtle))
                     Menu {
                         Picker("排序", selection: $model.sortMode) { ForEach(SortMode.allCases, id: \.self) { Text($0.rawValue) } }
                     } label: { Image(systemName: "arrow.up.arrow.down") }.menuStyle(.borderlessButton).frame(width: 24).help("排序")
@@ -171,23 +170,17 @@ struct CoverView: View {
     }
 }
 
-/// A quiet two-tone tile for songs without artwork: hue from the title, initial on top.
+/// The tile for a song without artwork: the title's initial on a neutral block. No colour of
+/// its own, so a list of songs reads as a list and not as a row of badges.
 struct GeneratedCover: View {
-    @Environment(\.colorScheme) private var scheme
     var seed: String
     var size: CGFloat
     var body: some View {
-        // FNV-1a, so similar titles still land on different hues.
-        let hash = seed.unicodeScalars.reduce(UInt32(2_166_136_261)) { ($0 ^ $1.value) &* 16_777_619 }
-        let h = Double(hash % 360) / 360
-        let dark = scheme == .dark
-        let a = Color(hue: h, saturation: dark ? 0.35 : 0.22, brightness: dark ? 0.32 : 0.94)
-        let b = Color(hue: (h + 0.08).truncatingRemainder(dividingBy: 1), saturation: dark ? 0.45 : 0.32, brightness: dark ? 0.24 : 0.86)
         let initial = seed.trimmingCharacters(in: .whitespaces).first.map { String($0).uppercased() } ?? "♪"
         ZStack {
-            LinearGradient(colors: [a, b], startPoint: .topLeading, endPoint: .bottomTrailing)
-            Text(initial).font(.system(size: size * 0.42, weight: .semibold, design: .rounded))
-                .foregroundStyle(Color(hue: h, saturation: dark ? 0.3 : 0.55, brightness: dark ? 0.9 : 0.42))
+            Theme.tile
+            Text(initial).font(.system(size: size * 0.4, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
         }
     }
 }

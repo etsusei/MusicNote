@@ -6,6 +6,9 @@ struct RootView: View {
     @AppStorage("leftWidth") private var leftWidth: Double = 240
     @AppStorage("rightWidth") private var rightWidth: Double = 360
     @ViewState private var rightAutoCollapsed = false
+    /// The palette (amber or cool). Colours are resolved when a view is made, so the columns
+    /// are made anew when it changes.
+    @AppStorage(Theme.paletteKey) private var palette = "amber"
 
     private let minMain: Double = 560
 
@@ -18,7 +21,7 @@ struct RootView: View {
                     Alert(title: Text(a.title), message: Text(a.message + (a.code.map { "\n（\($0)）" } ?? "")), dismissButton: .default(Text("好")))
                 }
         } else {
-            columns
+            columns.id(palette)
         }
     }
 

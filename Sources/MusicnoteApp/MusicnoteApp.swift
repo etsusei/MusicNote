@@ -10,8 +10,9 @@ struct MusicnoteApp: App {
             RootView()
                 .environment(model)
                 .frame(minWidth: 900, minHeight: 600)
-                .tint(Theme.accent)
+                .tint(Theme.controlTint)
                 .onAppear {
+                    Theme.watchPalette()
                     NSApp.activate(ignoringOtherApps: true); model.applyTheme(); DebugSnapshot.runIfRequested(model)
                     if ProcessInfo.processInfo.environment["MUSICNOTE_SNAPSHOT_DIR"] == nil { InspirationWindow.shared.restore(model) }
                 }

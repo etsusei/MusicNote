@@ -177,7 +177,6 @@ struct WaveformSelectionView: View {
             .frame(width: w, height: h)
         }
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.borderSubtle))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
@@ -233,7 +232,6 @@ struct WaveformOverview: View {
             .onHover { inside in if inside { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() } }
         }
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Theme.borderSubtle))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .help("整曲：点或拖动，上面的波形就移到那里")
     }

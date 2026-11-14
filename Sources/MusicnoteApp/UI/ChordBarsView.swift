@@ -208,7 +208,6 @@ struct BarProgressionView: View {
         .padding(6)
         .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Theme.borderSubtle))
         // The name popover points at this bar's edge, under where the "+" or the chord was.
         .popover(isPresented: Binding(get: { popoverAt?.bar == bar && (renaming != nil || pendingAdd != nil) },
                                       set: { if !$0 { renaming = nil; pendingAdd = nil; popoverAt = nil } }),
@@ -261,8 +260,7 @@ struct BarProgressionView: View {
         .padding(.horizontal, roomy ? 4 : 2)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(isPlaying ? Theme.accent : (strong ? Theme.chipFill.opacity(continued ? 0.5 : 1) : Theme.surface)))
-        .shadow(color: isPlaying ? Theme.accent.opacity(0.35) : .clear, radius: 6, y: 2)
-        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(isPlaying ? .clear : (isSelected ? Theme.accent : (isHovered ? Theme.accent.opacity(0.5) : (confirm ? Theme.warning : Theme.chipLine))),
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(isPlaying ? .clear : (isSelected ? Theme.accent : (isHovered ? Theme.accent.opacity(0.5) : (confirm ? Theme.warning : (strong ? .clear : Theme.chipLine)))),
                                                          style: StrokeStyle(lineWidth: isSelected ? 2 : (isHovered || confirm ? 1.5 : 1),
                                                                             dash: strong || isSelected || isHovered ? [] : [3, 2])))
         .foregroundStyle(isPlaying ? Theme.onAccent : Theme.chipText.opacity(continued ? 0.6 : 1))

@@ -144,20 +144,20 @@ struct DrumMachinePage: View {
             Stepper("\(g.bars) 小节", value: Binding(get: { g.bars }, set: { n in edit { DrumOps.setBars(&$0, n) } }), in: 1...64).fixedSize()
             HStack(spacing: 4) {
                 Text("摇摆").fixedSize()
-                Slider(value: Binding(get: { g.swing }, set: { pattern.groove.swing = $0.rounded() }), in: 50...75) { began in if began { beginEdit() } }
+                Slider(value: Binding(get: { g.swing }, set: { pattern.groove.swing = $0.rounded() }), in: 50...75) { began in if began { beginEdit() } }.tint(Theme.accent)
                     .frame(width: 90).disabled(g.stepsPerBeat % 2 == 1)
                 Text("\(Int(g.swing))%").font(.mono13).frame(width: 34, alignment: .leading)
             }
             .help(g.stepsPerBeat % 2 == 1 ? "三连音格子不用摇摆" : "每两步里第二步的位置：50% 平直，66% 接近三连音")
             HStack(spacing: 4) {
                 Text("原律动").fixedSize()
-                Slider(value: $pattern.groove.feel, in: 0...1) { began in if began { beginEdit() } }.frame(width: 80)
+                Slider(value: $pattern.groove.feel, in: 0...1) { began in if began { beginEdit() } }.tint(Theme.accent).frame(width: 80)
                 Text("\(Int((g.feel * 100).rounded()))%").font(.mono13).frame(width: 38, alignment: .leading)
             }
             .help("每一步微移的保留程度：0% 完全对齐格子，100% 按提取到的（或你调的）微移演奏")
             HStack(spacing: 4) {
                 Text("格子宽度").fixedSize()
-                Slider(value: $cellW, in: 12...40).frame(width: 80)
+                Slider(value: $cellW, in: 12...40).tint(Theme.accent).frame(width: 80)
             }
         }
         .controlSize(.small)
@@ -180,7 +180,7 @@ struct DrumMachinePage: View {
                 .labelsHidden().fixedSize()
                 .disabled(!compareAvailable)
                 .help(compareHelp)
-                if compare != .off { Slider(value: $compareGain, in: 0...1).frame(width: 70).help("原声音量") }
+                if compare != .off { Slider(value: $compareGain, in: 0...1).tint(Theme.accent).frame(width: 70).help("原声音量") }
             }
             Button { undo() } label: { Image(systemName: "arrow.uturn.backward") }.disabled(undoStack.isEmpty)
                 .keyboardShortcut("z", modifiers: .command).help("撤销 ⌘Z")

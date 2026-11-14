@@ -63,7 +63,7 @@ struct InspirationCollectionPage: View {
             HStack(spacing: 16) {
                 HStack(spacing: 6) {
                     Text("速度").font(.caption12).foregroundStyle(Theme.textSecondary).fixedSize()
-                    Slider(value: Binding(get: { p.bpm }, set: { v in model.updateCollectionEntry(p.id) { $0.bpm = v.rounded() } }), in: 40...200)
+                    Slider(value: Binding(get: { p.bpm }, set: { v in model.updateCollectionEntry(p.id) { $0.bpm = v.rounded() } }), in: 40...200).tint(Theme.accent)
                         .frame(width: 140)
                         .onSubmit {}
                     Text("\(Int(p.bpm)) BPM").font(.mono13).frame(width: 64, alignment: .leading)
@@ -99,7 +99,7 @@ struct InspirationCollectionPage: View {
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(playing ? Theme.accent.opacity(0.6) : Theme.borderSubtle))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(playing ? Theme.accent.opacity(0.6) : .clear))
     }
 
     /// Saves the progression as it plays here (key, smart transposition, tempo) as a .mid file.

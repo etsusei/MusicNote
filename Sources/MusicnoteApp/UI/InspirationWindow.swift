@@ -68,14 +68,14 @@ struct InspirationButton: View {
         Button { InspirationWindow.shared.toggle(model) } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "lightbulb.max").font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(Theme.onAccent)
+                    .foregroundStyle(Theme.accent)
                     .frame(width: 44, height: 44)
-                    .background(Circle().fill(Theme.accent))
-                    .shadow(color: Theme.accent.opacity(0.35), radius: 10, y: 4)
+                    .background(Circle().fill(Theme.surfaceRaised))
+                    .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
                 if n > 0 {
-                    Text("\(n)").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.accent)
+                    Text("\(n)").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.onAccent)
                         .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Capsule().fill(Theme.surface)).offset(x: 6, y: -4)
+                        .background(Capsule().fill(Theme.accent)).offset(x: 6, y: -4)
                 }
             }
         }
@@ -297,7 +297,6 @@ struct InspirationBarsView: View {
         .padding(5)
         .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Theme.borderSubtle))
         .popover(isPresented: Binding(get: { naming?.bar == bar }, set: { if !$0 { naming = nil } }),
                  attachmentAnchor: .point(UnitPoint(x: naming?.bar == bar ? naming!.x : 0.5, y: 1)), arrowEdge: .bottom) { namePopover }
     }
@@ -342,8 +341,7 @@ struct InspirationBarsView: View {
             .padding(.horizontal, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(isSounding ? Theme.accent : Theme.chipFill.opacity(continued ? 0.5 : 1)))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(isSounding ? .clear : (isSelected ? Theme.accent : (isHovered ? Theme.accent.opacity(0.5) : Theme.chipLine)), lineWidth: isSelected ? 2 : (isHovered ? 1.5 : 1)))
-            .shadow(color: isSounding ? Theme.accent.opacity(0.35) : .clear, radius: 6, y: 2)
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(isSounding ? .clear : (isSelected ? Theme.accent : (isHovered ? Theme.accent.opacity(0.5) : .clear)), lineWidth: isSelected ? 2 : (isHovered ? 1.5 : 1)))
             .foregroundStyle(isSounding ? Theme.onAccent : Theme.chipText.opacity(continued ? 0.6 : 1))
             .help((tooltip?(c) ?? displayName?(c) ?? c.symbol) + (c.sourceLabel.map { "\n来自 \($0)" } ?? ""))
         if editable {

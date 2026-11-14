@@ -173,7 +173,6 @@ struct PlaygroundPage: View {
                 }
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(Capsule().fill(i == selectedSection ? Theme.selectionFill : Theme.surface))
-                .overlay(Capsule().stroke(Theme.borderSubtle))
                 .onTapGesture { selectedSection = i }
             }
             Menu("添加乐段") {
@@ -183,7 +182,7 @@ struct PlaygroundPage: View {
                 Button("自定义…") { project.sections.append(PlaygroundSection(name: "段落 \(project.sections.count + 1)", barCount: 4)) }
             }.frame(width: 100)
             Spacer()
-            Slider(value: $pxPerBeat, in: 12...60).frame(width: 100).help("缩放")
+            Slider(value: $pxPerBeat, in: 12...60).tint(Theme.accent).frame(width: 100).help("缩放")
         }
     }
 
@@ -335,7 +334,7 @@ struct SectionLane: View {
               }
             }
             .background(RoundedRectangle(cornerRadius: 6).fill(index == selectedSection ? Theme.surface : Theme.background))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(index == selectedSection ? Theme.accent.opacity(0.4) : Theme.borderSubtle))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(index == selectedSection ? Theme.accent.opacity(0.4) : .clear))
             if !conflicts.isEmpty {
                 HStack {
                     Label("有重叠的和弦块", systemImage: "exclamationmark.triangle").font(.caption12).foregroundStyle(Theme.error)
@@ -373,7 +372,7 @@ struct SectionLane: View {
             .fixedSize()
             .frame(maxWidth: 220)
             if let d = current {
-                Slider(value: Binding(get: { d.volume }, set: { project.sections[index].drums?.volume = $0 }), in: 0...1)
+                Slider(value: Binding(get: { d.volume }, set: { project.sections[index].drums?.volume = $0 }), in: 0...1).tint(Theme.accent)
                     .frame(width: 60).controlSize(.mini).help("鼓的音量")
                 if let p = libraryCopy, SectionDrums.from(p, bars: d.bars).groove != d.groove {
                     Button("节奏库里改过 · 更新") { setDrums(p, bars: d.bars) }.buttonStyle(.borderless).font(.caption12)

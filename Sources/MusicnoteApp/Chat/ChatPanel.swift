@@ -208,7 +208,6 @@ struct ChatPanel: View {
             }
             .padding(8)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.background))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.borderSubtle))
             .popover(isPresented: $showMentions, arrowEdge: .top) { mentionPicker }
             .popover(isPresented: $showInspirations, arrowEdge: .top) { inspirationPicker }
             modelChoice.foregroundStyle(Theme.textSecondary).padding(.horizontal, 4)
