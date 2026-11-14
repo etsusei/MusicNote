@@ -127,12 +127,21 @@ struct PracticeStageView: View {
             }
         }
 
-        drawKeys(&ctx, CGRect(x: 0, y: stageHeight, width: width, height: keysHeight), sounding: sounding)
+        // Waiting: the keys still owed are lit and marked, also when their note was short and
+        // has already gone from the stage.
+        let owed = session.awaitedPitches(atUs: now)
+        drawKeys(&ctx, CGRect(x: 0, y: stageHeight, width: width, height: keysHeight), sounding: sounding.union(owed), owed: owed)
     }
 
     /// The keyboard. A key is lit while its note sounds. With a keyboard connected, a key held
     /// shows how it was judged when it went down: brighter when right, the wrong colour when not.
-    private func drawKeys(_ ctx: inout GraphicsContext, _ frame: CGRect, sounding: Set<Int>) {
+    /// While waiting, a key still owed carries a dot until it is pressed.
+    private func drawKeys(_ ctx: inout GraphicsContext, _ frame: CGRect, sounding: Set<Int>, owed: Set<Int> = []) {
+        func dot(_ rect: CGRect, _ pitch: Int, y: CGFloat) {
+            guard owed.contains(pitch), pressed[pitch] != .hit else { return }
+            let d = min(rect.width * 0.5, 12)
+            ctx.fill(Path(ellipseIn: CGRect(x: rect.midX - d / 2, y: y - d / 2, width: d, height: d)), with: .color(palette.litLabel))
+        }
         ctx.fill(Path(frame), with: .color(palette.keyBed))
         func colour(_ pitch: Int, plain: Color) -> Color {
             switch pressed[pitch] {
@@ -151,6 +160,7 @@ struct PracticeStageView: View {
                 ctx.draw(Text(label).font(.system(size: 10)).foregroundColor(lit ? palette.litLabel : palette.keyLabel),
                          at: CGPoint(x: rect.midX, y: rect.maxY - 8), anchor: .bottom)
             }
+            dot(rect, pitch, y: rect.maxY - 34)
         }
         // The keys sit under the stage: a soft shadow along their top edge.
         ctx.fill(Path(CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: 9)),
@@ -161,6 +171,7 @@ struct PracticeStageView: View {
             let rect = CGRect(x: frame.minX + CGFloat(f.x) * frame.width, y: frame.minY, width: CGFloat(f.width) * frame.width, height: frame.height * 0.6)
             ctx.fill(Path(roundedRect: rect.offsetBy(dx: 0, dy: 2), cornerSize: CGSize(width: 2.5, height: 2.5)), with: .color(.black.opacity(0.45)))
             ctx.fill(Path(roundedRect: rect, cornerSize: CGSize(width: 2.5, height: 2.5)), with: .color(colour(pitch, plain: palette.blackKey)))
+            dot(rect, pitch, y: rect.maxY - 14)
         }
     }
 }

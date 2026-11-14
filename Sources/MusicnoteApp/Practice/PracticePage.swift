@@ -59,7 +59,7 @@ struct PracticePage: View {
     }
 
     /// Keys without modifiers: [ and ] set A and B, − and + change the speed, L turns the loop
-    /// on and off, ← and → move by a bar. Space is the app's play/pause.
+    /// on and off, W waiting, ← and → move by a bar. Space is the app's play/pause.
     private func shortcuts(_ s: PracticeSessionModel) -> some View {
         Group {
             Button("设 A 点") { s.setLoopStart() }.keyboardShortcut("[", modifiers: [])
@@ -68,6 +68,7 @@ struct PracticePage: View {
             Button("加速") { s.stepRate(1) }.keyboardShortcut("=", modifiers: [])
             Button("加速") { s.stepRate(1) }.keyboardShortcut("+", modifiers: [.shift])
             Button("循环开关") { s.toggleLoop() }.keyboardShortcut("l", modifiers: [])
+            Button("等待开关") { s.toggleWait() }.keyboardShortcut("w", modifiers: [])
             Button("后退一小节") { s.seek(bars: -1) }.keyboardShortcut(.leftArrow, modifiers: [])
             Button("前进一小节") { s.seek(bars: 1) }.keyboardShortcut(.rightArrow, modifiers: [])
         }
@@ -330,6 +331,16 @@ private struct PracticeTimelineRow: View {
                     .frame(height: 36).contentShape(Rectangle())
             }
             .buttonStyle(.plain).help(session.preroll ? "循环时每一遍从 A 之前一小节开始。点一下关掉" : "循环时直接从 A 开始。点一下打开")
+            Button { session.toggleWait() } label: {
+                let noKeyboard = session.waitOn && !session.waitActive
+                Label(session.waiting ? "等你弹" : noKeyboard ? "等待（没接键盘）" : "等待", systemImage: "hand.raised")
+                    .font(.system(size: 13, weight: session.waitOn ? .semibold : .regular))
+                    .foregroundStyle(session.waitActive ? palette.accent : palette.secondary.opacity(noKeyboard ? 0.7 : 1))
+                    .frame(minWidth: 76, minHeight: 36, alignment: .leading).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(session.waitOn ? (session.waitActive ? "等待模式开着：到了该弹的音会停下，弹对了继续（W）。循环时每一遍都重新等" : "等待模式开着，但没有检测到 MIDI 键盘，所以不会停。接上电钢琴后自动生效")
+                                 : "等待模式：到了该弹的音会停下，弹对了继续（W）。需要接上电钢琴")
         }
         .padding(.horizontal, 24).padding(.bottom, 10)
     }

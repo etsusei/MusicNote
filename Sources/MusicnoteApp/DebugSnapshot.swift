@@ -283,6 +283,107 @@ enum DebugPractice {
             note("done")
             return
         }
+        // MUSICNOTE_PRACTICE_DRIVE=wait: wait mode with a virtual keyboard, in about twenty seconds.
+        if ProcessInfo.processInfo.environment["MUSICNOTE_PRACTICE_DRIVE"] == "wait" {
+            var client = MIDIClientRef(), virtual = MIDIEndpointRef()
+            MIDIClientCreateWithBlock("Musicnote 测试键盘" as CFString, &client, nil)
+            MIDISourceCreateWithProtocol(client, "测试键盘" as CFString, ._1_0, &virtual)
+            func press(_ pitch: Int) {
+                for down in [true, false] {
+                    var list = MIDIEventList()
+                    let first = MIDIEventListInit(&list, ._1_0)
+                    let word: UInt32 = (down ? 0x2090_0000 : 0x2080_0000) | UInt32(pitch) << 8 | (down ? 100 : 0)
+                    _ = MIDIEventListAdd(&list, 1024, first, mach_absolute_time(), 1, [word])
+                    MIDIReceivedEventList(virtual, &list)
+                }
+            }
+            await wait(0.8)
+            note("keyboard seen: \(s.keyboard.sources) \(s.keyboard.sources.contains("测试键盘") ? "OK" : "FAIL")")
+            let notes = s.timeline.notes
+            let grace = Int64(WaitGate.graceSeconds * 1e6)
+            func ms(_ us: Int64) -> String { String(format: "%.0f", Double(us) / 1000) }
+            // Plays like someone in time for `seconds` of music: each note 20 ms before it is due.
+            func playAlong(from start: Int64, to end: Int64) async -> Double {
+                // Whatever is owed at the start first, then everything after it as it comes.
+                for p in s.awaitedPitches(atUs: s.visualUs()) { press(p) }
+                var next = notes.firstIndex { $0.startUs > start } ?? notes.count
+                let began = Date(), at = s.positionUs
+                while s.positionUs < end, s.positionUs >= at - 1_000_000, Date().timeIntervalSince(began) < 20 {
+                    let now = s.visualUs()
+                    while next < notes.count, notes[next].startUs <= now + 20_000 { press(notes[next].pitch); next += 1 }
+                    await wait(0.004)
+                }
+                return Double(s.positionUs - at) / 1e6 / Date().timeIntervalSince(began)
+            }
+            // Start in a gap between two notes, 0.3 s before the second.
+            guard let first = notes.indices.dropFirst().first(where: { notes[$0].startUs > 1_200_000 && notes[$0].startUs - notes[$0 - 1].startUs > 350_000 }).map({ notes[$0] })
+            else { note("FAIL no gap between notes to start in"); return }
+            s.seek(toUs: first.startUs - 300_000)
+            if !s.waitOn { s.toggleWait() }
+            note("wait on, active \(s.waitActive) \(s.waitActive ? "OK" : "FAIL")")
+            s.togglePlay()
+            await wait(1.2)
+            let held = s.positionUs
+            await wait(0.4)
+            let over = held - first.startUs
+            note("stopped for the first note (pitch \(first.pitch)): held \(e.isHeldAtGate), page says waiting \(s.waiting), \(ms(over)) ms past its start (grace \(ms(grace)) ms plus the output's delay), moved \(ms(s.positionUs - held)) ms in 0.4 s \(e.isHeldAtGate && s.waiting && over >= grace - 5_000 && over < grace + 60_000 && s.positionUs == held ? "OK" : "FAIL")")
+            let owed = s.awaitedPitches(atUs: s.visualUs())
+            note("keys marked as owed: \(owed.sorted()) \(owed.contains(first.pitch) ? "OK" : "FAIL")")
+            await shot("wait-held")
+            let unused = (40...90).first { p in !notes.contains { $0.pitch == p } } ?? 22
+            press(unused)
+            await wait(0.3)
+            note("a wrong key (\(unused)): still held \(e.isHeldAtGate) \(e.isHeldAtGate && s.positionUs == held ? "OK" : "FAIL")")
+            for p in owed { press(p) }
+            await wait(0.15)
+            note("the owed keys pressed: \(e.isHeldAtGate && s.awaitedPitches(atUs: s.visualUs()).isEmpty == false ? "still held FAIL" : "moving on OK"), now \(ms(s.positionUs - held)) ms further")
+            // Played in time, the music should not stop at all.
+            let from = s.visualUs()
+            let speed = await playAlong(from: from, to: min(s.durationUs - 500_000, from + 4_000_000))
+            note("played in time for 4 s of music: ran at \(String(format: "%.3f", speed)) × \(abs(speed - 1) < 0.03 ? "OK (no stops)" : "FAIL")")
+            // Half speed, in time.
+            s.setRate(0.5)
+            let from2 = s.visualUs()
+            let slow = await playAlong(from: from2, to: min(s.durationUs - 500_000, from2 + 1_500_000))
+            note("the same at half speed: ran at \(String(format: "%.3f", slow)) × \(abs(slow - 0.5) < 0.03 ? "OK" : "FAIL")")
+            s.setRate(1)
+            s.togglePlay()
+
+            // A loop: every round asks again, starting with the loop's first note (not the lead-in's).
+            let loop = s.bars.defaultLoop(at: s.durationUs / 3)
+            s.setLoop(loop.lowerBound..<min(loop.upperBound, loop.lowerBound + Int64(s.bars.barUs * 2)))
+            if let l = s.loop, let range = s.playRange, let inLoop = notes.first(where: { $0.startUs >= l.lowerBound && $0.startUs < l.upperBound }) {
+                let wraps0 = e.loopWraps
+                s.togglePlay()
+                // Round one played in time, to the end of the loop.
+                var next = notes.firstIndex { $0.startUs >= l.lowerBound } ?? notes.count
+                let began = Date()
+                while e.loopWraps == wraps0, Date().timeIntervalSince(began) < 15 {
+                    let now = s.visualUs()
+                    while next < notes.count, notes[next].startUs < l.upperBound, notes[next].startUs <= now + 20_000 { press(notes[next].pitch); next += 1 }
+                    await wait(0.004)
+                }
+                let roundSeconds = Date().timeIntervalSince(began)
+                // Round two: nobody plays.
+                await wait(Double(inLoop.startUs - range.lowerBound) / 1e6 + 1.0)
+                let at = s.positionUs
+                note("loop \(ms(l.lowerBound))–\(ms(l.upperBound)) ms, played from \(ms(range.lowerBound)): round one took \(String(format: "%.2f", roundSeconds)) s (music \(String(format: "%.2f", Double(range.upperBound - range.lowerBound) / 1e6)) s), wrapped \(e.loopWraps - wraps0)×")
+                note("round two with nobody playing: held \(e.isHeldAtGate) at \(ms(at - inLoop.startUs)) ms past the loop's first note \(e.isHeldAtGate && at - inLoop.startUs >= grace - 5_000 && at - inLoop.startUs < grace + 60_000 ? "OK" : "FAIL")")
+                await shot("wait-loop")
+            } else { note("FAIL no loop with notes") }
+
+            // The keyboard goes away: nothing to wait for, the music plays on.
+            MIDIEndpointDispose(virtual); MIDIClientDispose(client)
+            await wait(0.8)
+            let a = s.positionUs
+            await wait(1.0)
+            note("keyboard unplugged: active \(s.waitActive), held \(e.isHeldAtGate), moved \(ms(s.positionUs - a)) ms in a second \(!s.waitActive && !e.isHeldAtGate && s.positionUs != a ? "OK" : "FAIL")")
+            s.togglePlay()
+            s.toggleWait()
+            if s.loopOn { s.toggleLoop() }
+            note("done")
+            return
+        }
         s.setMidi(on: true)
 
         // Paused at a quarter of the way in.

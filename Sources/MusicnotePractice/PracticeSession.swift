@@ -29,6 +29,10 @@ public struct PracticeSettings: Record {
     public var loopEndUs: Int64?
     /// Each round starts one bar before A.
     public var preroll = true
+    /// Wait mode: the music stops at each note until it is played. Optional so that settings
+    /// saved before it existed still read.
+    public var wait: Bool?
+    public var waitOn: Bool { wait ?? false }
 
     public init(analysisId: UUID) { id = analysisId }
 
@@ -176,6 +180,13 @@ public struct NoteTimeline: Sendable {
             i += 1
         }
         return out
+    }
+
+    /// Index of the first note that starts at or after a time (the count when none does).
+    public func firstIndex(startingAtOrAfter us: Int64) -> Int {
+        var lo = 0, hi = notes.count
+        while lo < hi { let mid = (lo + hi) / 2; if notes[mid].startUs < us { lo = mid + 1 } else { hi = mid } }
+        return lo
     }
 
     /// Pitches sounding at a time.

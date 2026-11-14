@@ -10,6 +10,8 @@ final class MidiKeyboardInput {
     private(set) var sources: [String] = []
     /// A key event: pitch, down or up, and when (host time; 0 when the source gave none).
     @ObservationIgnored var onKey: ((_ pitch: Int, _ down: Bool, _ hostTime: UInt64) -> Void)?
+    /// A keyboard was plugged in or taken away.
+    @ObservationIgnored var onSourcesChanged: (() -> Void)?
 
     @ObservationIgnored private var client = MIDIClientRef()
     @ObservationIgnored private var port = MIDIPortRef()
@@ -54,6 +56,7 @@ final class MidiKeyboardInput {
         client = 0; port = 0
         connected = []
         sources = []
+        onSourcesChanged = nil
     }
 
     /// Connects to every source now present and drops the ones that are gone.
@@ -76,6 +79,8 @@ final class MidiKeyboardInput {
         }
         for gone in connected.subtracting(present) { MIDIPortDisconnectSource(port, gone) }
         connected = present
+        let changed = sources != names
         sources = names
+        if changed { onSourcesChanged?() }
     }
 }

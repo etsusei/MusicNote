@@ -36,6 +36,13 @@ final class PracticeSessionModel {
     /// Moves the picture and the judging later (positive) or earlier against the sound.
     @ObservationIgnored var offsetSeconds = 0.0
 
+    /// Wait mode's account of which notes have been played.
+    @ObservationIgnored private var gate: WaitGate
+    @ObservationIgnored private var wrapsSeen = 0
+    @ObservationIgnored private var waitTimer: Timer?
+    /// Whether the music is standing still for a key right now.
+    private(set) var waiting = false
+
     @ObservationIgnored private weak var model: AppModel?
     @ObservationIgnored private var tracks: [String: AudioTrack] = [:]
     @ObservationIgnored private var loader: Task<Void, Never>?
@@ -47,6 +54,7 @@ final class PracticeSessionModel {
         let take = model.practiceMidi(itemId)
         calibrated = take != nil
         timeline = NoteTimeline(LogicRoundTrip.withoutOverlaps(notes))
+        gate = WaitGate(timeline: timeline)
         pedals = take?.pedals ?? []
         bars = PracticeBars(timing: timing, durationUs: item.durationUs)
         bpm = timing.bpm
@@ -90,15 +98,20 @@ final class PracticeSessionModel {
         e.seek(loopOn ? frame(playRange?.lowerBound ?? 0) : 0)
         loadTracks()
         keyboard.onKey = { [weak self] pitch, down, hostTime in self?.key(pitch, down: down, hostTime: hostTime) }
+        keyboard.onSourcesChanged = { [weak self] in self?.restartWait() }
         keyboard.start()
+        restartWait()
     }
 
     /// A key on the connected keyboard. It is judged against the music at the moment it was
     /// pressed (the event's own time), not when the event reached this thread.
     private func key(_ pitch: Int, down: Bool, hostTime: UInt64) {
         if down {
+            syncWraps()
             let at = us(AudioEngine.shared.visualPosition(offsetSeconds: offsetSeconds, hostTime: hostTime))
-            judge.keyDown(pitch, atUs: at, rate: settings.rate, in: timeline)
+            let owed = waitActive && gate.keyDown(pitch, atUs: at, rate: settings.rate)
+            judge.keyDown(pitch, atUs: at, rate: settings.rate, in: timeline, accepted: owed)
+            if owed { applyGate() }
         } else {
             judge.keyUp(pitch)
         }
@@ -106,6 +119,7 @@ final class PracticeSessionModel {
     }
 
     func stop() {
+        waitTimer?.invalidate(); waitTimer = nil
         keyboard.stop()
         loader?.cancel()
         persist()
@@ -168,12 +182,13 @@ final class PracticeSessionModel {
         let e = AudioEngine.shared
         if e.isPlaying { e.pause(); redraw += 1; return }
         // At the end of the clip, start over (the loop's lead-in when looping).
-        if positionUs >= durationUs - 20_000 { e.seek(frame(playRange?.lowerBound ?? 0)) }
+        if positionUs >= durationUs - 20_000 { e.seek(frame(playRange?.lowerBound ?? 0)); restartWait() }
         e.play()
     }
 
     func seek(toUs target: Int64) {
         AudioEngine.shared.seek(frame(min(max(0, target), durationUs)))
+        restartWait()
         redraw += 1
     }
 
@@ -189,6 +204,7 @@ final class PracticeSessionModel {
     func setRate(_ rate: Double, save: Bool = true) {
         settings.rate = min(max(rate, PracticeSettings.rateRange.lowerBound), PracticeSettings.rateRange.upperBound)
         AudioEngine.shared.setRate(settings.rate)
+        applyGate()
         if save { persist() }
     }
 
@@ -247,7 +263,67 @@ final class PracticeSessionModel {
 
     private func applyLoop() {
         AudioEngine.shared.setLoop(playRange.map { frame($0.lowerBound)..<frame($0.upperBound) })
+        restartWait()
         redraw += 1
+    }
+
+    // MARK: Wait mode
+
+    var waitOn: Bool { settings.waitOn }
+    /// Waiting needs a keyboard to hear the keys from; without one the music just plays.
+    var waitActive: Bool { settings.waitOn && !keyboard.sources.isEmpty }
+
+    func toggleWait() {
+        settings.wait = !settings.waitOn
+        restartWait()
+        persist()
+    }
+
+    /// Keys still owed at a position while waiting, for the stage to mark.
+    func awaitedPitches(atUs us: Int64) -> Set<Int> { waitActive ? gate.awaited(atUs: us) : [] }
+
+    /// Waiting starts afresh from where the music is: notes before it are not asked for.
+    private func restartWait() {
+        let e = AudioEngine.shared
+        wrapsSeen = e.loopWraps
+        // A note right at the position (a seek to its bar line) is still asked for.
+        gate.restart(fromUs: positionUs - 20_000, loop: loopOn ? loop : nil, wrapToUs: playRange?.lowerBound ?? 0)
+        applyGate()
+        if waitActive, waitTimer == nil {
+            // In the common modes, so it keeps going while a slider is dragged.
+            let t = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.syncWraps()
+                    let held = AudioEngine.shared.isHeldAtGate
+                    if held != self.waiting { self.waiting = held }
+                }
+            }
+            RunLoop.main.add(t, forMode: .common)
+            waitTimer = t
+        } else if !waitActive {
+            waitTimer?.invalidate(); waitTimer = nil
+            if waiting { waiting = false }
+        }
+    }
+
+    /// Tells the engine where to stop: a little past the start of the first note still owed,
+    /// counted in what is heard (the engine runs ahead of the ears by the output's delay).
+    private func applyGate() {
+        let e = AudioEngine.shared
+        guard waitActive else { e.setGate(nil, afterWrap: nil); return }
+        let past = max(0, WaitGate.graceSeconds + e.outputLatencySeconds - offsetSeconds) * settings.rate
+        let extra = Int64(past * Self.sampleRate)
+        e.setGate(gate.awaitedUs.map { frame($0) + extra }, afterWrap: gate.awaitedAfterWrapUs.map { frame($0) + extra })
+    }
+
+    /// The loop came round since last looked: a new round, everything in it owed again.
+    private func syncWraps() {
+        let n = AudioEngine.shared.loopWraps
+        guard n != wrapsSeen else { return }
+        wrapsSeen = n
+        gate.wrapped()
+        applyGate()
     }
 
     func toggleLoop() {

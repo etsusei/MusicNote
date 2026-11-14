@@ -361,6 +361,7 @@ final class AudioEngine: @unchecked Sendable {
         setStretching(false)
         setInstrumentVolume(1)
         setTracks([]); setMidi([], enabled: false); setLoop(nil)
+        setGate(nil, afterWrap: nil)
         setMetronome(MetronomeConfig())
     }
 
@@ -368,6 +369,30 @@ final class AudioEngine: @unchecked Sendable {
     private weak var holder: AnyObject?
     func hold(for owner: AnyObject) { holder = owner }
     func release(from owner: AnyObject) { if holder === owner { holder = nil } }
+
+    // MARK: Wait gate (practice)
+
+    /// Wait mode: `frame` is a source position stretched playback may not pass; it stands
+    /// there, silent and still playing, until the gate is moved on or cleared. `afterWrap`
+    /// takes its place the moment the loop comes round, so the first note of the next round is
+    /// waited for even before the main thread has noticed the wrap.
+    func setGate(_ frame: Int64?, afterWrap: Int64?) {
+        os_unfair_lock_lock(&lock); gate = frame; gateAfterWrap = afterWrap; os_unfair_lock_unlock(&lock)
+    }
+
+    /// Whether playback is standing at the gate right now.
+    var isHeldAtGate: Bool { os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }; return playing && gateHeld && gate != nil }
+    /// How many times the loop has come round while stretching.
+    var loopWraps: Int { os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }; return wrapCount }
+    /// Seconds the sound takes to leave the output device.
+    var outputLatencySeconds: Double { outputLatency }
+
+    private var gate: Int64?
+    private var gateAfterWrap: Int64?
+    private var gateHeld = false
+    private var wrapCount = 0
+    /// Fade on each side of a stop at the gate, in output frames.
+    private static let gateFade = 128
 
     /// Whether time-stretched playback is on.
     var isStretching: Bool { os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }; return stretch != nil }
@@ -500,6 +525,27 @@ final class AudioEngine: @unchecked Sendable {
     /// (the click and the instrument themselves are not stretched).
     private func renderStretched(_ stretch: StretchPlayer, frameCount: Int, left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>,
                                  anySolo: Bool, beatFrames: Double, schedule: AUScheduleMIDIEventBlock?, drumSchedule: AUScheduleMIDIEventBlock?) {
+        // The wait gate: render only up to it. The stretcher keeps what it has taken in, so
+        // playback goes on from the same place when the gate moves.
+        let wasHeld = gateHeld
+        var frameCount = frameCount
+        if let g = gate {
+            let toGate = (Double(g) - stretch.position) / max(stretch.heardRate, 0.05)
+            let stop = toGate < (wasHeld ? Double(Self.gateFade) : 0.5) ? 0 : Int(min(toGate.rounded(.up), Double(frameCount)))
+            gateHeld = stop < frameCount
+            frameCount = stop
+        } else { gateHeld = false }
+        guard frameCount > 0 else { return }
+        defer {
+            if wasHeld {
+                let n = min(frameCount, Self.gateFade)
+                for i in 0..<n { let g = Float(i) / Float(n); left[i] *= g; right[i] *= g }
+            }
+            if gateHeld {
+                let n = min(frameCount, Self.gateFade)
+                for k in 0..<n { let i = frameCount - n + k; let g = Float(n - k) / Float(n); left[i] *= g; right[i] *= g }
+            }
+        }
         let rendered = stretch.render(frames: frameCount, left: left, right: right) { start, count, l, r in
             for i in 0..<count { l[i] = 0; r[i] = 0 }
             for t in tracks {
@@ -561,6 +607,12 @@ final class AudioEngine: @unchecked Sendable {
                     }
                 }
             }
+        }
+        if rendered.wrapped {
+            // The next round's gate takes over here, in the audio thread, not when the main
+            // thread gets round to it.
+            wrapCount += 1
+            gate = gateAfterWrap
         }
         position = Int64(stretch.position)
         if loop == nil, lengthFrames > 0, position >= lengthFrames {

@@ -506,3 +506,67 @@ func runPracticeJudgeChecks() {
     judge.releaseAll()
     check(judge.held.isEmpty, "all released")
 }
+
+/// Wait mode: which note the music stands at, and which presses move it on.
+func runPracticeWaitChecks() {
+    func n(_ pitch: Int, _ start: Int64, _ length: Int64 = 400_000) -> MidiNote { MidiNote(pitch: pitch, startUs: start, endUs: start + length) }
+    // A lead-in note, C4, a rolled E4+G4, C4 again close behind, a short D5, a last A4.
+    let timeline = NoteTimeline([n(55, 500_000), n(60, 1_000_000), n(64, 2_000_000), n(67, 2_030_000), n(60, 2_100_000), n(74, 2_500_000, 40_000), n(69, 2_800_000)])
+    var g = WaitGate(timeline: timeline)
+
+    g.restart(fromUs: 0, loop: nil)
+    eq(g.awaitedUs, 500_000, "from the top, the first note is waited for")
+    check(g.keyDown(55, atUs: 500_000, rate: 1), "played on time")
+    eq(g.awaitedUs, 1_000_000, "then the next")
+    eq(g.awaited(atUs: 900_000), [], "nothing is owed before it starts")
+    eq(g.awaited(atUs: 1_080_000), [60], "it is owed once it has started")
+    check(!g.keyDown(62, atUs: 1_080_000, rate: 1), "another key does not move the music on")
+    eq(g.awaitedUs, 1_000_000, "still standing at the note")
+    check(g.keyDown(60, atUs: 1_080_000 + 5_000_000, rate: 1), "its key does, however late")
+    eq(g.awaitedUs, 2_000_000, "on to the chord")
+    check(!g.keyDown(67, atUs: 1_700_000, rate: 1), "a key far too early is not taken")
+    check(g.keyDown(64, atUs: 1_900_000, rate: 1), "a little early is")
+    eq(g.awaitedUs, 2_030_000, "the chord's other note is still owed")
+    eq(g.awaited(atUs: 2_110_000), [67, 60], "standing there, both notes that have started are owed")
+    check(g.keyDown(67, atUs: 2_110_000, rate: 1), "the second chord note")
+    check(g.keyDown(60, atUs: 2_110_000, rate: 1), "the repeated C4")
+    check(!g.keyDown(60, atUs: 2_110_000, rate: 1), "one press counts for one note")
+    eq(g.awaitedUs, 2_500_000, "the short note next")
+    eq(g.awaited(atUs: 2_600_000), [74], "a short note stays owed after it has ended")
+    check(g.keyDown(74, atUs: 2_600_000, rate: 1) && g.keyDown(69, atUs: 2_800_000, rate: 1), "to the end")
+    eq(g.awaitedUs, nil, "nothing left: the music runs free")
+    eq(g.awaitedAfterWrapUs, nil, "no loop, no next round")
+
+    // At half speed the same real-time reach covers half as much music.
+    g.restart(fromUs: 900_000, loop: nil)
+    eq(g.awaitedUs, 1_000_000, "started mid-way: notes before are not asked for")
+    check(!g.keyDown(60, atUs: 880_000, rate: 0.5), "120 ms of music early at half speed is 240 ms: too early")
+    check(g.keyDown(60, atUs: 920_000, rate: 0.5), "80 ms of music early at half speed is taken")
+
+    // A loop of 1–3 s with a lead-in from 0: only the loop's notes, every round again.
+    g.restart(fromUs: 0, loop: 1_000_000..<3_000_000, wrapToUs: 0)
+    eq(g.awaitedUs, 1_000_000, "the lead-in bar's note is not waited for")
+    for (p, t) in [(60, 1_000_000), (64, 2_000_000), (67, 2_030_000), (60, 2_100_000), (74, 2_500_000), (69, 2_800_000)] as [(Int, Int64)] {
+        check(g.keyDown(p, atUs: t, rate: 1), "round one, pitch \(p)")
+    }
+    eq(g.awaitedUs, nil, "round one done")
+    eq(g.awaitedAfterWrapUs, 1_000_000, "the next round starts with the first note again")
+    check(!g.keyDown(60, atUs: 2_950_000, rate: 1), "with a lead-in bar the first note is too far off to press before the wrap")
+    g.wrapped()
+    eq(g.awaitedUs, 1_000_000, "round two asks for everything again")
+
+    // Without the lead-in the first note follows the wrap at once: pressed just before, it counts.
+    g.restart(fromUs: 2_850_000, loop: 1_000_000..<3_000_000, wrapToUs: 1_000_000)
+    eq(g.awaitedUs, nil, "joined after the last note of the round")
+    check(g.keyDown(60, atUs: 2_950_000, rate: 1), "the first note of the next round, pressed 50 ms before the loop comes round")
+    eq(g.awaitedAfterWrapUs, 2_000_000, "so the next round waits at the second note")
+    g.wrapped()
+    eq(g.awaitedUs, 2_000_000, "and does after the wrap")
+    g.wrapped()
+    eq(g.awaitedUs, 1_000_000, "the round after that asks for the first note again")
+
+    // A press accepted by waiting is right for the judge too, however late.
+    var judge = PracticeJudge()
+    eq(judge.keyDown(74, atUs: 2_900_000, rate: 1, in: timeline), .wrong, "360 ms after a short note ended, the judge alone says wrong")
+    eq(judge.keyDown(74, atUs: 2_900_000, rate: 1, in: timeline, accepted: true), .hit, "accepted by waiting, it is right")
+}

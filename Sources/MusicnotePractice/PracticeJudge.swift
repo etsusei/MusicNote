@@ -18,12 +18,13 @@ public struct PracticeJudge: Sendable {
 
     public init() {}
 
-    /// A key goes down at `us` of the music, playing at `rate`.
+    /// A key goes down at `us` of the music, playing at `rate`. `accepted` says the press has
+    /// already been taken as right (wait mode, where a late press is the one waited for).
     @discardableResult
-    public mutating func keyDown(_ pitch: Int, atUs us: Int64, rate: Double, in timeline: NoteTimeline) -> Verdict {
+    public mutating func keyDown(_ pitch: Int, atUs us: Int64, rate: Double, in timeline: NoteTimeline, accepted: Bool = false) -> Verdict {
         let reach = Int64(Self.toleranceSeconds * max(rate, 0.1) * 1_000_000)
         let near = timeline.visible(fromUs: us - reach, toUs: us + reach + 1)
-        let right = near.contains { i in
+        let right = accepted || near.contains { i in
             let n = timeline.notes[i]
             return n.pitch == pitch && us >= n.startUs - reach && us < max(n.endUs, n.startUs + reach)
         }
