@@ -26,7 +26,7 @@ struct PracticePage: View {
                                         playing: transport.isPlaying, visualOffset: visualOffsetMs / 1000)
                     PracticeStageView(session: session, palette: palette, lookahead: lookahead, pressed: session.judge.held,
                                       visualOffset: visualOffsetMs / 1000, playing: transport.isPlaying)
-                        .overlay(alignment: .topLeading) { PracticeChordReadout(session: session, palette: palette).padding(.leading, 40).padding(.top, 16) }
+                        .overlay(alignment: .topTrailing) { PracticeChordReadout(session: session, palette: palette).padding(.trailing, 40).padding(.top, 16) }
                 }
                 .background(shortcuts(session))
             } else {
@@ -259,7 +259,7 @@ struct PracticeTopBar: View {
 
 // MARK: - Chord readout
 
-/// The chord under the hands: what the keys held on the connected keyboard spell, big enough
+/// The chord under the hands, in the stage's top right corner: what the keys held on the connected keyboard spell, big enough
 /// to read from the bench. It keeps the last chord, dimmed, after the keys are let go.
 private struct PracticeChordReadout: View {
     var session: PracticeSessionModel
@@ -267,7 +267,7 @@ private struct PracticeChordReadout: View {
 
     var body: some View {
         let connected = !session.keyboard.sources.isEmpty
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .trailing, spacing: 4) {
             if let chord = session.chord, connected {
                 let held = session.chordHeld
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -289,7 +289,7 @@ private struct PracticeChordReadout: View {
         }
         .opacity(session.chord != nil && connected && !session.chordHeld ? 0.7 : 1)
         .padding(.horizontal, 16).padding(.vertical, 12)
-        .frame(minWidth: 150, alignment: .leading)
+        .frame(minWidth: 150, alignment: .trailing)
         .fixedSize()
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(palette.ground.opacity(0.85)))
         .allowsHitTesting(false)
