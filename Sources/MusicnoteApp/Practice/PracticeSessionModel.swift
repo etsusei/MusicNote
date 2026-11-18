@@ -381,6 +381,18 @@ final class PracticeSessionModel {
         if save { persist() }
     }
 
+    /// Sets the loop from two ends in either order (an end dragged past the other turns it round).
+    func setLoop(ends a: Int64, _ b: Int64, save: Bool = true) { setLoop(bars.loop(a, b), save: save) }
+
+    /// Moves the loop, keeping its length in bars, so that it starts at the bar line nearest `us`.
+    func moveLoop(toUs us: Int64, save: Bool = true) {
+        guard let l = loop else { return }
+        let a = bars.snap(us)
+        let b = bars.snap(a + (l.upperBound - l.lowerBound))
+        guard b > a, b - a >= (l.upperBound - l.lowerBound) - Int64(bars.barUs / 2) else { return }
+        setLoop(a..<b, save: save)
+    }
+
     /// A at the bar line nearest the position; B stays, or moves four bars on when A passes it.
     func setLoopStart() {
         let a = bars.snap(positionUs)

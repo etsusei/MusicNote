@@ -382,7 +382,7 @@ private struct PracticeTimelineRow: View {
             }
             .buttonStyle(.plain)
             .help(session.loop == nil ? "从当前小节起循环四小节（L）。[ 和 ] 把 A、B 设在当前位置" : "循环开关（L）。拖进度条上的两端改范围，[ 和 ] 设在当前位置")
-            PracticeTimeline(session: session, palette: palette, positionUs: positionUs, playing: playing, visualOffset: visualOffset).frame(height: 44)
+            PracticeTimeline(session: session, palette: palette, positionUs: positionUs, playing: playing, visualOffset: visualOffset).frame(height: 56)
             Button { session.togglePreroll() } label: {
                 Text("预备 1 小节").font(.system(size: 13, weight: session.preroll ? .medium : .regular))
                     .foregroundStyle(session.preroll && session.loopOn ? palette.text : palette.secondary.opacity(session.preroll ? 1 : 0.55))
@@ -405,8 +405,10 @@ private struct PracticeTimelineRow: View {
     }
 }
 
-/// The whole clip as a rail: the loop as a tinted stretch with a handle at each end, the
-/// playhead, bar numbers underneath. Click or drag to move; drag a handle to resize the loop.
+/// The whole clip in two strips. The upper one is the loop's: drag across it to draw a loop,
+/// drag an end to resize it (past the other end it simply turns round), drag its middle to
+/// move it, click an empty place for four bars from there. The lower one is the song: click
+/// or drag to move the playhead, with the bar numbers under it.
 struct PracticeTimeline: View {
     var session: PracticeSessionModel
     var palette: PracticePalette
@@ -416,68 +418,130 @@ struct PracticeTimeline: View {
     var playing: Bool
     var visualOffset: Double
 
-    private enum Grab { case a, b, seek }
+    /// What a drag is doing: moving the playhead, an end of the loop with the other end held
+    /// where it was, the whole loop by where it was taken hold of, or drawing a new loop.
+    private enum Grab: Equatable { case seek, end(fixedUs: Int64), move(offsetUs: Int64, lengthUs: Int64), draw(fromUs: Int64) }
+    private enum Spot { case edge, body, empty, rail }
     @ViewState private var grab: Grab?
     /// Where the timeline is in the window (top-left origin), for the debug driver to drag it.
     nonisolated(unsafe) static var debugFrame = CGRect.zero
+
+    static let stripHeight: CGFloat = 20
+    private static let edgeReach: CGFloat = 10
 
     var body: some View {
         GeometryReader { geo in
             let w = max(1, geo.size.width)
             let duration = max(1, session.durationUs)
             let x: (Int64) -> CGFloat = { CGFloat(Double($0) / Double(duration)) * w }
+            let us: (CGFloat) -> Int64 = { Int64(Double(min(max(0, $0), w)) / Double(w) * Double(duration)) }
+            let strip = Self.stripHeight
             ZStack(alignment: .topLeading) {
-                Capsule().fill(palette.rail).frame(width: w, height: 4).offset(y: 13)
+                // The loop strip: a faint lane, so it reads as a place to drag in.
+                RoundedRectangle(cornerRadius: 5, style: .continuous).fill(palette.surface).frame(width: w, height: strip)
                 if let loop = session.loop {
-                    let tint = session.loopOn ? palette.accent : palette.secondary
-                    let left = x(loop.lowerBound), right = x(loop.upperBound)
-                    RoundedRectangle(cornerRadius: 3, style: .continuous).fill(tint.opacity(session.loopOn ? 0.22 : 0.12))
-                        .frame(width: max(4, right - left), height: 20).offset(x: left, y: 5)
-                    Rectangle().fill(tint).frame(width: 2, height: 20).offset(x: left, y: 5)
-                    Rectangle().fill(tint).frame(width: 2, height: 20).offset(x: max(left + 2, right - 2), y: 5)
+                    let on = session.loopOn
+                    let tint = on ? palette.accent : palette.secondary
+                    let left = x(loop.lowerBound), right = max(left + 6, x(loop.upperBound))
+                    RoundedRectangle(cornerRadius: 5, style: .continuous).fill(tint.opacity(on ? (grab == nil ? 0.28 : 0.4) : 0.16))
+                        .frame(width: right - left, height: strip).offset(x: left)
+                    ForEach([left, right - 6], id: \.self) { hx in
+                        RoundedRectangle(cornerRadius: 3, style: .continuous).fill(tint).frame(width: 6, height: strip).offset(x: hx)
+                    }
+                    if right - left > 52 {
+                        Text(session.bars.label(loop)).font(.system(size: 11, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(on ? palette.text : palette.secondary).lineLimit(1).fixedSize()
+                            .frame(width: right - left, height: strip).offset(x: left)
+                    }
                 }
-                // The playhead, drawn every frame from the engine's clock like the stage, so it
-                // glides while playing and sits under the mouse while the timeline is dragged.
+                // The song's rail with the playhead, drawn every frame from the engine's clock like
+                // the stage, so it glides while playing and sits under the mouse while dragged.
+                Capsule().fill(palette.rail).frame(width: w, height: 4).offset(y: strip + 11)
                 let _ = session.redraw
                 TimelineView(.animation(paused: !playing)) { timeline in
                     let frame = timeline.date
                     Canvas { ctx, size in
                         _ = frame
                         let px = min(size.width - 2, max(0, x(session.visualUs(offsetSeconds: visualOffset)) - 1))
-                        ctx.fill(Path(roundedRect: CGRect(x: px, y: 3, width: 2, height: 24), cornerRadius: 1), with: .color(palette.text))
+                        ctx.fill(Path(roundedRect: CGRect(x: px, y: 0, width: 2, height: 20), cornerRadius: 1), with: .color(palette.text))
                     }
                 }
-                .frame(width: w, height: 30)
+                .frame(width: w, height: 20).offset(y: strip + 3)
                 .allowsHitTesting(false)
                 ForEach(labels(width: w), id: \.number) { line in
                     Text("\(line.number)").font(.system(size: 11).monospacedDigit()).foregroundStyle(palette.secondary)
-                        .fixedSize().offset(x: x(line.us), y: 29)
+                        .fixedSize().offset(x: x(line.us), y: strip + 22)
                 }
             }
             .frame(width: w, height: geo.size.height, alignment: .topLeading)
             .onAppear { Self.debugFrame = geo.frame(in: .global) }
             .onChange(of: geo.frame(in: .global)) { _, f in Self.debugFrame = f }
             .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                guard grab == nil else { return }
+                switch phase {
+                case .active(let p):
+                    switch spot(p, x: x) {
+                    case .edge: NSCursor.resizeLeftRight.set()
+                    case .body: NSCursor.openHand.set()
+                    case .empty, .rail: NSCursor.pointingHand.set()
+                    }
+                case .ended: NSCursor.arrow.set()
+                }
+            }
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { v in
-                    let us = Int64(Double(min(max(0, v.location.x), w)) / Double(w) * Double(duration))
+                    let here = us(v.location.x)
                     if grab == nil {
-                        if let loop = session.loop, abs(v.startLocation.x - x(loop.lowerBound)) <= 8 { grab = .a }
-                        else if let loop = session.loop, abs(v.startLocation.x - x(loop.upperBound)) <= 8 { grab = .b }
-                        else { grab = .seek }
+                        let start = us(v.startLocation.x)
+                        switch spot(v.startLocation, x: x) {
+                        case .rail: grab = .seek
+                        case .edge:
+                            guard let loop = session.loop else { grab = .seek; break }
+                            // Hold the end not taken hold of.
+                            let nearA = abs(v.startLocation.x - x(loop.lowerBound)) <= abs(v.startLocation.x - x(loop.upperBound))
+                            grab = .end(fixedUs: nearA ? loop.upperBound : loop.lowerBound)
+                            NSCursor.resizeLeftRight.set()
+                        case .body:
+                            guard let loop = session.loop else { grab = .seek; break }
+                            grab = .move(offsetUs: start - loop.lowerBound, lengthUs: loop.upperBound - loop.lowerBound)
+                            NSCursor.closedHand.set()
+                        case .empty: grab = .draw(fromUs: start)
+                        }
                     }
                     switch grab {
-                    case .a: if let loop = session.loop { session.setLoop(us..<loop.upperBound, save: false) }
-                    case .b: if let loop = session.loop { session.setLoop(loop.lowerBound..<us, save: false) }
-                    default: session.seek(toUs: us)
+                    case .end(let fixed)?: session.setLoop(ends: fixed, here, save: false)
+                    case .move(let offset, let length)?:
+                        let a = min(max(0, here - offset), max(0, session.durationUs - length))
+                        session.moveLoop(toUs: a, save: false)
+                    case .draw(let from)?:
+                        // A click (no drag yet) is handled when the mouse comes up.
+                        if abs(v.translation.width) >= 3 { session.setLoop(ends: from, here, save: false) }
+                    default: session.seek(toUs: here)
                     }
                 }
-                .onEnded { _ in grab = nil; session.persist() })
+                .onEnded { v in
+                    if case .draw(let from)? = grab, abs(v.translation.width) < 3 { session.setLoop(session.bars.defaultLoop(at: from), save: false) }
+                    grab = nil
+                    session.persist()
+                    NSCursor.arrow.set()
+                })
             .accessibilityElement()
-            .accessibilityLabel("进度")
-            .accessibilityValue("第 \(session.bars.barNumber(at: positionUs)) 小节")
+            .accessibilityLabel("进度和循环")
+            .accessibilityValue("第 \(session.bars.barNumber(at: positionUs)) 小节" + (session.loopOn ? "，循环 \(session.loop.map { session.bars.label($0) } ?? "") 小节" : ""))
             .accessibilityAdjustableAction { direction in session.seek(bars: direction == .increment ? 1 : -1) }
         }
+    }
+
+    /// What is under a point: the loop strip's handles, its loop, its empty lane, or the rail below.
+    private func spot(_ p: CGPoint, x: (Int64) -> CGFloat) -> Spot {
+        guard p.y < Self.stripHeight + 2 else { return .rail }
+        guard let loop = session.loop else { return .empty }
+        let left = x(loop.lowerBound), right = x(loop.upperBound)
+        // A short loop keeps a middle to take hold of: its ends reach in a third of it at most.
+        let reach = min(Self.edgeReach, max(4, (right - left) / 3))
+        if p.x <= left + reach && p.x >= left - Self.edgeReach || p.x >= right - reach && p.x <= right + Self.edgeReach { return .edge }
+        return p.x > left && p.x < right ? .body : .empty
     }
 
     /// Bar numbers far enough apart to read.

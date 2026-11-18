@@ -342,6 +342,53 @@ enum DebugPractice {
             MIDIEndpointDispose(virtual); MIDIClientDispose(client)
             s.setMetronomeGain(wasGain)
             s.setMetronome(on: wasOn)
+
+            // The loop strip, with real mouse drags: an end dragged past the other end (this
+            // crashed), the loop moved by its middle, a new loop drawn, a click for four bars.
+            if let w = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }), let content = w.contentView {
+                let f = PracticeTimeline.debugFrame
+                let y = content.bounds.height - (f.minY + PracticeTimeline.stripHeight / 2)
+                func px(_ us: Int64) -> CGFloat { f.minX + CGFloat(Double(us) / Double(s.durationUs)) * f.width }
+                func mouse(_ type: NSEvent.EventType, _ x: CGFloat) {
+                    if let ev = NSEvent.mouseEvent(with: type, location: CGPoint(x: x, y: y), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                   windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1) {
+                        NSApp.postEvent(ev, atStart: false)
+                    }
+                }
+                func drag(_ from: CGFloat, _ to: CGFloat) async {
+                    mouse(.leftMouseDown, from); await wait(0.05)
+                    for k in 1...12 { mouse(.leftMouseDragged, from + (to - from) * CGFloat(k) / 12); await wait(0.03) }
+                    mouse(.leftMouseUp, to); await wait(0.3)
+                }
+                func bars(_ l: Range<Int64>?) -> String { l.map { s.bars.label($0) } ?? "-" }
+                let bar = s.bars.barUs
+                let a0 = s.bars.start(ofBar: 20), b0 = s.bars.start(ofBar: 24)
+                s.setLoop(a0..<b0)
+                await wait(0.3)
+                // A dragged to two bars past B: the loop turns round to 24–26.
+                await drag(px(a0), px(b0 + Int64(bar * 2)))
+                let flipped = s.loop
+                note("A dragged past B: loop \(bars(flipped)) \(flipped == s.bars.start(ofBar: 24)..<s.bars.start(ofBar: 26) ? "OK" : "FAIL")")
+                // B (now at 26) dragged to before A: turns round again.
+                if let l = s.loop {
+                    await drag(px(l.upperBound), px(l.lowerBound - Int64(bar * 3)))
+                    note("B dragged past A: loop \(bars(s.loop)) \(s.loop == s.bars.start(ofBar: 21)..<s.bars.start(ofBar: 24) ? "OK" : "FAIL")")
+                }
+                // Moved by its middle, five bars on: same length.
+                if let l = s.loop {
+                    let mid = (l.lowerBound + l.upperBound) / 2
+                    await drag(px(mid), px(mid + Int64(bar * 5)))
+                    note("loop moved by its middle: \(bars(l)) → \(bars(s.loop)) \(s.loop.map { abs($0.lowerBound - s.bars.start(ofBar: 26)) < 2_000 && abs(($0.upperBound - $0.lowerBound) - (l.upperBound - l.lowerBound)) < 2_000 } == true ? "OK" : "FAIL")")
+                }
+                await shot("extras-5-loop")
+                // Drawn in the empty lane from bar 40 to 43.
+                await drag(px(s.bars.start(ofBar: 40) + 20_000), px(s.bars.start(ofBar: 43) - 20_000))
+                note("loop drawn across 40–42: \(bars(s.loop)) \(s.loop == s.bars.start(ofBar: 40)..<s.bars.start(ofBar: 43) ? "OK" : "FAIL")")
+                // A click in the empty lane: four bars from that bar.
+                let clickAt = s.bars.start(ofBar: 60) + Int64(bar / 3)
+                mouse(.leftMouseDown, px(clickAt)); await wait(0.05); mouse(.leftMouseUp, px(clickAt)); await wait(0.3)
+                note("click in the lane at bar 60: \(bars(s.loop)) \(s.loop == s.bars.start(ofBar: 60)..<s.bars.start(ofBar: 64) ? "OK" : "FAIL")")
+            } else { note("FAIL no window") }
             note("done")
             return
         }
