@@ -473,11 +473,11 @@ struct PracticeTimeline: View {
                 let lines = gridLines(width: w, beatWidth: beatWidth).map { (x: x($0.us), level: $0.level) }
                 if columns.isEmpty { Capsule().fill(palette.rail).frame(width: w, height: 4).offset(y: strip + 4 + wave / 2 - 2) }
                 let loopSpan = session.loopOn ? session.loop.map { x($0.lowerBound)...x($0.upperBound) } : nil
-                let _ = session.redraw
+                let redraw = session.redraw
                 TimelineView(.animation(paused: !playing)) { timeline in
                     let frame = timeline.date
                     Canvas { ctx, size in
-                        _ = frame
+                        _ = frame; _ = redraw
                         let px = min(size.width - 2, max(0, x(session.visualUs(offsetSeconds: visualOffset)) - 1))
                         // Beat, bar and numbered-bar lines, each kind filled in one go.
                         var grid = [Path](repeating: Path(), count: 3)

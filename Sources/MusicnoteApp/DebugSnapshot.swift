@@ -388,6 +388,32 @@ enum DebugPractice {
                 let clickAt = s.bars.start(ofBar: 60) + Int64(bar / 3)
                 mouse(.leftMouseDown, px(clickAt)); await wait(0.05); mouse(.leftMouseUp, px(clickAt)); await wait(0.3)
                 note("click in the lane at bar 60: \(bars(s.loop)) \(s.loop == s.bars.start(ofBar: 60)..<s.bars.start(ofBar: 64) ? "OK" : "FAIL")")
+
+                // Paused, the song rail dragged: the stage follows the mouse, not only the playhead.
+                if s.isPlaying { s.togglePlay() }
+                s.toggleLoop()
+                await wait(0.3)
+                let railY = content.bounds.height - (f.minY + PracticeTimeline.stripHeight + PracticeTimeline.waveHeight / 2)
+                func rail(_ type: NSEvent.EventType, _ us: Int64) {
+                    if let ev = NSEvent.mouseEvent(with: type, location: CGPoint(x: px(us), y: railY), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                   windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1) {
+                        NSApp.postEvent(ev, atStart: false)
+                    }
+                }
+                let from = s.bars.start(ofBar: 30), to = s.bars.start(ofBar: 50)
+                rail(.leftMouseDown, from); await wait(0.1)
+                var behind: [Double] = []
+                let drawn0 = PracticeStageView.framesDrawn
+                for k in 1...20 {
+                    let target = from + (to - from) * Int64(k) / 20
+                    rail(.leftMouseDragged, target); await wait(0.05)
+                    behind.append(Double(abs(PracticeStageView.lastDrawnUs - s.positionUs)) / 1e6)
+                }
+                let drawn = PracticeStageView.framesDrawn - drawn0
+                await shot("extras-6-paused-drag")
+                rail(.leftMouseUp, to); await wait(0.3)
+                let worst = behind.max() ?? 99
+                note("paused, rail dragged bar 30 → 50: stage drew \(drawn) frames over 20 moves, at most \(String(format: "%.2f", worst)) s off the playhead, playing \(s.isPlaying) \(drawn >= 15 && worst < 0.05 && !s.isPlaying ? "OK" : "FAIL")")
             } else { note("FAIL no window") }
             note("done")
             return

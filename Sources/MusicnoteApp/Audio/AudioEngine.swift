@@ -340,6 +340,9 @@ final class AudioEngine: @unchecked Sendable {
         os_unfair_lock_lock(&lock)
         position = max(0, frame); eventCursor = cursorIndex(for: position); needsAllOff = true
         stretch?.seek(to: Double(position))
+        // Paused, the picture shows the new place at once rather than after the next buffer
+        // (the page redraws as it seeks, before the render thread has been round).
+        if !playing { clockPosition = stretch?.position ?? Double(position); clockFramesPerSecond = 0 }
         os_unfair_lock_unlock(&lock)
     }
 

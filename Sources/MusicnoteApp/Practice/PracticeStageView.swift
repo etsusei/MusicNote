@@ -18,14 +18,16 @@ struct PracticeStageView: View {
 
     var body: some View {
         // Read here so a seek or a new loop redraws the stage while paused.
-        let _ = session.redraw
+        let redraw = session.redraw
         TimelineView(.animation(paused: !playing)) { timeline in
             // The frame's date has to be an input of the canvas: SwiftUI redraws a canvas only
             // when what its closure captures has changed, and nothing else here changes
-            // from frame to frame (the position is read from the engine while drawing).
+            // from frame to frame (the position is read from the engine while drawing). While
+            // paused the date stands still, so the redraw count is an input too: without it a
+            // seek (dragging the timeline) left the stage where it was.
             let frame = timeline.date
             Canvas(opaque: true) { ctx, size in
-                _ = frame
+                _ = frame; _ = redraw
                 draw(&ctx, size)
             }
         }
@@ -34,6 +36,8 @@ struct PracticeStageView: View {
 
     /// Frames drawn so far, for the debug driver to check that the stage animates by itself.
     nonisolated(unsafe) static var framesDrawn = 0
+    /// The position the last frame was drawn at, for the debug driver.
+    nonisolated(unsafe) static var lastDrawnUs: Int64 = 0
 
     private func draw(_ ctx: inout GraphicsContext, _ size: CGSize) {
         Self.framesDrawn += 1
@@ -41,6 +45,7 @@ struct PracticeStageView: View {
         let stageHeight = size.height - keysHeight
         let width = size.width
         let now = session.visualUs(offsetSeconds: visualOffset)
+        Self.lastDrawnUs = now
         let windowUs = Int64(lookahead * 1_000_000)
         let perUs = stageHeight / CGFloat(max(windowUs, 1))
         func y(_ us: Int64) -> CGFloat { stageHeight - CGFloat(us - now) * perUs }
