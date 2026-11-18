@@ -158,11 +158,12 @@ final class PracticeSessionModel {
         }
         if let url = model.backingURL(item) { sources.append((.backing, url, 0, durationUs)) }
         sources.sort { a, _ in a.0 == settings.backing }
+        let rate = Self.sampleRate
         loader = Task { [weak self] in
             for (kind, url, start, end) in sources {
                 if Task.isCancelled { return }
                 let loaded = await Task.detached(priority: .userInitiated) { () -> (AudioTrack, [Float])? in
-                    guard let buffer = try? AudioLoader.loadClip(url, startUs: start, endUs: end, sampleRate: Self.sampleRate) else { return nil }
+                    guard let buffer = try? AudioLoader.loadClip(url, startUs: start, endUs: end, sampleRate: rate) else { return nil }
                     return (AudioTrack(id: kind.rawValue, buffer: buffer), Self.peaks(buffer))
                 }.value
                 guard let self, !Task.isCancelled else { return }

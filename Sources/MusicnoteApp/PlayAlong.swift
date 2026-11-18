@@ -72,4 +72,38 @@ extension AppModel {
         AudioEngine.shared.pause()
         playAlongItem = nil
     }
+
+    /// Plays the selection's audio (original mix or the selected stem) for [startUs, endUs).
+    func audition(_ itemId: UUID, startUs: Int64, endUs: Int64, original: Bool) {
+        guard let item = item(itemId) else { return }
+        playAlongItem = nil
+        let url: URL?
+        var offset: Int64 = 0
+        if original { url = Pipeline.resolve(item.source); offset = item.trimStartUs }
+        else { url = item.transcriptionStem.map { paths.url(relative: $0.relativePath) } }
+        guard let url else { alert = AppAlert(title: "无法试听", message: "找不到音频文件"); return }
+        let key = url.path
+        let buffer: AVAudioPCMBuffer
+        if let b = auditionCache[key] { buffer = b } else {
+            guard let b = try? AudioLoader.load(url) else { return }
+            auditionCache = [key: b]
+            buffer = b
+        }
+        let rate = buffer.format.sampleRate
+        let e = AudioEngine.shared
+        e.pause()
+        e.configure(sampleRate: rate)
+        e.setMidi([], enabled: false)
+        e.setMetronome(MetronomeConfig())
+        e.setTracks([AudioTrack(id: "audition", buffer: buffer)])
+        e.setLength(Int64(buffer.frameLength))
+        e.setLoop(nil)
+        let f0 = Int64(Double(startUs + offset) / 1e6 * rate)
+        e.play(from: f0)
+        auditionStop?.cancel()
+        auditionStop = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(max(0.2, Double(endUs - startUs) / 1e6) * 1e9))
+            if !Task.isCancelled { AudioEngine.shared.pause() }
+        }
+    }
 }
