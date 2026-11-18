@@ -570,3 +570,25 @@ func runPracticeWaitChecks() {
     eq(judge.keyDown(74, atUs: 2_900_000, rate: 1, in: timeline), .wrong, "360 ms after a short note ended, the judge alone says wrong")
     eq(judge.keyDown(74, atUs: 2_900_000, rate: 1, in: timeline, accepted: true), .hit, "accepted by waiting, it is right")
 }
+
+/// The readout of what the held keys spell.
+func runHeldChordChecks() {
+    let c = KeySignature(tonic: 0, tonicName: "C", mode: .major)
+    let eFlat = KeySignature(tonic: 3, tonicName: "E♭", mode: .major)
+    check(HeldChord.describe([Int](), key: c) == nil, "nothing held, nothing shown")
+    eq(HeldChord.describe([60], key: c)?.name, "C", "one key is its note")
+    eq(HeldChord.describe([60], key: c)?.notes, ["C4"], "with its octave")
+    eq(HeldChord.describe([48, 60], key: c)?.detail, "八度", "an octave")
+    let fifth = HeldChord.describe([48, 55], key: c)
+    eq(fifth?.name, "C · G", "two notes are named as notes")
+    eq(fifth?.detail, "纯五度", "with their interval")
+    eq(HeldChord.describe([64, 72], key: c)?.detail, "小六度", "the interval up from the lower note")
+    eq(HeldChord.describe([60, 64, 67], key: c)?.name, "C", "a C major triad")
+    eq(HeldChord.describe([52, 60, 67], key: c)?.name, "C/E", "first inversion as a slash chord")
+    eq(HeldChord.describe([48, 64, 67, 71], key: c)?.name, "Cmaj7", "a major seventh")
+    eq(HeldChord.describe([51, 55, 58], key: eFlat)?.name, "E♭", "spelt with flats in a flat key")
+    eq(HeldChord.describe([51, 55, 58], key: eFlat)?.notes, ["E♭3", "G3", "B♭3"], "the notes too")
+    let six = HeldChord.describe([57, 60, 64, 67], key: c)
+    check(six?.name == "Am7" && six?.others.contains("C6/A") == true, "Am7, also C6 over A, got \(String(describing: six))")
+    eq(HeldChord.describe([60, 61, 62], key: c)?.detail, "认不出和弦名", "a cluster has no name")
+}

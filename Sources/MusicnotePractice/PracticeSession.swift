@@ -33,6 +33,11 @@ public struct PracticeSettings: Record {
     /// saved before it existed still read.
     public var wait: Bool?
     public var waitOn: Bool { wait ?? false }
+    /// The metronome on the confirmed beat grid, and how loud. Optional for the same reason.
+    public var metronome: Bool?
+    public var metronomeGain: Float?
+    public var metronomeOn: Bool { metronome ?? false }
+    public var metronomeVolume: Float { metronomeGain ?? 0.6 }
 
     public init(analysisId: UUID) { id = analysisId }
 

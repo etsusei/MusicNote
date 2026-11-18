@@ -283,6 +283,68 @@ enum DebugPractice {
             note("done")
             return
         }
+        // MUSICNOTE_PRACTICE_DRIVE=extras: the metronome follows the speed, and the chord readout
+        // names what a virtual keyboard holds.
+        if ProcessInfo.processInfo.environment["MUSICNOTE_PRACTICE_DRIVE"] == "extras" {
+            let wasOn = s.settings.metronomeOn, wasGain = s.settings.metronomeVolume
+            s.setMetronome(on: true)
+            s.setMetronomeGain(0.4)
+            func clicksPerSecond(_ seconds: Double) async -> Double {
+                let a = e.clicksPlayed, t = Date()
+                await wait(seconds)
+                return Double(e.clicksPlayed - a) / Date().timeIntervalSince(t)
+            }
+            s.seek(toUs: s.durationUs / 8)
+            s.togglePlay()
+            await wait(0.5)
+            let full = await clicksPerSecond(4)
+            s.setRate(0.5)
+            await wait(0.5)
+            let half = await clicksPerSecond(4)
+            let want = s.bpm / 60
+            note("metronome at 1.0: \(String(format: "%.2f", full)) clicks/s, want \(String(format: "%.2f", want)) \(abs(full - want) < 0.35 ? "OK" : "FAIL")")
+            note("metronome after speed 0.5 while playing: \(String(format: "%.2f", half)) clicks/s, want \(String(format: "%.2f", want / 2)) \(abs(half - want / 2) < 0.3 ? "OK" : "FAIL")")
+            await shot("extras-1-metronome")
+            s.setMetronome(on: false)
+            let before = e.clicksPlayed
+            await wait(1.5)
+            note("metronome off: \(e.clicksPlayed - before) clicks in 1.5 s \(e.clicksPlayed == before ? "OK" : "FAIL")")
+            s.togglePlay()
+            s.setRate(1)
+
+            var client = MIDIClientRef(), virtual = MIDIEndpointRef()
+            MIDIClientCreateWithBlock("Musicnote 测试键盘" as CFString, &client, nil)
+            MIDISourceCreateWithProtocol(client, "测试键盘" as CFString, ._1_0, &virtual)
+            func send(_ pitch: Int, down: Bool) {
+                var list = MIDIEventList()
+                let first = MIDIEventListInit(&list, ._1_0)
+                let word: UInt32 = (down ? 0x2090_0000 : 0x2080_0000) | UInt32(pitch) << 8 | (down ? 100 : 0)
+                _ = MIDIEventListAdd(&list, 1024, first, mach_absolute_time(), 1, [word])
+                MIDIReceivedEventList(virtual, &list)
+            }
+            await wait(0.8)
+            await shot("extras-2-no-chord")
+            for p in [52, 60, 67, 71] { send(p, down: true) }
+            await wait(0.3)
+            note("held E3 C4 G4 B4: readout \(s.chord?.name ?? "nothing") \(s.chord?.name == "Cmaj7/E" ? "OK" : "FAIL"), others \(s.chord?.others ?? [])")
+            await shot("extras-3-chord")
+            for p in [52, 60, 67] { send(p, down: false) }
+            await wait(0.2)
+            note("let go one key at a time: still \(s.chord?.name ?? "nothing") \(s.chord?.name == "Cmaj7/E" ? "OK" : "FAIL")")
+            send(71, down: false)
+            await wait(0.2)
+            note("all let go: kept dimmed \(s.chord != nil && !s.chordHeld ? "OK" : "FAIL")")
+            await shot("extras-4-released")
+            send(48, down: true); send(55, down: true)
+            await wait(0.2)
+            note("held C3 G3: \(s.chord?.name ?? "nothing") \(s.chord?.detail ?? "") \(s.chord?.detail == "纯五度" ? "OK" : "FAIL")")
+            send(48, down: false); send(55, down: false)
+            MIDIEndpointDispose(virtual); MIDIClientDispose(client)
+            s.setMetronomeGain(wasGain)
+            s.setMetronome(on: wasOn)
+            note("done")
+            return
+        }
         // MUSICNOTE_PRACTICE_DRIVE=wait: wait mode with a virtual keyboard, in about twenty seconds.
         if ProcessInfo.processInfo.environment["MUSICNOTE_PRACTICE_DRIVE"] == "wait" {
             var client = MIDIClientRef(), virtual = MIDIEndpointRef()

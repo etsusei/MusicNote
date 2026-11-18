@@ -384,6 +384,9 @@ final class AudioEngine: @unchecked Sendable {
     var isHeldAtGate: Bool { os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }; return playing && gateHeld && gate != nil }
     /// How many times the loop has come round while stretching.
     var loopWraps: Int { os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }; return wrapCount }
+    /// Metronome clicks sounded so far, for the debug driver to check that they follow the speed.
+    var clicksPlayed: Int { os_unfair_lock_lock(&lock); defer { os_unfair_lock_unlock(&lock) }; return clickCount }
+    private var clickCount = 0
     /// Seconds the sound takes to leave the output device.
     var outputLatencySeconds: Double { outputLatency }
 
@@ -479,7 +482,7 @@ final class AudioEngine: @unchecked Sendable {
                 let b = Double(pos - metronome.originFrame) / beatFrames
                 let pb = Double(pos - 1 - metronome.originFrame) / beatFrames
                 if floor(b) > floor(pb) {
-                    clickRemaining = Int(sampleRate * 0.03); clickPhase = 0
+                    clickRemaining = Int(sampleRate * 0.03); clickPhase = 0; clickCount += 1
                     if let anchor = metronome.barAnchorFrame {
                         let beatsFromAnchor = (Double(pos - anchor) / beatFrames).rounded()
                         let m = beatsFromAnchor.truncatingRemainder(dividingBy: metronome.beatsPerBar)
@@ -575,7 +578,7 @@ final class AudioEngine: @unchecked Sendable {
                 if metronome.enabled, beatFrames > 0 {
                     let origin = Double(metronome.originFrame)
                     if floor((next - origin) / beatFrames) > floor((pos - origin) / beatFrames) {
-                        clickRemaining = Int(sampleRate * 0.03); clickPhase = 0
+                        clickRemaining = Int(sampleRate * 0.03); clickPhase = 0; clickCount += 1
                         if let anchor = metronome.barAnchorFrame {
                             let m = ((next - Double(anchor)) / beatFrames).rounded().truncatingRemainder(dividingBy: metronome.beatsPerBar)
                             clickAccent = abs(m) < 0.5

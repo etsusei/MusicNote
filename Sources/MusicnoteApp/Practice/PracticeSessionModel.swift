@@ -19,6 +19,9 @@ final class PracticeSessionModel {
     let pedals: [PedalSpan]
     let bars: PracticeBars
     let bpm: Double
+    /// The confirmed beats and key, for the metronome and for naming what is played.
+    let grid: BeatGrid
+    let key: KeySignature
     /// Whether the notes are the take calibrated in Logic (else the transcription).
     let calibrated: Bool
 
@@ -33,6 +36,9 @@ final class PracticeSessionModel {
     let keyboard = MidiKeyboardInput()
     /// Keys held on it, each right or wrong as it went down.
     private(set) var judge = PracticeJudge()
+    /// What the keys spelt when one last went down; `chordHeld` says whether they still are.
+    private(set) var chord: HeldChord?
+    private(set) var chordHeld = false
     /// Moves the picture and the judging later (positive) or earlier against the sound.
     @ObservationIgnored var offsetSeconds = 0.0
 
@@ -58,6 +64,8 @@ final class PracticeSessionModel {
         pedals = take?.pedals ?? []
         bars = PracticeBars(timing: timing, durationUs: item.durationUs)
         bpm = timing.bpm
+        grid = timing.anchoredOnBeat.grid
+        key = timing.key
         let song = model.song(item.songId)
         title = song?.title ?? item.title
         subtitle = [song?.artist ?? "", item.title, "\(timing.key.tonicName) \(timing.key.mode == .minor ? "小调" : "大调")", "\(String(format: "%g", timing.bpm)) BPM"]
@@ -88,12 +96,12 @@ final class PracticeSessionModel {
         e.hold(for: self)
         e.reset()
         e.configure(sampleRate: Self.sampleRate)
-        e.setMetronome(MetronomeConfig())
         e.setTracks([])
         e.setLength(frame(durationUs))
         e.setStretching(true)
         e.setRate(settings.rate)
         applyMidi()
+        applyMetronome()
         applyLoop()
         e.seek(loopOn ? frame(playRange?.lowerBound ?? 0) : 0)
         loadTracks()
@@ -115,6 +123,9 @@ final class PracticeSessionModel {
         } else {
             judge.keyUp(pitch)
         }
+        // Named as each key goes down; letting go one key at a time keeps the chord struck.
+        if down { chord = HeldChord.describe(judge.held.keys, key: key) }
+        chordHeld = !judge.held.isEmpty
         redraw += 1
     }
 
@@ -235,6 +246,33 @@ final class PracticeSessionModel {
         settings.midiGain = max(0, min(1, gain))
         AudioEngine.shared.setInstrumentVolume(settings.midiGain)
         if save { persist() }
+    }
+
+    // MARK: Metronome
+
+    /// Clicks on the confirmed beats, the first of each bar higher. They are placed on the
+    /// stretched clock, so they follow the speed as it changes and stop while waiting.
+    func setMetronome(on: Bool) {
+        settings.metronome = on
+        applyMetronome()
+        persist()
+    }
+
+    func setMetronomeGain(_ gain: Float, save: Bool = true) {
+        settings.metronomeGain = max(0, min(1, gain))
+        applyMetronome()
+        if save { persist() }
+    }
+
+    private func applyMetronome() {
+        var m = MetronomeConfig()
+        m.enabled = settings.metronomeOn
+        m.bpm = grid.bpm
+        m.volume = settings.metronomeVolume
+        m.originFrame = frame(grid.beatOriginUs)
+        m.barAnchorFrame = frame(bars.anchorUs)
+        m.beatsPerBar = grid.meter.quarterBeatsPerBar
+        AudioEngine.shared.setMetronome(m)
     }
 
     private func applyMidi() {

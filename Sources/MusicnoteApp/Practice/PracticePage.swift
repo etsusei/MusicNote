@@ -26,6 +26,7 @@ struct PracticePage: View {
                                         playing: transport.isPlaying, visualOffset: visualOffsetMs / 1000)
                     PracticeStageView(session: session, palette: palette, lookahead: lookahead, pressed: session.judge.held,
                                       visualOffset: visualOffsetMs / 1000, playing: transport.isPlaying)
+                        .overlay(alignment: .topLeading) { PracticeChordReadout(session: session, palette: palette).padding(.leading, 40).padding(.top, 16) }
                 }
                 .background(shortcuts(session))
             } else {
@@ -59,7 +60,7 @@ struct PracticePage: View {
     }
 
     /// Keys without modifiers: [ and ] set A and B, − and + change the speed, L turns the loop
-    /// on and off, W waiting, ← and → move by a bar. Space is the app's play/pause.
+    /// on and off, W waiting, M the metronome, ← and → move by a bar. Space is the app's play/pause.
     private func shortcuts(_ s: PracticeSessionModel) -> some View {
         Group {
             Button("设 A 点") { s.setLoopStart() }.keyboardShortcut("[", modifiers: [])
@@ -69,6 +70,7 @@ struct PracticePage: View {
             Button("加速") { s.stepRate(1) }.keyboardShortcut("+", modifiers: [.shift])
             Button("循环开关") { s.toggleLoop() }.keyboardShortcut("l", modifiers: [])
             Button("等待开关") { s.toggleWait() }.keyboardShortcut("w", modifiers: [])
+            Button("节拍器开关") { s.setMetronome(on: !s.settings.metronomeOn) }.keyboardShortcut("m", modifiers: [])
             Button("后退一小节") { s.seek(bars: -1) }.keyboardShortcut(.leftArrow, modifiers: [])
             Button("前进一小节") { s.seek(bars: 1) }.keyboardShortcut(.rightArrow, modifiers: [])
         }
@@ -164,7 +166,7 @@ struct PracticeTopBar: View {
                     let on = session.settings.backing == kind
                     let ready = session.available.contains(kind)
                     Button { session.setBacking(kind) } label: {
-                        Text(label(kind)).font(.system(size: 14, weight: on ? .semibold : .regular))
+                        Text(label(kind)).font(.system(size: 14, weight: on ? .semibold : .regular)).lineLimit(1)
                             .foregroundStyle(on ? palette.text : palette.secondary.opacity(ready ? 1 : 0.45))
                             .padding(.horizontal, 13).frame(height: 34)
                             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(on ? palette.selected : .clear))
@@ -197,6 +199,21 @@ struct PracticeTopBar: View {
                         .frame(width: 72).tint(palette.accent).accessibilityLabel("示范音音量").help("示范音音量")
                 }
             }
+            HStack(spacing: 6) {
+                let on = session.settings.metronomeOn
+                Button { session.setMetronome(on: !on) } label: {
+                    Label("节拍器", systemImage: "metronome").font(.system(size: 14, weight: on ? .semibold : .regular))
+                        .foregroundStyle(on ? palette.accent : palette.secondary)
+                        .frame(height: 34).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).help("按确认过的拍子打拍，每小节第一拍音高一些，跟着速度条变快变慢（M）")
+                .accessibilityAddTraits(on ? .isSelected : [])
+                if on {
+                    Slider(value: Binding(get: { Double(session.settings.metronomeVolume) }, set: { session.setMetronomeGain(Float($0), save: false) }),
+                           in: 0...1) { editing in if !editing { session.persist() } }
+                        .frame(width: 72).tint(palette.accent).accessibilityLabel("节拍器音量").help("节拍器音量")
+                }
+            }
             Button { showSettings.toggle() } label: {
                 Image(systemName: "slider.horizontal.3").font(.system(size: 15))
                     .foregroundStyle(session.keyboard.sources.isEmpty ? palette.secondary : palette.accent)
@@ -207,6 +224,8 @@ struct PracticeTopBar: View {
                 PracticeSettingsPanel(session: session, palette: palette, paletteName: $paletteName, lookahead: $lookahead, visualOffsetMs: $visualOffsetMs)
             }
         }
+        // Never squeezed: the title gives way instead.
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private func label(_ kind: PracticeBacking) -> String {
@@ -235,6 +254,46 @@ struct PracticeTopBar: View {
         case .backing: "还没有合成伴奏：回到片段页的「练琴」标签，点「重新拆轨生成伴奏」"
         case .off: ""
         }
+    }
+}
+
+// MARK: - Chord readout
+
+/// The chord under the hands: what the keys held on the connected keyboard spell, big enough
+/// to read from the bench. It keeps the last chord, dimmed, after the keys are let go.
+private struct PracticeChordReadout: View {
+    var session: PracticeSessionModel
+    var palette: PracticePalette
+
+    var body: some View {
+        let connected = !session.keyboard.sources.isEmpty
+        VStack(alignment: .leading, spacing: 4) {
+            if let chord = session.chord, connected {
+                let held = session.chordHeld
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(chord.name).font(.system(size: 34, weight: .semibold)).foregroundStyle(held ? palette.text : palette.secondary)
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                    if let detail = chord.detail {
+                        Text(detail).font(.system(size: 15)).foregroundStyle(palette.secondary)
+                    }
+                }
+                if !chord.others.isEmpty {
+                    Text("也可以叫 " + chord.others.joined(separator: "、")).font(.system(size: 13)).foregroundStyle(palette.secondary).lineLimit(1)
+                }
+                Text(chord.notes.joined(separator: "  ")).font(.system(size: 12).monospacedDigit()).foregroundStyle(palette.barLabel).lineLimit(1)
+            } else {
+                Text("和弦").font(.system(size: 15, weight: .semibold)).foregroundStyle(palette.secondary)
+                Text(connected ? "按下的和弦会显示在这里" : "接上 MIDI 键盘后，这里显示按下的和弦")
+                    .font(.system(size: 12)).foregroundStyle(palette.barLabel)
+            }
+        }
+        .opacity(session.chord != nil && connected && !session.chordHeld ? 0.7 : 1)
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .frame(minWidth: 150, alignment: .leading)
+        .fixedSize()
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(palette.ground.opacity(0.85)))
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine).accessibilityLabel("按下的和弦")
     }
 }
 
