@@ -879,6 +879,7 @@ runOfflineStretchChecks()
 runPracticePageChecks()
 runPracticeJudgeChecks()
 runHeldChordChecks()
+runWaveformChecks()
 runPracticeWaitChecks()
 
 print("\(passes) passed, \(failures) failed")

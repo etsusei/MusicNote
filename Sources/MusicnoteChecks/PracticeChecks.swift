@@ -592,3 +592,19 @@ func runHeldChordChecks() {
     check(six?.name == "Am7" && six?.others.contains("C6/A") == true, "Am7, also C6 over A, got \(String(describing: six))")
     eq(HeldChord.describe([60, 61, 62], key: c)?.detail, "认不出和弦名", "a cluster has no name")
 }
+
+func runWaveformChecks() {
+    let left: [Float] = [0, 0.2, -0.5, 0.5, 0, 0, 0.05, -0.05]
+    let right: [Float] = [0, 0, 0, 0, 1, -1, 0, 0]
+    let peaks = left.withUnsafeBufferPointer { l in right.withUnsafeBufferPointer { r in Waveform.peaks(channels: [l, r], buckets: 4) } }
+    eq(peaks.count, 4, "one value per bucket")
+    check(abs(peaks[2] - 1) < 1e-6, "the loudest bucket is 1, across channels: \(peaks)")
+    check(abs(peaks[1] - Float(pow(0.5, 0.7))) < 1e-4, "the louder channel's RMS, lifted: \(peaks)")
+    check(peaks[3] > 0 && peaks[3] < peaks[0] && peaks[0] < peaks[1], "quiet buckets stay above nothing, in order: \(peaks)")
+    let silent = [Float](repeating: 0, count: 100)
+    check(silent.withUnsafeBufferPointer { Waveform.peaks(channels: [$0], buckets: 10) }.isEmpty, "silence draws nothing")
+    let short: [Float] = [0.5, 1]
+    eq(short.withUnsafeBufferPointer { Waveform.peaks(channels: [$0], buckets: 5) }.count, 5, "more buckets than samples still fills each")
+    eq(Waveform.columns([0.1, 0.9, 0.3, 0.2], count: 2), [0.9, 0.3], "columns keep the loudest of what they cover")
+    eq(Waveform.columns([0.4, 0.8], count: 4), [0.4, 0.4, 0.8, 0.8], "and stretch when wider than the peaks")
+}

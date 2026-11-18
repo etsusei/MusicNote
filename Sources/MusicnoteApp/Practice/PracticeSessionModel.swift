@@ -39,6 +39,8 @@ final class PracticeSessionModel {
     /// What the keys spelt when one last went down; `chordHeld` says whether they still are.
     private(set) var chord: HeldChord?
     private(set) var chordHeld = false
+    /// Each backing's loudness across the clip, for the timeline.
+    private(set) var waveforms: [PracticeBacking: [Float]] = [:]
     /// Moves the picture and the judging later (positive) or earlier against the sound.
     @ObservationIgnored var offsetSeconds = 0.0
 
@@ -159,11 +161,12 @@ final class PracticeSessionModel {
         loader = Task { [weak self] in
             for (kind, url, start, end) in sources {
                 if Task.isCancelled { return }
-                let track = await Task.detached(priority: .userInitiated) { () -> AudioTrack? in
-                    (try? AudioLoader.loadClip(url, startUs: start, endUs: end, sampleRate: Self.sampleRate)).map { AudioTrack(id: kind.rawValue, buffer: $0) }
+                let loaded = await Task.detached(priority: .userInitiated) { () -> (AudioTrack, [Float])? in
+                    guard let buffer = try? AudioLoader.loadClip(url, startUs: start, endUs: end, sampleRate: Self.sampleRate) else { return nil }
+                    return (AudioTrack(id: kind.rawValue, buffer: buffer), Self.peaks(buffer))
                 }.value
                 guard let self, !Task.isCancelled else { return }
-                if let track { self.add(track, kind) }
+                if let (track, peaks) = loaded { self.waveforms[kind] = peaks; self.add(track, kind) }
             }
             guard let self else { return }
             self.loading = false
@@ -173,6 +176,19 @@ final class PracticeSessionModel {
             }
         }
     }
+
+    /// Enough detail for a timeline as wide as a big screen.
+    nonisolated static let waveformBuckets = 3_000
+
+    nonisolated private static func peaks(_ buffer: AVAudioPCMBuffer) -> [Float] {
+        guard let data = buffer.floatChannelData else { return [] }
+        let n = Int(buffer.frameLength)
+        let channels = (0..<Int(buffer.format.channelCount)).map { UnsafeBufferPointer(start: data[$0], count: n) }
+        return Waveform.peaks(channels: channels, buckets: waveformBuckets)
+    }
+
+    /// What the timeline draws: the backing being heard, or the clip itself when it is off.
+    var waveform: [Float] { waveforms[settings.backing] ?? waveforms[.original] ?? [] }
 
     private func add(_ track: AudioTrack, _ kind: PracticeBacking) {
         track.gain = settings.backingGain

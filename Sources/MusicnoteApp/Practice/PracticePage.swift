@@ -382,7 +382,7 @@ private struct PracticeTimelineRow: View {
             }
             .buttonStyle(.plain)
             .help(session.loop == nil ? "从当前小节起循环四小节（L）。[ 和 ] 把 A、B 设在当前位置" : "循环开关（L）。拖进度条上的两端改范围，[ 和 ] 设在当前位置")
-            PracticeTimeline(session: session, palette: palette, positionUs: positionUs, playing: playing, visualOffset: visualOffset).frame(height: 56)
+            PracticeTimeline(session: session, palette: palette, positionUs: positionUs, playing: playing, visualOffset: visualOffset).frame(height: PracticeTimeline.height)
             Button { session.togglePreroll() } label: {
                 Text("预备 1 小节").font(.system(size: 13, weight: session.preroll ? .medium : .regular))
                     .foregroundStyle(session.preroll && session.loopOn ? palette.text : palette.secondary.opacity(session.preroll ? 1 : 0.55))
@@ -427,6 +427,11 @@ struct PracticeTimeline: View {
     nonisolated(unsafe) static var debugFrame = CGRect.zero
 
     static let stripHeight: CGFloat = 20
+    /// The waveform's height, and the distance from one of its columns to the next.
+    static let waveHeight: CGFloat = 28
+    static let columnPitch: CGFloat = 3
+    /// The whole timeline: loop strip, waveform, bar numbers.
+    static let height: CGFloat = stripHeight + waveHeight + 22
     private static let edgeReach: CGFloat = 10
 
     var body: some View {
@@ -454,23 +459,41 @@ struct PracticeTimeline: View {
                             .frame(width: right - left, height: strip).offset(x: left)
                     }
                 }
-                // The song's rail with the playhead, drawn every frame from the engine's clock like
-                // the stage, so it glides while playing and sits under the mouse while dragged.
-                Capsule().fill(palette.rail).frame(width: w, height: 4).offset(y: strip + 11)
+                // The song: its waveform, lit up to the playhead, with the playhead drawn every frame
+                // from the engine's clock like the stage, so it glides while playing and sits under
+                // the mouse while dragged. A plain rail until the audio has loaded.
+                let wave = Self.waveHeight
+                let columns = Waveform.columns(session.waveform, count: Int(w / Self.columnPitch))
+                if columns.isEmpty { Capsule().fill(palette.rail).frame(width: w, height: 4).offset(y: strip + 4 + wave / 2 - 2) }
+                let loopSpan = session.loopOn ? session.loop.map { x($0.lowerBound)...x($0.upperBound) } : nil
                 let _ = session.redraw
                 TimelineView(.animation(paused: !playing)) { timeline in
                     let frame = timeline.date
                     Canvas { ctx, size in
                         _ = frame
                         let px = min(size.width - 2, max(0, x(session.visualUs(offsetSeconds: visualOffset)) - 1))
-                        ctx.fill(Path(roundedRect: CGRect(x: px, y: 0, width: 2, height: 20), cornerRadius: 1), with: .color(palette.text))
+                        if !columns.isEmpty {
+                            // Four shades: played or not, in the loop or not, each filled in one go.
+                            var paths = [Path](repeating: Path(), count: 4)
+                            let mid = size.height / 2
+                            for (i, v) in columns.enumerated() {
+                                let cx = CGFloat(i) * Self.columnPitch
+                                let h = max(2, CGFloat(v) * wave)
+                                let inLoop = loopSpan?.contains(cx + 1) ?? false
+                                let k = (cx + 1 < px ? 1 : 0) + (inLoop ? 2 : 0)
+                                paths[k].addRoundedRect(in: CGRect(x: cx, y: mid - h / 2, width: Self.columnPitch - 1, height: h), cornerSize: CGSize(width: 1, height: 1))
+                            }
+                            let shades = [palette.secondary.opacity(0.28), palette.secondary.opacity(0.9), palette.accent.opacity(0.38), palette.accent]
+                            for k in 0..<4 { ctx.fill(paths[k], with: .color(shades[k])) }
+                        }
+                        ctx.fill(Path(roundedRect: CGRect(x: px, y: 0, width: 2, height: size.height), cornerRadius: 1), with: .color(palette.text))
                     }
                 }
-                .frame(width: w, height: 20).offset(y: strip + 3)
+                .frame(width: w, height: wave + 4).offset(y: strip + 2)
                 .allowsHitTesting(false)
                 ForEach(labels(width: w), id: \.number) { line in
                     Text("\(line.number)").font(.system(size: 11).monospacedDigit()).foregroundStyle(palette.secondary)
-                        .fixedSize().offset(x: x(line.us), y: strip + 22)
+                        .fixedSize().offset(x: x(line.us), y: strip + wave + 7)
                 }
             }
             .frame(width: w, height: geo.size.height, alignment: .topLeading)
