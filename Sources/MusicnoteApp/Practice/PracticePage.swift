@@ -459,11 +459,18 @@ struct PracticeTimeline: View {
                             .frame(width: right - left, height: strip).offset(x: left)
                     }
                 }
-                // The song: its waveform, lit up to the playhead, with the playhead drawn every frame
-                // from the engine's clock like the stage, so it glides while playing and sits under
-                // the mouse while dragged. A plain rail until the audio has loaded.
+                // The song: its waveform cut along the beat grid (a column a beat, or a few beats or
+                // part of one as the width allows), lit up to the playhead, over the bar and beat
+                // lines. The playhead is drawn every frame from the engine's clock like the stage, so
+                // it glides while playing and sits under the mouse while dragged. A plain rail until
+                // the audio has loaded.
                 let wave = Self.waveHeight
-                let columns = Waveform.columns(session.waveform, count: Int(w / Self.columnPitch))
+                let bars = session.bars
+                let beatWidth = bars.beatUs / Double(duration) * Double(w)
+                let unit = Waveform.beatsPerColumn(beatWidth: beatWidth, beatsPerBar: bars.beatsPerBar) * bars.beatUs
+                let columns = Waveform.columns(session.waveform, durationUs: duration, originUs: bars.anchorUs, unitUs: unit)
+                    .map { (left: x($0.startUs), right: x($0.endUs), value: CGFloat($0.value)) }
+                let lines = gridLines(width: w, beatWidth: beatWidth).map { (x: x($0.us), level: $0.level) }
                 if columns.isEmpty { Capsule().fill(palette.rail).frame(width: w, height: 4).offset(y: strip + 4 + wave / 2 - 2) }
                 let loopSpan = session.loopOn ? session.loop.map { x($0.lowerBound)...x($0.upperBound) } : nil
                 let _ = session.redraw
@@ -472,16 +479,22 @@ struct PracticeTimeline: View {
                     Canvas { ctx, size in
                         _ = frame
                         let px = min(size.width - 2, max(0, x(session.visualUs(offsetSeconds: visualOffset)) - 1))
+                        // Beat, bar and numbered-bar lines, each kind filled in one go.
+                        var grid = [Path](repeating: Path(), count: 3)
+                        for l in lines { grid[l.level].addRect(CGRect(x: min(size.width - 1, max(0, l.x - 0.5)), y: 0, width: 1, height: size.height)) }
+                        for (k, o) in [0.08, 0.16, 0.3].enumerated() { ctx.fill(grid[k], with: .color(palette.line.opacity(o))) }
                         if !columns.isEmpty {
-                            // Four shades: played or not, in the loop or not, each filled in one go.
+                            // Four shades: played or not, in the loop or not.
                             var paths = [Path](repeating: Path(), count: 4)
                             let mid = size.height / 2
-                            for (i, v) in columns.enumerated() {
-                                let cx = CGFloat(i) * Self.columnPitch
-                                let h = max(2, CGFloat(v) * wave)
-                                let inLoop = loopSpan?.contains(cx + 1) ?? false
-                                let k = (cx + 1 < px ? 1 : 0) + (inLoop ? 2 : 0)
-                                paths[k].addRoundedRect(in: CGRect(x: cx, y: mid - h / 2, width: Self.columnPitch - 1, height: h), cornerSize: CGSize(width: 1, height: 1))
+                            for c in columns {
+                                let gap: CGFloat = c.right - c.left >= 3 ? 1 : 0.6
+                                let h = max(2, c.value * wave)
+                                let cx = (c.left + c.right) / 2
+                                let inLoop = loopSpan?.contains(cx) ?? false
+                                let k = (cx < px ? 1 : 0) + (inLoop ? 2 : 0)
+                                let r = CGRect(x: c.left + gap / 2, y: mid - h / 2, width: max(0.6, c.right - c.left - gap), height: h)
+                                paths[k].addRoundedRect(in: r, cornerSize: CGSize(width: min(1, r.width / 2), height: 1))
                             }
                             let shades = [palette.secondary.opacity(0.28), palette.secondary.opacity(0.9), palette.accent.opacity(0.38), palette.accent]
                             for k in 0..<4 { ctx.fill(paths[k], with: .color(shades[k])) }
@@ -566,6 +579,24 @@ struct PracticeTimeline: View {
         if p.x <= left + reach && p.x >= left - Self.edgeReach || p.x >= right - reach && p.x <= right + Self.edgeReach { return .edge }
         return p.x > left && p.x < right ? .body : .empty
     }
+
+    /// The lines behind the waveform: 2 for a numbered bar, 1 for any other bar when bars are
+    /// far enough apart to tell, 0 for a beat when beats are.
+    private func gridLines(width: CGFloat, beatWidth: Double) -> [(us: Int64, level: Int)] {
+        let bars = session.bars
+        let numbered = Set(labels(width: width).map(\.us))
+        let barWidth = beatWidth * bars.beatsPerBar
+        var out: [(us: Int64, level: Int)] = []
+        let barStarts = Set(bars.lines.map(\.us))
+        if beatWidth >= Self.minLineGap {
+            out += bars.ticks(every: bars.beatUs).filter { !barStarts.contains($0) && !barStarts.contains($0 - 1) && !barStarts.contains($0 + 1) }.map { ($0, 0) }
+        }
+        out += bars.lines.compactMap { l in numbered.contains(l.us) ? (l.us, 2) : barWidth >= Self.minLineGap ? (l.us, 1) : nil }
+        return out
+    }
+
+    /// Lines closer than this read as a smear and are left out.
+    private static let minLineGap = 6.0
 
     /// Bar numbers far enough apart to read.
     private func labels(width: CGFloat) -> [PracticeBars.Line] {

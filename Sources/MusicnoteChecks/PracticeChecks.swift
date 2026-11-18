@@ -605,6 +605,21 @@ func runWaveformChecks() {
     check(silent.withUnsafeBufferPointer { Waveform.peaks(channels: [$0], buckets: 10) }.isEmpty, "silence draws nothing")
     let short: [Float] = [0.5, 1]
     eq(short.withUnsafeBufferPointer { Waveform.peaks(channels: [$0], buckets: 5) }.count, 5, "more buckets than samples still fills each")
-    eq(Waveform.columns([0.1, 0.9, 0.3, 0.2], count: 2), [0.9, 0.3], "columns keep the loudest of what they cover")
-    eq(Waveform.columns([0.4, 0.8], count: 4), [0.4, 0.4, 0.8, 0.8], "and stretch when wider than the peaks")
+    // Cut along the beat grid: a 10 s clip, beats of 1 s from 0.5 s, peaks of 0.1 s each.
+    let tenths = (0..<100).map { Float($0) / 100 }
+    let cols = Waveform.columns(tenths, durationUs: 10_000_000, originUs: 500_000, unitUs: 1_000_000)
+    eq(cols.count, 11, "a short first and last column at the clip's ends, ten whole beats between")
+    eq(cols.first.map { [$0.startUs, $0.endUs] }, [0, 500_000], "the first is cut at the clip start")
+    eq(cols[1].startUs, 500_000, "the rest start on the beats")
+    eq(cols.last?.endUs, 10_000_000, "the last is cut at the clip end")
+    check(abs(cols[1].value - 0.14) < 1e-6, "each the loudest of what it covers: \(cols[1].value)")
+    check(Waveform.columns(tenths, durationUs: 10_000_000, originUs: 0, unitUs: 10).isEmpty, "a tiny unit draws nothing rather than millions")
+    eq(Waveform.beatsPerColumn(beatWidth: 2.6, beatsPerBar: 4), 1, "a column a beat when a beat is wide enough")
+    eq(Waveform.beatsPerColumn(beatWidth: 1.5, beatsPerBar: 4), 2, "two beats, half a 4/4 bar")
+    eq(Waveform.beatsPerColumn(beatWidth: 1, beatsPerBar: 3), 3, "in 3/4, a whole bar rather than two beats across a bar line")
+    eq(Waveform.beatsPerColumn(beatWidth: 0.3, beatsPerBar: 4), 16, "whole bars when beats are tiny")
+    eq(Waveform.beatsPerColumn(beatWidth: 12, beatsPerBar: 4), 0.25, "a beat split in four when beats are wide")
+    let bars = PracticeBars(timing: TimingConfirmation(trimRevision: 1, bpm: 60, beatOriginUs: 500_000, meter: .fourFour, meterConfirmed: true,
+                                                       barAnchorUs: 500_000, key: KeySignature(tonic: 0, tonicName: "C", mode: .major)), durationUs: 4_000_000)
+    eq(bars.ticks(every: bars.beatUs), [500_000, 1_500_000, 2_500_000, 3_500_000], "beats from bar 1 inside the clip")
 }

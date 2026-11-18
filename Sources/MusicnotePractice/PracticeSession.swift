@@ -66,6 +66,8 @@ public struct PracticeBars: Sendable {
 
     public let durationUs: Int64
     public let barUs: Double
+    /// A quarter-note beat.
+    public let beatUs: Double
     /// Start of bar 1 (the beat origin when no bar 1 is set).
     public let anchorUs: Int64
     public let lines: [Line]
@@ -73,6 +75,7 @@ public struct PracticeBars: Sendable {
     public init(timing: TimingConfirmation, durationUs: Int64) {
         let grid = timing.anchoredOnBeat.grid
         self.durationUs = durationUs
+        beatUs = max(1, grid.beatUs)
         barUs = max(1, grid.beatUs * grid.meter.quarterBeatsPerBar)
         anchorUs = grid.barAnchorUs ?? grid.beatOriginUs
         var out: [Line] = []
@@ -84,6 +87,22 @@ public struct PracticeBars: Sendable {
             k += 1
         }
         lines = out
+    }
+
+    public var beatsPerBar: Double { barUs / beatUs }
+
+    /// Every `stepUs` from bar 1's anchor (a beat when it is `beatUs`) inside the clip.
+    public func ticks(every stepUs: Double) -> [Int64] {
+        guard stepUs >= 1_000 else { return [] }
+        var out: [Int64] = []
+        var k = Int(floor(Double(-anchorUs) / stepUs))
+        while true {
+            let t = anchorUs + Int64((Double(k) * stepUs).rounded())
+            if t > durationUs { break }
+            if t >= 0 { out.append(t) }
+            k += 1
+        }
+        return out
     }
 
     /// The bar a time falls in (the pickup before bar 1 counts as bar 0, −1, …).

@@ -21,12 +21,51 @@ public enum Waveform {
         return out.map { Float(pow(Double($0 / top), 0.7)) }
     }
 
-    /// `peaks` resampled to `count` columns, each the loudest of the buckets it covers.
-    public static func columns(_ peaks: [Float], count: Int) -> [Float] {
-        guard count > 0, !peaks.isEmpty else { return [] }
-        return (0..<count).map { k in
-            let lo = peaks.count * k / count, hi = max(lo + 1, peaks.count * (k + 1) / count)
-            return peaks[lo..<min(hi, peaks.count)].max() ?? 0
+    /// A stretch of the clip drawn as one column, and how loud it is.
+    public struct Column: Equatable, Sendable {
+        public var startUs: Int64, endUs: Int64
+        public var value: Float
+        public init(startUs: Int64, endUs: Int64, value: Float) { self.startUs = startUs; self.endUs = endUs; self.value = value }
+    }
+
+    /// `peaks` (spread evenly over the clip) cut along the beat grid: columns `unitUs` long
+    /// from `originUs`, the first and last cut short at the clip's ends, each the loudest of
+    /// the peaks it covers.
+    public static func columns(_ peaks: [Float], durationUs: Int64, originUs: Int64, unitUs: Double) -> [Column] {
+        guard !peaks.isEmpty, durationUs > 0, unitUs >= 1_000 else { return [] }
+        let n = peaks.count, d = Double(durationUs)
+        var out: [Column] = []
+        var k = Int(floor(Double(-originUs) / unitUs))
+        while true {
+            let t = originUs + Int64((Double(k) * unitUs).rounded())
+            if t >= durationUs { break }
+            let s = max(0, t), e = min(durationUs, originUs + Int64((Double(k + 1) * unitUs).rounded()))
+            if e > s {
+                let lo = min(n - 1, Int(Double(s) / d * Double(n)))
+                let hi = min(n, max(lo + 1, Int((Double(e) / d * Double(n)).rounded(.up))))
+                out.append(Column(startUs: s, endUs: e, value: peaks[lo..<hi].max() ?? 0))
+            }
+            k += 1
         }
+        return out
+    }
+
+    /// How many beats one column spans so that columns are about `minWidth` wide or more:
+    /// a whole number of beats that sits evenly in the bar where it can, or a half, quarter,
+    /// eighth of a beat when beats are wide.
+    public static func beatsPerColumn(beatWidth: Double, beatsPerBar: Double, minWidth: Double = 2.5) -> Double {
+        guard beatWidth > 0 else { return 1 }
+        if beatWidth >= minWidth * 2 {
+            return 1 / ([8.0, 4, 2].first { beatWidth / $0 >= minWidth } ?? 1)
+        }
+        let whole = (beatsPerBar - beatsPerBar.rounded()).magnitude < 1e-6 ? max(1, beatsPerBar.rounded()) : 0
+        var options: [Double] = [1]
+        if whole > 0 {
+            if Int(whole) % 2 == 0 { options.append(2) }
+            options += [whole, whole * 2, whole * 4, whole * 8, whole * 16]
+        } else {
+            options += [2, 4, 8, 16, 32, 64]
+        }
+        return options.first { $0 * beatWidth >= minWidth } ?? options.last!
     }
 }
